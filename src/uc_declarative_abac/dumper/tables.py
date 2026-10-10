@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from uc_declarative_abac.governed_tags import GovernedTag
 from uc_declarative_abac.orchestrator import ActualState
 from uc_declarative_abac.policies import Policy
 from uc_declarative_abac.principals import Group, Principal
@@ -44,13 +45,20 @@ from uc_declarative_abac.securables import (
 from uc_declarative_abac.types import PolicyType, PrincipalType, SecurableType
 from uc_declarative_abac.utils import is_account_users_group
 
-StructValue = dict[str, str | None]
-RowValue = str | int | bool | tuple[str, ...] | tuple[StructValue, ...] | None
+RowValue = str | int | bool | tuple[str, ...] | None
 Row = dict[str, RowValue]
 
 _REPLACED_NOTE = "Fully replaced by every uc-abac dump run."
 _EXTENSION_NOTE = "Extension: not in the base system table."
 _IDENTIFIER_NOTE = "by canonical identifier (username, group name, or service principal application ID)"
+
+TARGET_SCHEMA_COMMENT = (
+    "Snapshot tables written by uc-abac dump: the current Unity Catalog and account "
+    "state behind a uc-abac declarative ABAC config (securables, tags, privileges, "
+    "policies, governed tags, domains, principals, and group memberships). Every "
+    "table is fully replaced by each uc-abac dump run; see each table's comment for "
+    "its grain and source."
+)
 
 
 @dataclass(frozen=True)
@@ -137,13 +145,13 @@ def _sorted_identifiers(
     return tuple(sorted(_identifiers(principals)))
 
 
-def _column_struct(column: Column, table: Table) -> StructValue:
-    """One ``securables.columns`` element; a struct so column attributes can be added.
+def _column_name(column: Column, table: Table) -> str:
+    """Return a column's name for the ``securables.columns`` array.
 
     The name is the column's full name minus its table's, so a dotted column name
     (allowed with Delta column mapping) stays whole, as in ``split_securable_name``.
     """
-    return {"name": column.full_name.removeprefix(f"{table.full_name}.")}
+    return column.full_name.removeprefix(f"{table.full_name}.")
 
 
 def _securable_comment(
@@ -171,7 +179,7 @@ def _securable_row(securable: Securable, attributes: SecurableAttributes | None)
         "owner": owner.identifier if owner else None,
         "comment": _securable_comment(securable, attributes),
         "table_type": securable.table_type if is_table else None,
-        "columns": tuple(_column_struct(c, securable) for c in securable.columns)
+        "columns": tuple(_column_name(c, securable) for c in securable.columns)
         if is_table
         else None,
         "routine_definition": securable.definition if is_function else None,
@@ -236,6 +244,21 @@ def _privilege_type_name(privilege: SecurablePrivilege) -> str:
 def _principal_type_of(identifier: str, context: DumpContext) -> str | None:
     resolved = context.principals_by_identifier.get(identifier)
     return resolved.principal_type.value if resolved else None
+
+
+def _resolve_principal_for_row(
+    principal: Principal, context: DumpContext
+) -> tuple[str | None, str, str | None]:
+    """Resolve a principal to ``(id, display_name, type)`` for a row.
+
+    An unresolvable principal is still included: ``id`` and ``type`` are None, but
+    ``display_name`` is the identifier (so the relationship itself is never lost).
+    Used by group_members, group_assumers, and governed_tag_assigners.
+    """
+    resolved = context.principals_by_identifier.get(principal.identifier)
+    if resolved:
+        return (resolved.internal_id, resolved.name, resolved.principal_type.value)
+    return (None, principal.identifier, None)
 
 
 def _securable_privileges_rows(state: ActualState, context: DumpContext) -> list[Row]:
@@ -311,17 +334,43 @@ def _abac_policies_rows(state: ActualState, context: DumpContext) -> list[Row]:
     )
 
 
+def _governed_tag_assigner_row(
+    tag: GovernedTag, assigner: Principal, context: DumpContext
+) -> Row:
+    assigner_id, display_name, assigner_type = _resolve_principal_for_row(
+        assigner, context
+    )
+    return {
+        "assigner_id": assigner_id,
+        "tag_key": tag.name,
+        "assigner_display_name": display_name,
+        "assigner_type": assigner_type,
+    }
+
+
+def _governed_tag_assigners_rows(state: ActualState, context: DumpContext) -> list[Row]:
+    """One row per (governed tag, assigner) for tags the config references.
+
+    Assigners are only fetched for tags in ``context.referenced_tag_keys``, so an
+    unreferenced tag's assigners are unknown and yield no rows.
+    """
+    rows = [
+        _governed_tag_assigner_row(tag, assigner, context)
+        for tag in state.governed_tags
+        if tag.name in context.referenced_tag_keys
+        for assigner in tag.assigners
+    ]
+    return sorted(
+        rows, key=lambda r: _sort_key(r["tag_key"], r["assigner_display_name"])
+    )
+
+
 def _governed_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
-    """Assigners are only fetched for tags the config references, so an unreferenced
-    tag's assigners are written as NULL (unknown) rather than an empty array."""
     rows: list[Row] = [
         {
             "tag_key": tag.name,
             "description": tag.description or None,
             "values": tuple(sorted(tag.allowed_values)),
-            "assigners": _sorted_identifiers(tag.assigners)
-            if tag.name in context.referenced_tag_keys
-            else None,
         }
         for tag in state.governed_tags
     ]
@@ -365,15 +414,20 @@ def _principals_rows(state: ActualState, context: DumpContext) -> list[Row]:
 def _group_principal_row(
     group: Group, principal: Principal, prefix: str, context: DumpContext
 ) -> Row:
-    """One group/principal pair. An unresolvable principal is still written, keyed by
-    its identifier, so the membership itself is never lost."""
-    resolved = context.principals_by_identifier.get(principal.identifier)
+    """One group/principal pair.
+
+    An unresolvable principal is still written, keyed by its identifier, so the
+    membership itself is never lost.
+    """
+    principal_id, display_name, principal_type = _resolve_principal_for_row(
+        principal, context
+    )
     return {
-        f"{prefix}_id": resolved.internal_id if resolved else None,
+        f"{prefix}_id": principal_id,
         "group_id": group.id or None,
         "group_display_name": group.display_name,
-        f"{prefix}_display_name": resolved.name if resolved else principal.identifier,
-        f"{prefix}_type": resolved.principal_type.value if resolved else None,
+        f"{prefix}_display_name": display_name,
+        f"{prefix}_type": principal_type,
     }
 
 
@@ -474,10 +528,10 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             ),
             ColumnSpec(
                 "columns",
-                "ARRAY<STRUCT<name: STRING>>",
-                "The table's columns in ordinal order, each a struct holding the "
-                f"column name. NULL for non-table rows. {_EXTENSION_NOTE} "
-                "(information_schema.columns holds these as separate rows).",
+                "ARRAY<STRING>",
+                "The table's column names in ordinal order. NULL for non-table rows. "
+                f"{_EXTENSION_NOTE} (information_schema.columns holds these as "
+                "separate rows).",
             ),
             ColumnSpec(
                 "routine_definition",
@@ -658,15 +712,41 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 "ARRAY<STRING>",
                 "Allowed values, sorted. Empty when any value is allowed.",
             ),
-            ColumnSpec(
-                "assigners",
-                "ARRAY<STRING>",
-                f"Principals permitted to assign the tag, {_IDENTIFIER_NOTE}. NULL "
-                "when the uc-abac config doesn't reference the tag, so its assigners "
-                "were not fetched.",
-            ),
         ),
         rows=_governed_tags_rows,
+    ),
+    TableSpec(
+        name="governed_tag_assigners",
+        comment=(
+            "Snapshot of the principals permitted to assign every governed tag the "
+            "uc-abac config references: one row per tag key and assigner. Mirrors the "
+            "account access-control rule set API, in the shape of group_assumers (no "
+            f"system table). {_REPLACED_NOTE}"
+        ),
+        columns=(
+            ColumnSpec(
+                "assigner_id",
+                "STRING",
+                "Internal ID of the assigner principal; joins to "
+                "principals.principal_id. NULL when unknown.",
+            ),
+            ColumnSpec(
+                "tag_key", "STRING", "Governed tag key; joins to governed_tags.tag_key."
+            ),
+            ColumnSpec(
+                "assigner_display_name",
+                "STRING",
+                "Display name of the assigner (for users, the username; the canonical "
+                "identifier when the assigner could not be resolved).",
+            ),
+            ColumnSpec(
+                "assigner_type",
+                "STRING",
+                "Principal type of the assigner: USER, GROUP, or SERVICE_PRINCIPAL. "
+                "NULL when the assigner could not be resolved.",
+            ),
+        ),
+        rows=_governed_tag_assigners_rows,
     ),
     TableSpec(
         name="domains",

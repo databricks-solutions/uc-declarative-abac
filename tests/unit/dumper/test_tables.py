@@ -88,6 +88,7 @@ def test_dumper_tables_spec_names_and_order():
         "securable_privileges",
         "abac_policies",
         "governed_tags",
+        "governed_tag_assigners",
         "domains",
         "principals",
         "group_members",
@@ -136,6 +137,16 @@ def test_dumper_tables_row_column_alignment():
             "governed_tags",
             _state(governed_tags=frozenset([governed_tag])),
             frozenset(["sensitivity"]),
+        ),
+        (
+            "governed_tag_assigners",
+            _state(
+                governed_tags=frozenset(
+                    [GovernedTag("pii", assigners=frozenset([user]))]
+                ),
+                principals={"alice": user},
+            ),
+            frozenset(["pii"]),
         ),
         ("domains", _state(domains=frozenset([domain]))),
         ("principals", _state(principals={"alice": user})),
@@ -222,7 +233,7 @@ def test_dumper_tables_securables_one_row_per_securable():
 
 
 def test_dumper_tables_securables_table_columns_in_array():
-    """securables table: table row has columns array with struct elements containing name."""
+    """securables table: table row has columns array with plain column name strings."""
     col1 = Column(SecurableType.COLUMN, "c.s.t.col1", data_type="STRING")
     col2 = Column(SecurableType.COLUMN, "c.s.t.col2", data_type="INT")
     table = Table(SecurableType.TABLE, "c.s.t", columns=(col1, col2))
@@ -230,7 +241,7 @@ def test_dumper_tables_securables_table_columns_in_array():
     rows = _rows("securables", state)
     assert len(rows) == 1
     row = rows[0]
-    assert row["columns"] == ({"name": "col1"}, {"name": "col2"})
+    assert row["columns"] == ("col1", "col2")
 
 
 def test_dumper_tables_securables_non_table_columns_none():
@@ -337,11 +348,11 @@ def test_dumper_tables_securables_has_columns_array():
 
 
 def test_dumper_tables_securables_columns_type():
-    """securables table: columns column has sql_type ARRAY<STRUCT<name: STRING>>."""
+    """securables table: columns column has sql_type ARRAY<STRING>."""
     spec = _spec("securables")
     columns_col = next((col for col in spec.columns if col.name == "columns"), None)
     assert columns_col is not None
-    assert columns_col.sql_type == "ARRAY<STRUCT<name: STRING>>"
+    assert columns_col.sql_type == "ARRAY<STRING>"
 
 
 # --- securable_tags table tests ---
@@ -675,38 +686,117 @@ def test_dumper_tables_governed_tags_description_none_when_empty():
     assert rows[0]["description"] is None
 
 
-def test_dumper_tables_governed_tags_assigners_when_referenced():
-    """governed_tags: assigners is sorted tuple of identifiers when referenced."""
+def test_dumper_tables_governed_tags_has_no_assigners_column():
+    """governed_tags table: has no assigners column (moved to separate table)."""
+    spec = _spec("governed_tags")
+    col_names = {col.name for col in spec.columns}
+    assert "assigners" not in col_names
+
+
+# --- governed_tag_assigners table tests ---
+
+
+def test_dumper_tables_governed_tag_assigners_one_row_per_assigner():
+    """governed_tag_assigners table: one row per (tag, assigner)."""
     assigner1 = Principal(PrincipalType.USER, identifier="alice", name="alice")
     assigner2 = Principal(PrincipalType.USER, identifier="bob", name="bob")
-    tag = GovernedTag("pii", assigners=frozenset([assigner2, assigner1]))
+    tag = GovernedTag("pii", assigners=frozenset([assigner1, assigner2]))
     state = _state(
         governed_tags=frozenset([tag]),
         principals={"alice": assigner1, "bob": assigner2},
     )
-    rows = _rows("governed_tags", state, referenced_tag_keys=frozenset(["pii"]))
-    assert len(rows) == 1
-    assert rows[0]["assigners"] == ("alice", "bob")
-
-
-def test_dumper_tables_governed_tags_assigners_none_when_not_referenced():
-    """governed_tags: assigners is None when tag NOT in referenced_tag_keys."""
-    tag = GovernedTag("unreferenced_tag", description="This tag is not referenced")
-    state = _state(governed_tags=frozenset([tag]))
-    rows = _rows("governed_tags", state, referenced_tag_keys=frozenset())
-    assert len(rows) == 1
-    assert rows[0]["assigners"] is None
-
-
-def test_dumper_tables_governed_tags_empty_tuple_when_referenced_no_assigners():
-    """governed_tags: assigners is empty tuple when referenced but has no assigners."""
-    tag = GovernedTag("no_assigners")
-    state = _state(governed_tags=frozenset([tag]))
     rows = _rows(
-        "governed_tags", state, referenced_tag_keys=frozenset(["no_assigners"])
+        "governed_tag_assigners", state, referenced_tag_keys=frozenset(["pii"])
+    )
+    assert len(rows) == 2
+
+
+def test_dumper_tables_governed_tag_assigners_resolved_via_identifier_map():
+    """governed_tag_assigners: assigners resolved via identifier reverse map."""
+    sp = Principal(
+        PrincipalType.SERVICE_PRINCIPAL,
+        identifier="app-uuid-1",
+        name="my-sp",
+        internal_id="111",
+    )
+    unresolved_sp = Principal(PrincipalType.UNKNOWN, identifier="app-uuid-1")
+    tag = GovernedTag("sensitive", assigners=frozenset([unresolved_sp]))
+    state = _state(
+        governed_tags=frozenset([tag]),
+        principals={"my-sp": sp},
+    )
+    rows = _rows(
+        "governed_tag_assigners", state, referenced_tag_keys=frozenset(["sensitive"])
     )
     assert len(rows) == 1
-    assert rows[0]["assigners"] == ()
+    row = rows[0]
+    assert row["assigner_id"] == "111"
+    assert row["assigner_display_name"] == "my-sp"
+    assert row["assigner_type"] == "SERVICE_PRINCIPAL"
+    assert row["tag_key"] == "sensitive"
+
+
+def test_dumper_tables_governed_tag_assigners_unresolvable_assigner():
+    """governed_tag_assigners: unresolvable assigner yields assigner_id=None, assigner_type=None."""
+    unresolvable = Principal(PrincipalType.UNKNOWN, identifier="unknown-assigner")
+    tag = GovernedTag("data", assigners=frozenset([unresolvable]))
+    state = _state(governed_tags=frozenset([tag]))
+    rows = _rows(
+        "governed_tag_assigners", state, referenced_tag_keys=frozenset(["data"])
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["assigner_id"] is None
+    assert row["assigner_type"] is None
+    assert row["assigner_display_name"] == "unknown-assigner"
+
+
+def test_dumper_tables_governed_tag_assigners_unreferenced_tag_no_rows():
+    """governed_tag_assigners: unreferenced tag yields no rows even if it has assigners."""
+    assigner = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    tag = GovernedTag("unreferenced", assigners=frozenset([assigner]))
+    state = _state(
+        governed_tags=frozenset([tag]),
+        principals={"alice": assigner},
+    )
+    rows = _rows("governed_tag_assigners", state, referenced_tag_keys=frozenset())
+    assert len(rows) == 0
+
+
+def test_dumper_tables_governed_tag_assigners_empty_assigners_no_rows():
+    """governed_tag_assigners: referenced tag with no assigners yields no rows."""
+    tag = GovernedTag("empty_assigners", assigners=frozenset())
+    state = _state(governed_tags=frozenset([tag]))
+    rows = _rows(
+        "governed_tag_assigners",
+        state,
+        referenced_tag_keys=frozenset(["empty_assigners"]),
+    )
+    assert len(rows) == 0
+
+
+def test_dumper_tables_governed_tag_assigners_sorted_by_tag_then_assigner():
+    """governed_tag_assigners: rows sorted by (tag_key, assigner_display_name)."""
+    assigner_bob = Principal(PrincipalType.USER, identifier="bob", name="bob")
+    assigner_alice = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    tag_z = GovernedTag("ztag", assigners=frozenset([assigner_bob, assigner_alice]))
+    tag_a = GovernedTag("atag", assigners=frozenset([assigner_bob]))
+    state = _state(
+        governed_tags=frozenset([tag_z, tag_a]),
+        principals={"alice": assigner_alice, "bob": assigner_bob},
+    )
+    rows = _rows(
+        "governed_tag_assigners",
+        state,
+        referenced_tag_keys=frozenset(["ztag", "atag"]),
+    )
+    assert len(rows) == 3
+    assert rows[0]["tag_key"] == "atag"
+    assert rows[0]["assigner_display_name"] == "bob"
+    assert rows[1]["tag_key"] == "ztag"
+    assert rows[1]["assigner_display_name"] == "alice"
+    assert rows[2]["tag_key"] == "ztag"
+    assert rows[2]["assigner_display_name"] == "bob"
 
 
 # --- domains table tests ---
@@ -1154,4 +1244,4 @@ def test_dumper_tables_securables_keeps_dotted_column_names_intact():
     column = Column(SecurableType.COLUMN, "c.s.t.a.b", data_type="STRING")
     table = Table(SecurableType.TABLE, "c.s.t", columns=(column,))
     (row,) = _rows("securables", _state(securables=frozenset([table])))
-    assert row["columns"] == ({"name": "a.b"},)
+    assert row["columns"] == ("a.b",)

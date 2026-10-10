@@ -81,7 +81,7 @@ Global flags: `--version`, `--verbose`, `--quiet`, `--settings-file <path>`.
 uc-abac dump --config-dir ./configs --warehouse-id <warehouse-id> --target-schema main.uc_abac_state
 ```
 
-Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
+Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
 
 | Table | Contents | Based on |
 |---|---|---|
@@ -89,7 +89,8 @@ Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (a
 | `securable_tags` | Tags assigned to securables (including columns) in the config's catalogs | `information_schema.*_tags` |
 | `securable_privileges` | Privileges granted on securables in the config's catalogs | `information_schema.*_privileges` |
 | `abac_policies` | Row filter and column mask policies in the config's catalogs | `information_schema.abac_policy_definitions` |
-| `governed_tags` | The account's governed tags and their allowed values; assigners for the tags the config references | Tag Policies API |
+| `governed_tags` | The account's governed tags and their allowed values | Tag Policies API |
+| `governed_tag_assigners` | Principals permitted to assign every governed tag the config references | Tag policy access-control rule sets |
 | `domains` | The workspace's Discovery domains | Domains API |
 | `principals` | The account's users, groups, and service principals | `system.access.principals_latest` |
 | `group_members` | Direct members of every group the config references (except `account users`) | `system.access.parent_groups_latest` |

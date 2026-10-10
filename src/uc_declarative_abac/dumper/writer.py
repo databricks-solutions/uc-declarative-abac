@@ -18,6 +18,7 @@ from uc_declarative_abac.dumper.sql import (
 )
 from uc_declarative_abac.dumper.tables import (
     TABLE_SPECS,
+    TARGET_SCHEMA_COMMENT,
     DumpContext,
     TableSpec,
     build_dump_context,
@@ -34,6 +35,7 @@ from uc_declarative_abac.utils import (
     ExecutionError,
     parallel_for_each,
     quote_securable,
+    sql_string_literal,
 )
 
 DEFAULT_MAX_PARALLEL_TABLES = 8
@@ -50,14 +52,18 @@ def _ensure_target_schema(
     """Create the target schema only when it is missing.
 
     Runs before the (slow) state fetch so a missing catalog or a permission problem
-    fails fast. An existing schema gets no DDL at all; a missing one gets a plain
-    ``CREATE SCHEMA``. The existence check is read-only, so it also runs in a dry run.
+    fails fast. A missing schema gets a ``CREATE SCHEMA`` with a comment; an existing
+    schema gets no DDL at all (its comment is never overwritten). The existence check
+    is read-only, so it also runs in a dry run.
     """
     try:
         workspace_client.schemas.get(target_schema)
     except NotFound:
         if not dry_run:
-            uc_helper.execute_sql(f"CREATE SCHEMA {quote_securable(target_schema)}")
+            uc_helper.execute_sql(
+                f"CREATE SCHEMA {quote_securable(target_schema)} "
+                f"COMMENT {sql_string_literal(TARGET_SCHEMA_COMMENT)}"
+            )
         logger.log_target_schema_created(target_schema)
         return
     except Exception as exc:

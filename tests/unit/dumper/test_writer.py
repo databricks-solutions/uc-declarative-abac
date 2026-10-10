@@ -13,10 +13,15 @@ from databricks.sdk.errors import NotFound, PermissionDenied
 
 from uc_declarative_abac import ActualState
 from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.dumper import INSERT_MAX_ROWS, TABLE_SPECS, dump_state
+from uc_declarative_abac.dumper import (
+    INSERT_MAX_ROWS,
+    TABLE_SPECS,
+    TARGET_SCHEMA_COMMENT,
+    dump_state,
+)
 from uc_declarative_abac.securables import Securable
 from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import ExecutionBatchError
+from uc_declarative_abac.utils import ExecutionBatchError, sql_string_literal
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -830,3 +835,91 @@ def test_dumper_writer_logs_no_progress_for_a_table_written_within_the_interval(
         )
 
     assert _progress_lines(caplog, "main.state.securables") == []
+
+
+# ---
+# Dry-run logging assertions
+# ---
+
+
+def test_dumper_writer_dry_run_logs_no_writing_to_lines(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """dump_state with dry_run=True logs no 'Writing to' lines, but still logs 'Would write to'."""
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
+
+    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        with caplog.at_level(logging.INFO):
+            dump_state(
+                mock_workspace_client,
+                config_dir=config_dir,
+                warehouse_id="warehouse-1",
+                target_schema="main.state",
+                dry_run=True,
+            )
+
+    log_text = caplog.text
+    # Should not contain "Writing to" lines
+    for record in caplog.records:
+        if "Writing to" in record.message:
+            raise AssertionError(
+                f"Expected no 'Writing to' lines in dry run, but found: {record.message}"
+            )
+
+    # Should still contain "Would write to" for at least one table
+    assert any("Would write to" in record.message for record in caplog.records), (
+        f"Expected 'Would write to' in dry run logs, got: {log_text}"
+    )
+
+
+# ---
+# Schema comment tests
+# ---
+
+
+def test_dumper_writer_schema_missing_creates_schema_with_comment(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """dump_state creates schema with COMMENT when it doesn't exist."""
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
+
+    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+        )
+
+    # Find CREATE SCHEMA statement
+    create_schema_stmts = [
+        sql
+        for sql in mock_workspace_client.executed_sql
+        if "CREATE SCHEMA" in sql.upper()
+    ]
+    assert len(create_schema_stmts) == 1, (
+        f"Expected exactly one CREATE SCHEMA, got {len(create_schema_stmts)}: "
+        f"{mock_workspace_client.executed_sql}"
+    )
+
+    schema_sql = create_schema_stmts[0]
+    # Must contain COMMENT keyword
+    assert "COMMENT" in schema_sql.upper(), (
+        f"CREATE SCHEMA must contain COMMENT keyword: {schema_sql}"
+    )
+
+    assert TARGET_SCHEMA_COMMENT, "TARGET_SCHEMA_COMMENT must be non-empty"
+
+    # Verify the SQL contains the escaped comment
+    expected_comment = sql_string_literal(TARGET_SCHEMA_COMMENT)
+    assert expected_comment in schema_sql, (
+        f"CREATE SCHEMA must contain sql_string_literal(TARGET_SCHEMA_COMMENT):\n"
+        f"  SQL: {schema_sql}\n"
+        f"  Expected to contain: {expected_comment}"
+    )

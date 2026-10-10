@@ -120,69 +120,8 @@ def test_dumper_sql_render_sql_literal_tuple_single_element() -> None:
 
 
 # ---
-# render_sql_literal struct tests
+# render_sql_literal empty-array typing tests
 # ---
-
-
-def test_dumper_sql_render_sql_literal_struct_single_field() -> None:
-    """render_sql_literal renders a struct dict as named_struct with string literals."""
-    result = render_sql_literal({"name": "c1"})
-    assert "named_struct(" in result.lower()
-    assert "'name'" in result
-    assert "'c1'" in result
-
-
-def test_dumper_sql_render_sql_literal_struct_multiple_fields() -> None:
-    """render_sql_literal renders struct with multiple fields in dict order."""
-    result = render_sql_literal({"field1": "value1", "field2": "value2"})
-    assert "named_struct(" in result.lower()
-    assert "'field1'" in result
-    assert "'value1'" in result
-    assert "'field2'" in result
-    assert "'value2'" in result
-
-
-def test_dumper_sql_render_sql_literal_struct_none_field_value() -> None:
-    """render_sql_literal renders None field values as NULL in named_struct."""
-    result = render_sql_literal({"field1": "value", "field2": None})
-    assert "named_struct(" in result.lower()
-    assert "'field1'" in result
-    assert "'value'" in result
-    assert "'field2'" in result
-    assert "NULL" in result
-
-
-def test_dumper_sql_render_sql_literal_struct_only_none_fields() -> None:
-    """render_sql_literal handles struct with all None field values."""
-    result = render_sql_literal({"f1": None, "f2": None})
-    assert "named_struct(" in result.lower()
-    assert "'f1'" in result
-    assert "'f2'" in result
-    assert result.count("NULL") >= 2
-
-
-def test_dumper_sql_render_sql_literal_tuple_of_structs() -> None:
-    """render_sql_literal renders tuple of structs as array of named_structs."""
-    result = render_sql_literal(({"name": "a"}, {"name": "b"}))
-    assert "array(" in result.lower()
-    assert "named_struct(" in result.lower()
-    # Should have both structs
-    assert result.count("named_struct") >= 2
-    assert "'a'" in result
-    assert "'b'" in result
-
-
-def test_dumper_sql_render_sql_literal_mixed_struct_tuple() -> None:
-    """render_sql_literal renders tuple of structs with mixed field values."""
-    result = render_sql_literal(
-        ({"id": "1", "name": "first"}, {"id": "2", "name": None})
-    )
-    assert "array(" in result.lower()
-    assert "named_struct(" in result.lower()
-    assert "'1'" in result
-    assert "'first'" in result
-    assert "'2'" in result
-    assert "NULL" in result
 
 
 def test_dumper_sql_render_sql_literal_empty_tuple_with_custom_sql_type() -> None:
@@ -721,45 +660,8 @@ def test_dumper_sql_build_insert_statements_max_bytes_override() -> None:
 
 
 # ---
-# build_insert_statements struct tests
+# build_insert_statements empty-array typing tests
 # ---
-
-
-def test_dumper_sql_build_insert_statements_struct_single_row() -> None:
-    """build_insert_statements renders struct values as named_struct."""
-    spec = TableSpec(
-        name="t",
-        comment="Test",
-        columns=(ColumnSpec("columns", "ARRAY<STRUCT<name: STRING>>", "Cols"),),
-        rows=lambda state, ctx: [],
-    )
-    rows = [{"columns": ({"name": "c1"},)}]
-    result = build_insert_statements("db.t", spec, rows)
-    stmt = result[0]
-    assert "INSERT INTO" in stmt
-    assert "named_struct(" in stmt.lower()
-    assert "'name'" in stmt
-    assert "'c1'" in stmt
-
-
-def test_dumper_sql_build_insert_statements_struct_multiple_values() -> None:
-    """build_insert_statements renders multiple struct rows."""
-    spec = TableSpec(
-        name="t",
-        comment="Test",
-        columns=(ColumnSpec("columns", "ARRAY<STRUCT<name: STRING>>", "Cols"),),
-        rows=lambda state, ctx: [],
-    )
-    rows = [
-        {"columns": ({"name": "a"},)},
-        {"columns": ({"name": "b"},)},
-    ]
-    result = build_insert_statements("db.t", spec, rows)
-    stmt = result[0]
-    # Both struct values should be in the same statement
-    assert "named_struct(" in stmt.lower()
-    assert "'a'" in stmt
-    assert "'b'" in stmt
 
 
 def test_dumper_sql_build_insert_statements_empty_array_with_struct_type() -> None:
@@ -776,48 +678,6 @@ def test_dumper_sql_build_insert_statements_empty_array_with_struct_type() -> No
     # Should use the column's sql_type to type the empty array
     assert "CAST(array()" in stmt
     assert "ARRAY<STRUCT<name: STRING>>" in stmt
-
-
-def test_dumper_sql_build_insert_statements_struct_with_none_fields() -> None:
-    """build_insert_statements renders struct fields with None values as NULL."""
-    spec = TableSpec(
-        name="t",
-        comment="Test",
-        columns=(
-            ColumnSpec("id", "INT", "ID"),
-            ColumnSpec("data", "ARRAY<STRUCT<name: STRING, desc: STRING>>", "Data"),
-        ),
-        rows=lambda state, ctx: [],
-    )
-    rows = [{"id": 1, "data": ({"name": "x", "desc": None},)}]
-    result = build_insert_statements("db.t", spec, rows)
-    stmt = result[0]
-    assert "named_struct(" in stmt.lower()
-    assert "'name'" in stmt
-    assert "'x'" in stmt
-    assert "'desc'" in stmt
-    assert "NULL" in stmt
-
-
-def test_dumper_sql_build_insert_statements_mixed_struct_and_string_arrays() -> None:
-    """build_insert_statements handles both struct and string array columns."""
-    spec = TableSpec(
-        name="t",
-        comment="Test",
-        columns=(
-            ColumnSpec("tags", "ARRAY<STRING>", "Tags"),
-            ColumnSpec("columns", "ARRAY<STRUCT<name: STRING>>", "Cols"),
-        ),
-        rows=lambda state, ctx: [],
-    )
-    rows = [{"tags": ("tag1", "tag2"), "columns": ({"name": "col1"},)}]
-    result = build_insert_statements("db.t", spec, rows)
-    stmt = result[0]
-    # Both array types should be rendered correctly
-    assert "array(" in stmt.lower()
-    assert "named_struct(" in stmt.lower()
-    assert "'tag1'" in stmt
-    assert "'col1'" in stmt
 
 
 # ---------------------------------------------------------------------------
