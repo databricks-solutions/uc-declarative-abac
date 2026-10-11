@@ -414,3 +414,26 @@ def test_dump_logger_log_table_progress(caplog):
     caplog.set_level(logging.INFO, logger="uc_declarative_abac")
     DumpLogger().log_table_progress("main.state.principals", 1234, 22836)
     assert "> Writing to main.state.principals (1234 of 22836 rows)" in caplog.text
+
+
+# ---
+# Dry-run table progress (log nothing)
+# ---
+
+
+def test_dump_logger_log_table_started_not_logged_when_dry_run(caplog):
+    """log_table_started logs nothing when dry_run=True."""
+    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    logger_instance = DumpLogger(dry_run=True)
+    logger_instance.log_table_started("main.state.securables", 12)
+    # Should not contain "Writing to" when dry_run=True
+    assert "Writing to main.state.securables" not in caplog.text
+
+
+def test_dump_logger_log_table_progress_not_logged_when_dry_run(caplog):
+    """log_table_progress logs nothing when dry_run=True."""
+    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    logger_instance = DumpLogger(dry_run=True)
+    logger_instance.log_table_progress("main.state.principals", 1234, 22836)
+    # Should not contain "Writing to" when dry_run=True
+    assert "Writing to main.state.principals" not in caplog.text

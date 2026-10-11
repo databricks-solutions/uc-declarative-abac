@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from uc_declarative_abac.dumper.tables import Row, RowValue, StructValue, TableSpec
+from uc_declarative_abac.dumper.tables import Row, RowValue, TableSpec
 from uc_declarative_abac.utils import quote_securable, sql_string_literal
 
 INSERT_MAX_ROWS = 1000
@@ -21,20 +21,12 @@ class InsertBatch:
     row_count: int
 
 
-def _render_struct(struct: StructValue) -> str:
-    fields = ", ".join(
-        f"{sql_string_literal(name)}, {render_sql_literal(value)}"
-        for name, value in struct.items()
-    )
-    return f"named_struct({fields})"
-
-
 def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> str:
     """Render one row value as a Databricks SQL literal.
 
-    ``bool`` is checked before ``int`` (it is an ``int`` subclass). A dict is a struct
-    (``named_struct``) and a tuple an array. An empty array is cast to ``sql_type`` —
-    the column's declared type — because a bare ``array()`` carries no element type.
+    ``bool`` is checked before ``int`` (it is an ``int`` subclass). A tuple is an
+    array. An empty array is cast to ``sql_type`` — the column's declared type —
+    because a bare ``array()`` carries no element type.
     """
     if value is None:
         return "NULL"
@@ -44,8 +36,6 @@ def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> s
         return str(value)
     if isinstance(value, str):
         return sql_string_literal(value)
-    if isinstance(value, dict):
-        return _render_struct(value)
     if isinstance(value, tuple):
         if not value:
             return f"CAST(array() AS {sql_type})"

@@ -39,6 +39,18 @@ def _add_system_catalog(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_timezone(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--timezone",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=(
+            "IANA timezone used to compute the run date for evaluating expiry_date "
+            "on groups and grant policies [default: UTC]. e.g. Australia/Melbourne."
+        ),
+    )
+
+
 def _add_max_parallel_changes(parser: argparse.ArgumentParser, help_text: str) -> None:
     parser.add_argument(
         "--max-parallel-changes",
@@ -61,15 +73,7 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
     """Register optional run flags shared by validate, deploy, and legacy mode."""
     _add_profile(parser)
     _add_system_catalog(parser)
-    parser.add_argument(
-        "--timezone",
-        type=str,
-        default=argparse.SUPPRESS,
-        help=(
-            "IANA timezone used to compute the run date for evaluating expiry_date "
-            "on groups and grant policies [default: UTC]. e.g. Australia/Melbourne."
-        ),
-    )
+    _add_timezone(parser)
     parser.add_argument(
         "--use-workspace-scim",
         action="store_true",
@@ -551,6 +555,7 @@ def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_profile(parser)
     _add_system_catalog(parser)
+    _add_timezone(parser)
     _add_max_parallel_changes(
         parser,
         "Maximum number of tables written concurrently [default: 8]. Set to 1 to "

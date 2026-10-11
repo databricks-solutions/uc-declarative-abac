@@ -89,13 +89,22 @@ class DumpLogger:
     def log_table_progress(
         self, table_full_name: str, rows_written: int, row_count: int
     ) -> None:
-        """Log how far through a long-running table write the dump is."""
+        """Log how far through a long-running table write the dump is.
+
+        Logs nothing in a dry run: no rows are written, so a "Writing to" line would
+        be misleading (``log_table_written`` reports the would-be totals instead).
+        """
+        if self._dry_run:
+            return
         self._logger.info(
             f"  > Writing to {table_full_name} ({rows_written} of {row_count} rows)"
         )
 
     def log_table_started(self, table_full_name: str, row_count: int) -> None:
-        """Log that a table write has begun, as its first (zero-rows) progress line."""
+        """Log that a table write has begun, as its first (zero-rows) progress line.
+
+        Logs nothing in a dry run (see ``log_table_progress``).
+        """
         self.log_table_progress(table_full_name, 0, row_count)
 
     def log_batch(

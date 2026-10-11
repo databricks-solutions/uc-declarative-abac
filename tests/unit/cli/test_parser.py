@@ -386,7 +386,6 @@ def test_parser_dump_help_excludes_deploy_only_flags(capsys):
         "--enable-tag-management",
         "--tag-management-scopes",
         "--force",
-        "--timezone",
         "--retain-tag-prefixes",
         "--use-workspace-scim",
         "--skip-users-fetch",
@@ -402,3 +401,30 @@ def test_parser_root_help_mentions_dump(capsys):
     ]
     assert len(dump_lines) >= 1
     assert any("dump" in line.lower() for line in dump_lines)
+
+
+def test_parser_displays_timezone_flag_in_dump_help(capsys):
+    output = _help_output(["dump", "--help"], capsys)
+    assert "--timezone" in output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--timezone",
+            "Pacific/Kiritimati",
+        ],
+    ],
+    ids=["dump-with-timezone"],
+)
+def test_parser_accepts_timezone_for_dump_invocations(args):
+    namespace = parse_cli_args(args)
+    assert namespace.timezone == "Pacific/Kiritimati"

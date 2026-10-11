@@ -81,7 +81,7 @@ Global flags: `--version`, `--verbose`, `--quiet`, `--settings-file <path>`.
 uc-abac dump --config-dir ./configs --warehouse-id <warehouse-id> --target-schema main.uc_abac_state
 ```
 
-Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
+Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--timezone` (run date for grant-policy expiry, default UTC), `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
 
 | Table | Contents | Based on |
 |---|---|---|
@@ -89,13 +89,15 @@ Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (a
 | `securable_tags` | Tags assigned to securables (including columns) in the config's catalogs | `information_schema.*_tags` |
 | `securable_privileges` | Privileges granted on securables in the config's catalogs | `information_schema.*_privileges` |
 | `abac_policies` | Row filter and column mask policies in the config's catalogs | `information_schema.abac_policy_definitions` |
-| `governed_tags` | The account's governed tags and their allowed values; assigners for the tags the config references | Tag Policies API |
+| `pseudo_policies` | The config's active grant policies, in the same columns as `abac_policies` (read from the config, since grant policies are expanded into concrete privileges) | uc-abac config |
+| `governed_tags` | The account's governed tags and their allowed values | Tag Policies API |
+| `governed_tag_assigners` | Principals permitted to assign every governed tag the config references | Tag policy access-control rule sets |
 | `domains` | The workspace's Discovery domains | Domains API |
 | `principals` | The account's users, groups, and service principals | `system.access.principals_latest` |
 | `group_members` | Direct members of every group the config references (except `account users`) | `system.access.parent_groups_latest` |
 | `group_assumers` | Principals permitted to assume every group the config references (except `account users`) | Group access-control rule sets |
 
-Principals are written by their canonical identifier (username, group name, or service principal application ID), matching the system tables, so the tables join directly to them.
+Principals are written by their canonical identifier (username, group name, or service principal application ID), matching the system tables, so the tables join directly to them. Every table's first column, `config_file_path`, is the config YAML file that declares the row's object (for a privilege, the active grant policy that produces it), or NULL when the object isn't in the config.
 
 ### Feature scopes
 
@@ -324,6 +326,7 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` (see [Dumping 
 | `warehouse-id` | yes | — | SQL warehouse ID used to read state and write the tables |
 | `target-schema` | yes | — | Schema to write the tables into, as `<catalog>.<schema>`; created when it doesn't exist |
 | `system-catalog` | no | `system` | Catalog containing the `information_schema` views used for state queries |
+| `timezone` | no | `''` | IANA timezone for the run date that decides which grant policies have expired; omit to use UTC |
 | `profile` | no | `''` | Databricks CLI profile; omit to use unified auth via the step's `env` |
 | `dry-run` | no | `'false'` | Log the statements that would run without executing them |
 | `max-parallel-changes` | no | `'8'` | Maximum number of tables written concurrently |

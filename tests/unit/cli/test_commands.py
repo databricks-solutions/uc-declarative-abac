@@ -681,3 +681,57 @@ def test_commands_dump_malformed_target_schema_returns_usage_error(
     )
 
     assert exit_code == 2
+
+
+def test_commands_dump_forwards_timezone_to_dump_state(monkeypatch, tmp_path: Path):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--timezone",
+            "Australia/Melbourne",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["timezone"] == "Australia/Melbourne"
+
+
+def test_commands_dump_defaults_timezone_to_utc(monkeypatch, tmp_path: Path):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["timezone"] == "UTC"

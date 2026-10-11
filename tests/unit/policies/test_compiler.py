@@ -9,6 +9,7 @@ from uc_declarative_abac.logger import ChangeLogger
 from uc_declarative_abac.policies import (
     Policy,
     compile_desired_policies,
+    render_tag_when_condition,
 )
 from uc_declarative_abac.types import (
     PolicyType,
@@ -1335,3 +1336,127 @@ def test_policy_compiler_defaults_for_securable_type_to_table_when_null():
 
     (policy,) = _compile(config)
     assert policy.for_securable_type == SecurableType.TABLE
+
+
+# ---------------------------------------------------------------------------
+# render_tag_when_condition
+# ---------------------------------------------------------------------------
+
+
+def test_policy_compiler_render_tag_when_condition_and_group():
+    """render_tag_when_condition renders has_tags as AND-joined atoms, sorted by key."""
+    result = render_tag_when_condition(
+        has_tags={"b_tag": "v2", "a_tag": "v1"}, has_any_of_tags=None
+    )
+
+    assert result == "has_tag_value('a_tag', 'v1') AND has_tag_value('b_tag', 'v2')"
+
+
+def test_policy_compiler_render_tag_when_condition_or_group_parenthesised():
+    """Multiple has_any_of_tags entries are OR-joined and parenthesised."""
+    result = render_tag_when_condition(
+        has_tags=None, has_any_of_tags={"b_tag": "v2", "a_tag": "v1"}
+    )
+
+    assert result == "(has_tag_value('a_tag', 'v1') OR has_tag_value('b_tag', 'v2'))"
+
+
+def test_policy_compiler_render_tag_when_condition_or_group_single_no_parens():
+    """A single has_any_of_tags entry renders without parentheses."""
+    result = render_tag_when_condition(
+        has_tags=None, has_any_of_tags={"domain": "sales"}
+    )
+
+    assert result == "has_tag_value('domain', 'sales')"
+
+
+def test_policy_compiler_render_tag_when_condition_and_then_or():
+    """has_tags (AND group) and has_any_of_tags (OR group) combine with AND."""
+    result = render_tag_when_condition(
+        has_tags={"b_tag": "v2", "a_tag": "v1"},
+        has_any_of_tags={"geo": "us", "domain": "sales"},
+    )
+
+    assert result == (
+        "has_tag_value('a_tag', 'v1') AND has_tag_value('b_tag', 'v2') "
+        "AND (has_tag_value('domain', 'sales') OR has_tag_value('geo', 'us'))"
+    )
+
+
+def test_policy_compiler_render_tag_when_condition_wildcard_uses_has_tag():
+    """A '*' value renders as has_tag(key) without a value predicate."""
+    result = render_tag_when_condition(has_tags={"domain": "*"}, has_any_of_tags=None)
+
+    assert result == "has_tag('domain')"
+
+
+def test_policy_compiler_render_tag_when_condition_wildcard_in_or_group():
+    """A '*' value in has_any_of_tags renders as has_tag(key)."""
+    result = render_tag_when_condition(
+        has_tags=None, has_any_of_tags={"geo": "*", "domain": "sales"}
+    )
+
+    assert result == "(has_tag_value('domain', 'sales') OR has_tag('geo'))"
+
+
+def test_policy_compiler_render_tag_when_condition_escapes_quotes():
+    """Single quotes in keys or values are escaped by doubling."""
+    result = render_tag_when_condition(
+        has_tags={"owner": "O'Brien"}, has_any_of_tags=None
+    )
+
+    assert result == "has_tag_value('owner', 'O''Brien')"
+
+
+def test_policy_compiler_render_tag_when_condition_escapes_quotes_in_key():
+    """Single quotes in tag keys are escaped by doubling."""
+    result = render_tag_when_condition(
+        has_tags={"key'name": "value"}, has_any_of_tags=None
+    )
+
+    assert result == "has_tag_value('key''name', 'value')"
+
+
+def test_policy_compiler_render_tag_when_condition_escapes_quotes_in_or_group():
+    """Single quotes in or_group keys/values are escaped."""
+    result = render_tag_when_condition(has_tags=None, has_any_of_tags={"o'key": "v'al"})
+
+    assert result == "has_tag_value('o''key', 'v''al')"
+
+
+def test_policy_compiler_render_tag_when_condition_none_when_no_tags():
+    """Returns None when both has_tags and has_any_of_tags are None/empty."""
+    result = render_tag_when_condition(has_tags=None, has_any_of_tags=None)
+
+    assert result is None
+
+
+def test_policy_compiler_render_tag_when_condition_none_when_both_empty_dicts():
+    """Returns None when both has_tags and has_any_of_tags are empty dicts."""
+    result = render_tag_when_condition(has_tags={}, has_any_of_tags={})
+
+    assert result is None
+
+
+def test_policy_compiler_render_tag_when_condition_matches_mask_policy_when_condition():
+    """render_tag_when_condition produces the same output as compile_desired_policies
+    for a mask policy with the same has_tags/has_any_of_tags."""
+    policy_dict = _fgac_policy(
+        has_tags={"b_tag": "v2", "a_tag": "v1"},
+        has_any_of_tags={"geo": "us", "domain": "sales"},
+    )
+    config = ResourcesConfig.model_validate(
+        _catalog_with_policy(policy_dict, level="table")
+    )
+
+    compiled = _compile(config)
+    (policy,) = compiled
+    compiled_when = policy.when_condition
+
+    # Call render_tag_when_condition with same inputs
+    rendered_when = render_tag_when_condition(
+        has_tags={"b_tag": "v2", "a_tag": "v1"},
+        has_any_of_tags={"geo": "us", "domain": "sales"},
+    )
+
+    assert rendered_when == compiled_when
