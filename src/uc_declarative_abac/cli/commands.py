@@ -63,6 +63,23 @@ class _ScopeFeature:
     hierarchical: bool = True
 
 
+# Renamed scope settings as (old_field, old_flag, new_field, new_flag). The old
+# name is folded into the new one, with a deprecation warning, before validation.
+_RENAMED_SCOPE_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "taggable_management_scopes",
+        "--taggable-management-scopes",
+        "securable_management_scopes",
+        "--securable-management-scopes",
+    ),
+    (
+        "taggable_creation_scopes",
+        "--taggable-creation-scopes",
+        "securable_creation_scopes",
+        "--securable-creation-scopes",
+    ),
+)
+
 # One entry per new scope flag, listing the deprecated flags it replaces. Used to
 # (a) reject a new + deprecated combination for the same feature, and (b) warn
 # when a deprecated flag is used on its own.
@@ -88,8 +105,8 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         "--manage-privileges-for-catalogs",
     ),
     _ScopeFeature(
-        "taggable_management_scopes",
-        "--taggable-management-scopes",
+        "securable_management_scopes",
+        "--securable-management-scopes",
         "enable_taggable_management",
         "--enable-taggable-management",
         "manage_taggables_for_namespaces",
@@ -98,8 +115,8 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         "--manage-taggables-for-catalogs",
     ),
     _ScopeFeature(
-        "taggable_creation_scopes",
-        "--taggable-creation-scopes",
+        "securable_creation_scopes",
+        "--securable-creation-scopes",
         "enable_taggable_creation",
         "--enable-taggable-creation",
         "create_taggables_for_namespaces",
@@ -226,6 +243,35 @@ def _resolve_namespace_values(
             "--create-taggables-for-namespaces",
         ),
     }
+
+
+def _apply_renamed_scope_settings(settings: RunSettings) -> RunSettings:
+    """Resolve renamed scope settings (taggable_*_scopes → securable_*_scopes).
+
+    Folds legacy taggable scope names to their new securable equivalents,
+    handling conversions from any source (CLI flag, env var, settings file)
+    before scope-conflict checks, so deprecated names never reach run().
+    """
+    current = settings
+    for old_field, old_flag, new_field, new_flag in _RENAMED_SCOPE_SETTINGS:
+        old_value = getattr(current, old_field)
+        if old_value is None:
+            continue
+        new_value = getattr(current, new_field)
+        if new_value is not None:
+            raise CliUsageError(
+                f"{old_flag} is deprecated and cannot be combined with {new_flag}. "
+                f"Use {new_flag} only."
+            )
+        _logger.warning(
+            "%s (settings key '%s') is deprecated; use %s (settings key '%s') instead.",
+            old_flag,
+            old_field,
+            new_flag,
+            new_field,
+        )
+        current = current.model_copy(update={new_field: old_value, old_field: None})
+    return current
 
 
 def _deprecated_flags_for_warning(
@@ -364,8 +410,8 @@ def _run_kwargs(
         "delete_policies_for_namespaces": delete_policies,
         "tag_management_scopes": settings.tag_management_scopes,
         "privilege_management_scopes": settings.privilege_management_scopes,
-        "taggable_management_scopes": settings.taggable_management_scopes,
-        "taggable_creation_scopes": settings.taggable_creation_scopes,
+        "securable_management_scopes": settings.securable_management_scopes,
+        "securable_creation_scopes": settings.securable_creation_scopes,
         "policy_deletion_scopes": settings.policy_deletion_scopes,
         "group_creation_scopes": settings.group_creation_scopes,
         "group_management_scopes": settings.group_management_scopes,
@@ -485,6 +531,7 @@ def run_cli(argv: list[str] | None = None) -> int:
         # check (CliUsageError -> exit 2) fires for every command, not just
         # deploy. New-vs-deprecated conflicts are checked before the legacy
         # namespace resolution so the clearer error wins over a stale warning.
+        settings = _apply_renamed_scope_settings(settings)
         _resolve_scope_flags(settings, namespace)
         namespaces = _resolve_namespace_values(settings, namespace)
         if namespace.command == "validate":

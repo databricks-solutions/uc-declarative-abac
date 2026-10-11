@@ -345,8 +345,8 @@ class RunContext:
 
     tag_scope: Scope
     privilege_scope: Scope
-    taggable_management_scope: Scope
-    taggable_creation_scope: Scope
+    securable_management_scope: Scope
+    securable_creation_scope: Scope
     policy_delete_scope: Scope
     group_creation_scope: Scope
     group_management_scope: Scope
@@ -375,12 +375,12 @@ class RunContext:
         return self.privilege_scope.is_active()
 
     @property
-    def enable_taggable_management(self) -> bool:
-        return self.taggable_management_scope.is_active()
+    def enable_securable_management(self) -> bool:
+        return self.securable_management_scope.is_active()
 
     @property
-    def enable_taggable_creation(self) -> bool:
-        return self.taggable_creation_scope.is_active()
+    def enable_securable_creation(self) -> bool:
+        return self.securable_creation_scope.is_active()
 
     @property
     def enable_policy_deletion(self) -> bool:
@@ -628,7 +628,7 @@ class NonexistentSecurableError(OrchestratorError):
             message = f"{base} {hint}"
         else:
             message = (
-                f"{base} Please add its namespace to --taggable-creation-scopes "
+                f"{base} Please add its namespace to --securable-creation-scopes "
                 "to have the engine create it, or remove it from config."
             )
         super().__init__(message)

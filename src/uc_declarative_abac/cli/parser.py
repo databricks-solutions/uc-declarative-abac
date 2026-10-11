@@ -122,7 +122,8 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help=(
             "Permit the engine to update attributes (e.g. owner) on existing catalogs, schemas, "
-            "tables, and volumes. Off by default. (Deprecated: use --taggable-management-scopes.)"
+            "tables, and volumes. Off by default. "
+            "(Deprecated: use --securable-management-scopes.)"
         ),
     )
     parser.add_argument(
@@ -131,7 +132,8 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help=(
             "Permit the engine to create catalogs, schemas, tables, and volumes declared in "
-            "config but absent from UC. Off by default. (Deprecated: use --taggable-creation-scopes.)"
+            "config but absent from UC. Off by default. "
+            "(Deprecated: use --securable-creation-scopes.)"
         ),
     )
     parser.add_argument(
@@ -164,9 +166,10 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help=(
             "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
-            "scope taggable attribute updates (e.g. owner) to (default = all configured "
+            "scope attribute updates (e.g. owner) to (default = all configured "
             "catalogs). Function attributes always flow through. No effect unless "
-            "--enable-taggable-management is set. (Deprecated: use --taggable-management-scopes.)"
+            "--enable-taggable-management is set. "
+            "(Deprecated: use --securable-management-scopes.)"
         ),
     )
     parser.add_argument(
@@ -178,7 +181,8 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
             "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
             "scope creation of missing catalogs/schemas/tables/volumes to (default = all "
             "configured catalogs). Function creation always flows through. No effect unless "
-            "--enable-taggable-creation is set. (Deprecated: use --taggable-creation-scopes.)"
+            "--enable-taggable-creation is set. "
+            "(Deprecated: use --securable-creation-scopes.)"
         ),
     )
     parser.add_argument(
@@ -228,27 +232,45 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--taggable-management-scopes",
+        "--securable-management-scopes",
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
-            "Scope taggable attribute updates (e.g. owner) to matching securables. "
-            f"Function attributes always flow through. {_HIER_SCOPE_GRAMMAR} "
+            "Scope attribute updates (owner, comment, rfa_destinations) on existing "
+            "catalogs, schemas, tables, volumes, and columns to matching securables. "
+            "Does not gate function management — functions are always managed by the "
+            f"engine as a core capability. {_HIER_SCOPE_GRAMMAR} "
             "Supersedes --enable-taggable-management and "
             "--manage-taggables-for-namespaces."
         ),
+    )
+    parser.add_argument(
+        "--securable-creation-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope creation of missing catalogs, schemas, tables, volumes, and columns "
+            "to matching securables. Does not gate function creation — functions are "
+            "always created by the engine as a core capability. "
+            f"{_HIER_SCOPE_GRAMMAR} Supersedes --enable-taggable-creation and "
+            "--create-taggables-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--taggable-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --securable-management-scopes.)",
     )
     parser.add_argument(
         "--taggable-creation-scopes",
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
-        help=(
-            "Scope creation of missing catalogs/schemas/tables/volumes to matching "
-            f"securables. Function creation always flows through. {_HIER_SCOPE_GRAMMAR} "
-            "Supersedes --enable-taggable-creation and --create-taggables-for-namespaces."
-        ),
+        help="(Deprecated: use --securable-creation-scopes.)",
     )
     parser.add_argument(
         "--policy-deletion-scopes",

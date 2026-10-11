@@ -140,16 +140,16 @@ class ActualState:
     principals: dict[str, Principal]
 
 
-def _filter_taggable_attributes(
+def _filter_securable_attributes(
     attrs: set[SecurableAttributes],
     scope: Scope,
 ) -> set[SecurableAttributes]:
     """Drop non-function attributes whose namespace isn't in scope.
 
     FUNCTION attributes always flow through (functions are engine-managed
-    independently of the taggable-management gate). When ``scope`` is empty
+    independently of the securable-management scope). When ``scope`` is empty
     (inert), this collapses to "function attributes only" — which is the
-    behaviour when taggable management is off.
+    behaviour when securable management is off.
     """
     return {
         a
@@ -365,8 +365,8 @@ def _build_run_context(
     delete_policies_for_namespaces: str,
     tag_management_scopes: str | None,
     privilege_management_scopes: str | None,
-    taggable_management_scopes: str | None,
-    taggable_creation_scopes: str | None,
+    securable_management_scopes: str | None,
+    securable_creation_scopes: str | None,
     policy_deletion_scopes: str | None,
     group_creation_scopes: str | None,
     group_management_scopes: str | None,
@@ -412,14 +412,14 @@ def _build_run_context(
         legacy_namespaces=manage_privileges_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    taggable_management_scope = _build_hierarchical_scope(
-        taggable_management_scopes,
+    securable_management_scope = _build_hierarchical_scope(
+        securable_management_scopes,
         legacy_enabled=enable_taggable_management,
         legacy_namespaces=manage_taggables_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    taggable_creation_scope = _build_hierarchical_scope(
-        taggable_creation_scopes,
+    securable_creation_scope = _build_hierarchical_scope(
+        securable_creation_scopes,
         legacy_enabled=enable_taggable_creation,
         legacy_namespaces=create_taggables_for_namespaces,
         configured_namespaces=configured_namespaces,
@@ -475,14 +475,14 @@ def _build_run_context(
                 privilege_scope,
             ),
             (
-                "--taggable-management-scopes",
-                taggable_management_scopes,
-                taggable_management_scope,
+                "--securable-management-scopes",
+                securable_management_scopes,
+                securable_management_scope,
             ),
             (
-                "--taggable-creation-scopes",
-                taggable_creation_scopes,
-                taggable_creation_scope,
+                "--securable-creation-scopes",
+                securable_creation_scopes,
+                securable_creation_scope,
             ),
             ("--policy-deletion-scopes", policy_deletion_scopes, policy_delete_scope),
         ],
@@ -543,8 +543,8 @@ def _build_run_context(
     return RunContext(
         tag_scope=tag_scope,
         privilege_scope=privilege_scope,
-        taggable_management_scope=taggable_management_scope,
-        taggable_creation_scope=taggable_creation_scope,
+        securable_management_scope=securable_management_scope,
+        securable_creation_scope=securable_creation_scope,
         policy_delete_scope=policy_delete_scope,
         group_creation_scope=group_creation_scope,
         group_management_scope=group_management_scope,
@@ -579,8 +579,8 @@ def _full_fetch_context() -> RunContext:
     return RunContext(
         tag_scope=all_hierarchical,
         privilege_scope=all_hierarchical,
-        taggable_management_scope=all_hierarchical,
-        taggable_creation_scope=all_hierarchical,
+        securable_management_scope=all_hierarchical,
+        securable_creation_scope=all_hierarchical,
         policy_delete_scope=all_hierarchical,
         group_creation_scope=all_flat,
         group_management_scope=all_flat,
@@ -715,28 +715,29 @@ def fetch_actual_state(
         governed_tag_fetch_names |= collect_referenced_tag_keys(config)
     desired_attributes = compile_desired_attributes(config)
     # RFA targets restrict the attribute fetch to securables that declare
-    # ``rfa_destinations``. Non-function securables are gated by the taggable-
-    # management flag (RFA is a managed attribute), but FUNCTION targets are always
-    # fetched — functions are engine-managed independently of the flag. Without this
-    # a function's actual RFA state stays ``None`` when the flag is off, and an
+    # ``rfa_destinations``. Non-function securables are gated by the securable-
+    # management scope (RFA is a managed attribute), but FUNCTION targets are always
+    # fetched — functions are engine-managed independently of the scope. Without this
+    # a function's actual RFA state stays ``None`` when the scope is empty, and an
     # explicit empty list ("remove all") silently no-ops against a ``None`` actual.
     rfa_targets: set[tuple[SecurableType, str]] = {
         (a.securable_type, a.full_name)
         for a in desired_attributes
         if a.rfa_destinations is not None
         and (
-            ctx.enable_taggable_management or a.securable_type == SecurableType.FUNCTION
+            ctx.enable_securable_management
+            or a.securable_type == SecurableType.FUNCTION
         )
     }
     # Parent tables of every in-scope column that declares a comment. Column comments
-    # are a managed (taggable) attribute, so — unlike rfa_targets, which has a FUNCTION
-    # exception — they are fetched only for tables in the taggable-management scope.
+    # are a managed (securable) attribute, so — unlike rfa_targets, which has a FUNCTION
+    # exception — they are fetched only for tables in the securable-management scope.
     column_comment_tables: set[str] = {
         a.full_name.rpartition(".")[0]
         for a in desired_attributes
         if a.securable_type == SecurableType.COLUMN
         and a.comment is not None
-        and ctx.taggable_management_scope.matches(a.full_name)
+        and ctx.securable_management_scope.matches(a.full_name)
     }
 
     # actual_tags is needed by either the tags domain (for the diff) or the privileges
@@ -945,14 +946,14 @@ def _execute_changes(
     )
 
     # Securables workflow (before tags and privileges). Drop non-function attribute
-    # updates whose namespace isn't in the taggable-management scope; function
+    # updates whose namespace isn't in the securable-management scope; function
     # attributes always flow through (FUNCTION creation/replacement is always
     # engine-managed).
-    desired_attributes = _filter_taggable_attributes(
-        compile_desired_attributes(config), settings.taggable_management_scope
+    desired_attributes = _filter_securable_attributes(
+        compile_desired_attributes(config), settings.securable_management_scope
     )
-    in_scope_actual_attributes = _filter_taggable_attributes(
-        actual_attributes, settings.taggable_management_scope
+    in_scope_actual_attributes = _filter_securable_attributes(
+        actual_attributes, settings.securable_management_scope
     )
     securable_diff = compute_securable_diff(
         desired_attributes,
@@ -961,7 +962,7 @@ def _execute_changes(
         actual_securables,
         resolver,
         change_logger,
-        creation_in_scope_namespaces=settings.taggable_creation_scope,
+        creation_in_scope_namespaces=settings.securable_creation_scope,
         ignore_unresolvable=ignore_unresolvable,
     )
 
@@ -1169,8 +1170,8 @@ def run(
     delete_policies_for_namespaces: str = "*",
     tag_management_scopes: str | None = None,
     privilege_management_scopes: str | None = None,
-    taggable_management_scopes: str | None = None,
-    taggable_creation_scopes: str | None = None,
+    securable_management_scopes: str | None = None,
+    securable_creation_scopes: str | None = None,
     policy_deletion_scopes: str | None = None,
     group_creation_scopes: str | None = None,
     group_management_scopes: str | None = None,
@@ -1276,8 +1277,8 @@ def run(
         delete_policies_for_namespaces=delete_policies_for_namespaces,
         tag_management_scopes=tag_management_scopes,
         privilege_management_scopes=privilege_management_scopes,
-        taggable_management_scopes=taggable_management_scopes,
-        taggable_creation_scopes=taggable_creation_scopes,
+        securable_management_scopes=securable_management_scopes,
+        securable_creation_scopes=securable_creation_scopes,
         policy_deletion_scopes=policy_deletion_scopes,
         group_creation_scopes=group_creation_scopes,
         group_management_scopes=group_management_scopes,

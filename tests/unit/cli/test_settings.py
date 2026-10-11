@@ -255,3 +255,31 @@ def test_settings_env_target_schema_overrides_file(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("UC_ABAC_TARGET_SCHEMA", "main.env_schema")
     settings = resolve_settings({}, settings_file=None)
     assert settings.target_schema == "main.env_schema"
+
+
+def test_settings_loads_securable_management_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_SECURABLE_MANAGEMENT_SCOPES", "main.*")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.securable_management_scopes == "main.*"
+
+
+def test_settings_loads_securable_creation_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_SECURABLE_CREATION_SCOPES", "staging.*")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.securable_creation_scopes == "staging.*"
+
+
+def test_settings_loads_legacy_taggable_scopes_from_settings_file(tmp_path: Path):
+    settings_path = tmp_path / "uc_abac.yml"
+    settings_path.write_text(
+        yaml.dump(
+            {
+                "taggable_management_scopes": "main.*",
+                "taggable_creation_scopes": "staging.*",
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.taggable_management_scopes == "main.*"
+    assert settings.taggable_creation_scopes == "staging.*"

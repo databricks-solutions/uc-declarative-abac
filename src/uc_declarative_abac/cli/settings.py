@@ -51,6 +51,9 @@ _ENV_FIELD_MAP: dict[str, str] = {
     # New unified scope flags (supersede the enable_* + *_for_namespaces pairs).
     "tag_management_scopes": "TAG_MANAGEMENT_SCOPES",
     "privilege_management_scopes": "PRIVILEGE_MANAGEMENT_SCOPES",
+    "securable_management_scopes": "SECURABLE_MANAGEMENT_SCOPES",
+    "securable_creation_scopes": "SECURABLE_CREATION_SCOPES",
+    # Deprecated aliases of securable_*_scopes (resolved and warned in commands.py).
     "taggable_management_scopes": "TAGGABLE_MANAGEMENT_SCOPES",
     "taggable_creation_scopes": "TAGGABLE_CREATION_SCOPES",
     "policy_deletion_scopes": "POLICY_DELETION_SCOPES",
@@ -101,6 +104,9 @@ class RunSettings(BaseModel):
     # "") ⇒ new-style scope, where "" disables and "*" covers everything.
     tag_management_scopes: str | None = None
     privilege_management_scopes: str | None = None
+    securable_management_scopes: str | None = None
+    securable_creation_scopes: str | None = None
+    # Deprecated aliases of securable_*_scopes (resolved and warned in commands.py).
     taggable_management_scopes: str | None = None
     taggable_creation_scopes: str | None = None
     policy_deletion_scopes: str | None = None
