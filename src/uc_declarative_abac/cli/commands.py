@@ -412,6 +412,7 @@ def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
         warehouse_id=warehouse_id,
         target_schema=target_schema,
         system_catalog=settings.system_catalog,
+        timezone=settings.timezone,
         ref_override_strategy=settings.ref_override_strategy,
         max_parallel_tables=settings.max_parallel_changes,
         dry_run=dry_run,

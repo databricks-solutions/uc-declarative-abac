@@ -81,7 +81,7 @@ Global flags: `--version`, `--verbose`, `--quiet`, `--settings-file <path>`.
 uc-abac dump --config-dir ./configs --warehouse-id <warehouse-id> --target-schema main.uc_abac_state
 ```
 
-Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
+Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--timezone` (run date for grant-policy expiry, default UTC), `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
 
 | Table | Contents | Based on |
 |---|---|---|
@@ -96,7 +96,7 @@ Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (a
 | `group_members` | Direct members of every group the config references (except `account users`) | `system.access.parent_groups_latest` |
 | `group_assumers` | Principals permitted to assume every group the config references (except `account users`) | Group access-control rule sets |
 
-Principals are written by their canonical identifier (username, group name, or service principal application ID), matching the system tables, so the tables join directly to them.
+Principals are written by their canonical identifier (username, group name, or service principal application ID), matching the system tables, so the tables join directly to them. Every table's first column, `config_file_path`, is the config YAML file that declares the row's object (for a privilege, the active grant policy that produces it), or NULL when the object isn't in the config.
 
 ### Feature scopes
 
@@ -325,6 +325,7 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` (see [Dumping 
 | `warehouse-id` | yes | — | SQL warehouse ID used to read state and write the tables |
 | `target-schema` | yes | — | Schema to write the tables into, as `<catalog>.<schema>`; created when it doesn't exist |
 | `system-catalog` | no | `system` | Catalog containing the `information_schema` views used for state queries |
+| `timezone` | no | `''` | IANA timezone for the run date that decides which grant policies have expired; omit to use UTC |
 | `profile` | no | `''` | Databricks CLI profile; omit to use unified auth via the step's `env` |
 | `dry-run` | no | `'false'` | Log the statements that would run without executing them |
 | `max-parallel-changes` | no | `'8'` | Maximum number of tables written concurrently |

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+
 from uc_declarative_abac import ActualState
+from uc_declarative_abac.configs import ResourcesConfig
 from uc_declarative_abac.domains import Domain, DomainIcon
 from uc_declarative_abac.dumper import (
     TABLE_SPECS,
@@ -10,6 +14,7 @@ from uc_declarative_abac.dumper import (
     split_securable_name,
 )
 from uc_declarative_abac.governed_tags import GovernedTag
+from uc_declarative_abac.orchestrator import load_config
 from uc_declarative_abac.policies import Policy
 from uc_declarative_abac.principals import Group, Principal
 from uc_declarative_abac.privileges import SecurablePrivilege
@@ -52,11 +57,29 @@ def _state(**overrides: object) -> ActualState:
 
 
 def _rows(
-    name: str, state: ActualState, referenced_tag_keys: frozenset[str] = frozenset()
+    name: str,
+    state: ActualState,
+    referenced_tag_keys: frozenset[str] = frozenset(),
+    config: ResourcesConfig | None = None,
 ):
     """Build rows for a table spec: list of dicts keyed by column name."""
     spec = _spec(name)
-    context = build_dump_context(state, referenced_tag_keys)
+    # Support both old (referenced_tag_keys) and new (config) parameter styles
+    if config is None:
+        # Build a minimal config with the referenced tag keys declared
+        governed_tags_dict = (
+            {key: {"name": key} for key in referenced_tag_keys}
+            if referenced_tag_keys
+            else None
+        )
+        config = ResourcesConfig.model_validate(
+            {
+                "catalogs": {},
+                "governed_tags": governed_tags_dict,
+            }
+        )
+    run_date = date(2026, 1, 1)
+    context = build_dump_context(state, config, run_date)
     return spec.rows(state, context)
 
 
@@ -96,6 +119,19 @@ def test_dumper_tables_spec_names_and_order():
     ]
     actual_names = [spec.name for spec in TABLE_SPECS]
     assert actual_names == expected_names
+
+
+def test_dumper_tables_every_spec_starts_with_config_file_path():
+    """Every table spec's first column is config_file_path with type STRING."""
+    for spec in TABLE_SPECS:
+        assert len(spec.columns) > 0, f"TableSpec {spec.name} has no columns"
+        first_col = spec.columns[0]
+        assert first_col.name == "config_file_path", (
+            f"First column of {spec.name} is {first_col.name}, expected config_file_path"
+        )
+        assert first_col.sql_type == "STRING", (
+            f"config_file_path in {spec.name} has type {first_col.sql_type}, expected STRING"
+        )
 
 
 def test_dumper_tables_row_column_alignment():
@@ -217,6 +253,362 @@ def test_dumper_tables_split_column():
     """split_securable_name for COLUMN 'c.s.t.col' -> ('c', 's', 't', 'col')."""
     result = split_securable_name(SecurableType.COLUMN, "c.s.t.col")
     assert result == ("c", "s", "t", "col")
+
+
+# --- config_file_path attribution tests ---
+
+
+def test_dumper_tables_securables_config_file_path_from_config(tmp_path: Path):
+    """securables: config_file_path is the securable's config file (via catalog)."""
+    catalog_file = tmp_path / "catalog.yaml"
+    catalog_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: users
+"""
+    )
+    config = load_config(tmp_path)
+    # Verify the config loaded correctly
+    assert "main" in config.catalogs
+    table = Table(SecurableType.TABLE, "main.public.users")
+    state = _state(securables=frozenset([table]))
+    rows = _rows("securables", state, config=config)
+    assert len(rows) == 1
+    row = rows[0]
+    # config_file_path should be the catalog's file
+    assert row["config_file_path"] == catalog_file.as_posix()
+
+
+def test_dumper_tables_securables_config_file_path_none_when_undeclared():
+    """securables: config_file_path is None when securable not in config."""
+    table = Table(SecurableType.TABLE, "undeclared.schema.table")
+    state = _state(securables=frozenset([table]))
+    config = ResourcesConfig.model_validate({"catalogs": {}})
+    rows = _rows("securables", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] is None
+
+
+def test_dumper_tables_securable_tags_config_file_path_from_tagged_securable(
+    tmp_path: Path,
+):
+    """securable_tags: config_file_path is from the tagged securable's config."""
+    catalog_file = tmp_path / "catalog.yaml"
+    catalog_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: orders
+              tags:
+                env: prod
+"""
+    )
+    config = load_config(tmp_path)
+    assert "main" in config.catalogs
+    tag = SecurableTag(SecurableType.TABLE, "main.public.orders", "env", "prod")
+    state = _state(tags=frozenset([tag]))
+    rows = _rows("securable_tags", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == catalog_file.as_posix()
+
+
+def test_dumper_tables_securable_tags_column_tag_falls_back_to_table_config(
+    tmp_path: Path,
+):
+    """securable_tags: column tag config_file_path falls back to parent table when
+    column not declared."""
+    table_file = tmp_path / "table.yaml"
+    table_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: orders
+"""
+    )
+    config = load_config(tmp_path)
+    assert "main" in config.catalogs
+    # Column not declared in config, but parent table is
+    col_tag = SecurableTag(
+        SecurableType.COLUMN, "main.public.orders.customer_id", "sensitivity", "high"
+    )
+    state = _state(tags=frozenset([col_tag]))
+    rows = _rows("securable_tags", state, config=config)
+    assert len(rows) == 1
+    # Should fall back to the parent table's config_file_path
+    assert rows[0]["config_file_path"] == table_file.as_posix()
+
+
+def test_dumper_tables_securable_privileges_config_file_path_from_grant_policy(
+    tmp_path: Path,
+):
+    """securable_privileges: config_file_path is from the grant policy that produces
+    the privilege."""
+    table_file = tmp_path / "table.yaml"
+    table_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_select
+                  type: grant
+                  privileges: [select]
+                  to: [user1]
+"""
+    )
+    config = load_config(tmp_path)
+    assert "main" in config.catalogs
+    user = Principal(PrincipalType.USER, identifier="user1", name="user1")
+    priv = SecurablePrivilege(
+        SecurableType.TABLE, "main.public.data", user, PrivilegeType.SELECT
+    )
+    state = _state(privileges=frozenset([priv]), principals={"user1": user})
+    rows = _rows("securable_privileges", state, config=config)
+    assert len(rows) == 1
+    # config_file_path should be from the table (which has the inline grant policy)
+    assert rows[0]["config_file_path"] == table_file.as_posix()
+
+
+def test_dumper_tables_securable_privileges_config_file_path_none_when_no_policy_produces_it():
+    """securable_privileges: config_file_path is None when no grant policy produces the
+    privilege."""
+    user = Principal(PrincipalType.USER, identifier="user1", name="user1")
+    priv = SecurablePrivilege(
+        SecurableType.TABLE, "main.public.data", user, PrivilegeType.SELECT
+    )
+    state = _state(privileges=frozenset([priv]), principals={"user1": user})
+    config = ResourcesConfig.model_validate({"catalogs": {}})
+    rows = _rows("securable_privileges", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] is None
+
+
+def test_dumper_tables_abac_policies_config_file_path_from_policy_config(
+    tmp_path: Path,
+):
+    """abac_policies: config_file_path is from the policy config."""
+    table_file = tmp_path / "table.yaml"
+    table_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: sensitive
+              policies:
+                - name: mask_pii
+                  type: mask
+                  function: c.s.mask_func
+                  columns:
+                    - alias: email
+                      has_tags:
+                        sensitivity: high
+"""
+    )
+    config = load_config(tmp_path)
+    assert "main" in config.catalogs
+    policy = Policy(
+        SecurableType.TABLE,
+        "main.public.sensitive",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (),
+        (),
+        None,
+        (("email", "has_tag_value('sensitivity', 'high')"),),
+        None,
+        (),
+    )
+    state = _state(policies=frozenset([policy]))
+    rows = _rows("abac_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == table_file.as_posix()
+
+
+def test_dumper_tables_governed_tags_config_file_path_from_governed_tag(
+    tmp_path: Path,
+):
+    """governed_tags: config_file_path is from the governed tag config."""
+    tag_file = tmp_path / "tags.yaml"
+    tag_file.write_text(
+        """
+resources:
+  governed_tags:
+    pii:
+      name: pii
+      description: Personally identifiable information
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.governed_tags is not None and "pii" in config.governed_tags
+    tag = GovernedTag(
+        "pii",
+        description="Personally identifiable information",
+        allowed_values=frozenset(),
+    )
+    state = _state(governed_tags=frozenset([tag]))
+    rows = _rows(
+        "governed_tags", state, config=config, referenced_tag_keys=frozenset(["pii"])
+    )
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == tag_file.as_posix()
+
+
+def test_dumper_tables_governed_tag_assigners_config_file_path_from_governed_tag(
+    tmp_path: Path,
+):
+    """governed_tag_assigners: config_file_path is from the governed tag config."""
+    tag_file = tmp_path / "tags.yaml"
+    tag_file.write_text(
+        """
+resources:
+  governed_tags:
+    sensitive:
+      name: sensitive
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.governed_tags is not None and "sensitive" in config.governed_tags
+    assigner = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    tag = GovernedTag("sensitive", assigners=frozenset([assigner]))
+    state = _state(
+        governed_tags=frozenset([tag]),
+        principals={"alice": assigner},
+    )
+    rows = _rows(
+        "governed_tag_assigners",
+        state,
+        config=config,
+        referenced_tag_keys=frozenset(["sensitive"]),
+    )
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == tag_file.as_posix()
+
+
+def test_dumper_tables_domains_config_file_path_from_domain(tmp_path: Path):
+    """domains: config_file_path is from the domain config."""
+    domain_file = tmp_path / "domain.yaml"
+    domain_file.write_text(
+        """
+resources:
+  domains:
+    data_domain:
+      governed_tag: data_domain
+      description: Our data domain
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.domains is not None and "data_domain" in config.domains
+    domain = Domain("data_domain", description="Our data domain")
+    state = _state(domains=frozenset([domain]))
+    rows = _rows("domains", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == domain_file.as_posix()
+
+
+def test_dumper_tables_principals_group_config_file_path_from_group(tmp_path: Path):
+    """principals: GROUP rows have config_file_path from group config."""
+    group_file = tmp_path / "groups.yaml"
+    group_file.write_text(
+        """
+resources:
+  groups:
+    data-team:
+      name: data-team
+      id: "123"
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.groups is not None and "data-team" in config.groups
+    group_principal = Principal(
+        PrincipalType.GROUP, identifier="data-team", name="data-team", internal_id="123"
+    )
+    state = _state(principals={"data-team": group_principal})
+    rows = _rows("principals", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == group_file.as_posix()
+
+
+def test_dumper_tables_principals_user_config_file_path_none():
+    """principals: USER rows have config_file_path=None (users not in config)."""
+    user = Principal(
+        PrincipalType.USER, identifier="alice", name="alice", internal_id="456"
+    )
+    state = _state(principals={"alice": user})
+    config = ResourcesConfig.model_validate({"catalogs": {}})
+    rows = _rows("principals", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] is None
+
+
+def test_dumper_tables_group_members_config_file_path_from_group(tmp_path: Path):
+    """group_members: config_file_path is from the group config."""
+    group_file = tmp_path / "groups.yaml"
+    group_file.write_text(
+        """
+resources:
+  groups:
+    engineers:
+      name: engineers
+      id: "789"
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.groups is not None and "engineers" in config.groups
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    group = Group("engineers", id="789", members=frozenset([user]))
+    state = _state(
+        groups=frozenset([group]),
+        principals={"alice": user},
+    )
+    rows = _rows("group_members", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == group_file.as_posix()
+
+
+def test_dumper_tables_group_assumers_config_file_path_from_group(tmp_path: Path):
+    """group_assumers: config_file_path is from the group config."""
+    group_file = tmp_path / "groups.yaml"
+    group_file.write_text(
+        """
+resources:
+  groups:
+    admins:
+      name: admins
+      id: "999"
+"""
+    )
+    config = load_config(tmp_path)
+    assert config.groups is not None and "admins" in config.groups
+    user = Principal(PrincipalType.USER, identifier="bob", name="bob")
+    group = Group("admins", id="999", assumers=frozenset([user]))
+    state = _state(
+        groups=frozenset([group]),
+        principals={"bob": user},
+    )
+    rows = _rows("group_assumers", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["config_file_path"] == group_file.as_posix()
 
 
 # --- securables table tests ---

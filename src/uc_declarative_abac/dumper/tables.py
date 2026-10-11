@@ -10,6 +10,13 @@ engine's internal state classes; columns beyond the base system table are API-co
 extensions and say so in their comment. Only state the full fetch actually populates is
 written, so consumers join to the system tables for any further metadata.
 
+Each row's ``config_file_path`` column links the row back to the uc-abac config file
+that declares the corresponding object: the YAML file path from the config's
+``file_path`` attribute, or NULL when the object is not in config. For privileges,
+the path is attributed to the first active grant policy in config that produces the
+privilege (using the actual tags in state to match). Column tags without a column
+config fall back to their parent table's file path.
+
 Securable path columns follow the ``information_schema`` convention: ``securable_name``
 is the object's own name, and ``catalog_name`` / ``schema_name`` / ``table_name`` are set
 for the object and its descendants — so a column tag carries its parent table in
@@ -29,8 +36,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date
 
-from uc_declarative_abac.governed_tags import GovernedTag
+from uc_declarative_abac.configs import ResourcesConfig
+from uc_declarative_abac.dumper.attribution import ConfigPaths, build_config_paths
+from uc_declarative_abac.governed_tags import GovernedTag, collect_referenced_tag_keys
 from uc_declarative_abac.orchestrator import ActualState
 from uc_declarative_abac.policies import Policy
 from uc_declarative_abac.principals import Group, Principal
@@ -57,7 +67,8 @@ TARGET_SCHEMA_COMMENT = (
     "state behind a uc-abac declarative ABAC config (securables, tags, privileges, "
     "policies, governed tags, domains, principals, and group memberships). Every "
     "table is fully replaced by each uc-abac dump run; see each table's comment for "
-    "its grain and source."
+    "its grain and source. Each table's config_file_path column links rows back to the "
+    "uc-abac config file that declares them."
 )
 
 
@@ -78,10 +89,13 @@ class DumpContext:
     so identifier-only principals (group members, assumers, grantees) can be given a
     type, display name, and internal id. ``referenced_tag_keys`` is the set of governed
     tag keys the config references — the only tags whose assigners were fetched.
+    ``config_paths`` maps each state object (securable, policy, privilege, etc.) back to
+    its config file path.
     """
 
     principals_by_identifier: dict[str, Principal]
     referenced_tag_keys: frozenset[str]
+    config_paths: ConfigPaths
 
 
 @dataclass(frozen=True)
@@ -117,12 +131,13 @@ def split_securable_name(
 
 
 def build_dump_context(
-    state: ActualState, referenced_tag_keys: frozenset[str]
+    state: ActualState, config: ResourcesConfig, run_date: date
 ) -> DumpContext:
-    """Build the shared row-builder lookups for ``state``."""
+    """Build the shared row-builder lookups for ``state`` and its ``config``."""
     return DumpContext(
         principals_by_identifier={p.identifier: p for p in state.principals.values()},
-        referenced_tag_keys=frozenset(referenced_tag_keys),
+        referenced_tag_keys=frozenset(collect_referenced_tag_keys(config)),
+        config_paths=build_config_paths(config, state, run_date),
     )
 
 
@@ -164,7 +179,11 @@ def _securable_comment(
     return attributes.comment if attributes else None
 
 
-def _securable_row(securable: Securable, attributes: SecurableAttributes | None) -> Row:
+def _securable_row(
+    securable: Securable,
+    attributes: SecurableAttributes | None,
+    context: DumpContext,
+) -> Row:
     catalog_name, schema_name, _, securable_name = split_securable_name(
         securable.securable_type, securable.full_name
     )
@@ -172,6 +191,9 @@ def _securable_row(securable: Securable, attributes: SecurableAttributes | None)
     is_function = isinstance(securable, Function)
     owner = attributes.owner if attributes else None
     return {
+        "config_file_path": context.config_paths.securable(
+            securable.securable_type, securable.full_name
+        ),
         "catalog_name": catalog_name,
         "schema_name": schema_name,
         "securable_name": securable_name,
@@ -192,7 +214,7 @@ def _securable_row(securable: Securable, attributes: SecurableAttributes | None)
 def _securables_rows(state: ActualState, context: DumpContext) -> list[Row]:
     attributes = {(a.securable_type, a.full_name): a for a in state.attributes}
     rows = [
-        _securable_row(s, attributes.get((s.securable_type, s.full_name)))
+        _securable_row(s, attributes.get((s.securable_type, s.full_name)), context)
         for s in state.securables
     ]
     return sorted(
@@ -212,8 +234,17 @@ def _securable_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
         catalog_name, schema_name, table_name, securable_name = split_securable_name(
             tag.securable_type, tag.securable_full_name
         )
+        config_path = context.config_paths.securable(
+            tag.securable_type, tag.securable_full_name
+        )
+        if config_path is None and tag.securable_type == SecurableType.COLUMN:
+            parent_table_name = f"{catalog_name}.{schema_name}.{table_name}"
+            config_path = context.config_paths.securable(
+                SecurableType.TABLE, parent_table_name
+            )
         rows.append(
             {
+                "config_file_path": config_path,
                 "catalog_name": catalog_name,
                 "schema_name": schema_name,
                 "table_name": table_name,
@@ -270,6 +301,7 @@ def _securable_privileges_rows(state: ActualState, context: DumpContext) -> list
         grantee = privilege.principal.identifier
         rows.append(
             {
+                "config_file_path": context.config_paths.privilege(privilege),
                 "grantee": grantee,
                 "grantee_type": _principal_type_of(grantee, context),
                 "catalog_name": catalog_name,
@@ -298,11 +330,14 @@ _POLICY_TYPE_NAMES = {
 }
 
 
-def _abac_policy_row(policy: Policy) -> Row:
+def _abac_policy_row(policy: Policy, context: DumpContext) -> Row:
     catalog_name, schema_name, _, securable_name = split_securable_name(
         policy.securable_type, policy.securable_full_name
     )
     return {
+        "config_file_path": context.config_paths.policy(
+            policy.securable_type, policy.securable_full_name, policy.name
+        ),
         "policy_name": policy.name,
         "policy_type": _POLICY_TYPE_NAMES[policy.policy_type],
         "catalog_name": catalog_name,
@@ -325,7 +360,7 @@ def _abac_policy_row(policy: Policy) -> Row:
 
 
 def _abac_policies_rows(state: ActualState, context: DumpContext) -> list[Row]:
-    rows = [_abac_policy_row(policy) for policy in state.policies]
+    rows = [_abac_policy_row(policy, context) for policy in state.policies]
     return sorted(
         rows,
         key=lambda r: _sort_key(
@@ -341,6 +376,7 @@ def _governed_tag_assigner_row(
         assigner, context
     )
     return {
+        "config_file_path": context.config_paths.governed_tag(tag.name),
         "assigner_id": assigner_id,
         "tag_key": tag.name,
         "assigner_display_name": display_name,
@@ -368,6 +404,7 @@ def _governed_tag_assigners_rows(state: ActualState, context: DumpContext) -> li
 def _governed_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
     rows: list[Row] = [
         {
+            "config_file_path": context.config_paths.governed_tag(tag.name),
             "tag_key": tag.name,
             "description": tag.description or None,
             "values": tuple(sorted(tag.allowed_values)),
@@ -380,6 +417,7 @@ def _governed_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
 def _domains_rows(state: ActualState, context: DumpContext) -> list[Row]:
     rows: list[Row] = [
         {
+            "config_file_path": context.config_paths.domain(domain.tag_key),
             "tag_key": domain.tag_key,
             "description": domain.description or None,
             "subtitle": domain.subtitle,
@@ -395,9 +433,18 @@ def _domains_rows(state: ActualState, context: DumpContext) -> list[Row]:
     return sorted(rows, key=lambda r: _sort_key(r["tag_key"]))
 
 
+def _principal_config_path(principal: Principal, context: DumpContext) -> str | None:
+    """Only groups are declared in config; a group's configured ``id`` is its
+    internal id, so it matches even after an account-side rename."""
+    if principal.principal_type != PrincipalType.GROUP:
+        return None
+    return context.config_paths.group(principal.name, principal.internal_id)
+
+
 def _principals_rows(state: ActualState, context: DumpContext) -> list[Row]:
     rows: list[Row] = [
         {
+            "config_file_path": _principal_config_path(p, context),
             "principal_id": p.internal_id,
             "principal_type": p.principal_type.value,
             "display_name": p.name,
@@ -423,6 +470,9 @@ def _group_principal_row(
         principal, context
     )
     return {
+        "config_file_path": context.config_paths.group(
+            group.display_name, group.id or None
+        ),
         f"{prefix}_id": principal_id,
         "group_id": group.id or None,
         "group_display_name": group.display_name,
@@ -459,6 +509,15 @@ def _group_members_rows(state: ActualState, context: DumpContext) -> list[Row]:
 def _group_assumers_rows(state: ActualState, context: DumpContext) -> list[Row]:
     return _group_pair_rows(state, context, lambda g: g.assumers, "assumer")
 
+
+_CONFIG_FILE_PATH = ColumnSpec(
+    "config_file_path",
+    "STRING",
+    "YAML file in the uc-abac config that declares this row's object (for a "
+    "privilege, the first active grant policy that produces it; for a tag on an "
+    "undeclared column, the column's table). NULL when the object is not in the "
+    f"config. {_EXTENSION_NOTE}",
+)
 
 _CATALOG_NAME = ColumnSpec(
     "catalog_name",
@@ -501,6 +560,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"routines. {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             _CATALOG_NAME,
             _SCHEMA_NAME,
             _SECURABLE_NAME,
@@ -556,6 +616,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"table_tags, column_tags, volume_tags). {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             _CATALOG_NAME,
             _SCHEMA_NAME,
             _TABLE_NAME,
@@ -579,6 +640,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"{_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "grantee",
                 "STRING",
@@ -610,6 +672,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"system.information_schema.abac_policy_definitions. {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec("policy_name", "STRING", "Name of the policy."),
             ColumnSpec("policy_type", "STRING", "ROW_FILTER or COLUMN_MASK."),
             ColumnSpec(
@@ -701,6 +764,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"key. Mirrors the Tag Policies API (no system table). {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec("tag_key", "STRING", "Governed tag key."),
             ColumnSpec(
                 "description",
@@ -724,6 +788,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"system table). {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "assigner_id",
                 "STRING",
@@ -755,6 +820,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"Mirrors the Domains API (no system table). {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "tag_key", "STRING", "Governed tag key that identifies the domain."
             ),
@@ -804,6 +870,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"per principal. Mirrors system.access.principals_latest. {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "principal_id",
                 "STRING",
@@ -842,6 +909,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"memberships. {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "member_id",
                 "STRING",
@@ -882,6 +950,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             f"group_members (no system table). {_REPLACED_NOTE}"
         ),
         columns=(
+            _CONFIG_FILE_PATH,
             ColumnSpec(
                 "assumer_id",
                 "STRING",

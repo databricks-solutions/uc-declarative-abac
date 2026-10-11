@@ -25,6 +25,12 @@ inputs:
       queries. Defaults to the Databricks system catalog.
     required: false
     default: system
+  timezone:
+    description: >-
+      IANA timezone used to compute the run date for evaluating expiry_date on
+      grant policies (e.g. Australia/Melbourne). Omit (leave empty) to use UTC.
+    required: false
+    default: ''
   profile:
     description: >-
       Optional Databricks CLI profile name from ~/.databrickscfg. Omit (leave empty)
@@ -67,6 +73,7 @@ runs:
         WAREHOUSE_ID: ${{ inputs.warehouse-id }}
         TARGET_SCHEMA: ${{ inputs.target-schema }}
         SYSTEM_CATALOG: ${{ inputs.system-catalog }}
+        TIMEZONE: ${{ inputs.timezone }}
         PROFILE: ${{ inputs.profile }}
         DRY_RUN: ${{ inputs.dry-run }}
         MAX_PARALLEL_CHANGES: ${{ inputs.max-parallel-changes }}
@@ -80,6 +87,9 @@ runs:
         )
         if [[ "$DRY_RUN" == "true" ]]; then
           args+=(--dry-run)
+        fi
+        if [[ -n "$TIMEZONE" ]]; then
+          args+=(--timezone "$TIMEZONE")
         fi
         if [[ -n "$PROFILE" ]]; then
           args+=(--profile "$PROFILE")

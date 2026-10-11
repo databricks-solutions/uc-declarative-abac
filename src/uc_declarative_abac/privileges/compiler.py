@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 
 from uc_declarative_abac.configs import (
@@ -39,6 +40,16 @@ def _expand_privilege(
     return frozenset({item})
 
 
+def is_active_grant_policy(policy: GrantPolicyConfig, run_date: date) -> bool:
+    """Return True if the grant policy is active on the given run_date.
+
+    A policy is active if it has no expiry_date or its expiry_date is after the
+    run_date. This is the single source of truth for grant-policy expiry checking,
+    shared by deploy (compile_desired_privileges) and dump (match_grant_policy_privileges).
+    """
+    return policy.expiry_date is None or policy.expiry_date > run_date
+
+
 def compile_desired_privileges(
     config: ResourcesConfig,
     desired_tags: set[SecurableTag],
@@ -66,9 +77,7 @@ def compile_desired_privileges(
         run_date = datetime.now(UTC).date()
     tag_index = _build_tag_index(desired_tags)
     policies = _collect_policies(config)
-    active_policies = [
-        p for p in policies if p.expiry_date is None or p.expiry_date > run_date
-    ]
+    active_policies = [p for p in policies if is_active_grant_policy(p, run_date)]
     valid_policies = _drop_policies_with_ungoverned_tags(
         active_policies,
         governed_tag_names,
@@ -240,6 +249,37 @@ def _policy_targets_securable_type(
     return policy.for_securable_type is None or sec_type == policy.for_securable_type
 
 
+def _match_policy(
+    policy: GrantPolicyConfig,
+    tag_index: dict[str, tuple[SecurableType, set[tuple[str, str | None]]]],
+) -> set[SecurablePrivilege]:
+    """Match a single policy against the tag index and emit its privileges.
+
+    Tagless policies (empty tags) grant directly to their attached securable.
+    Policies with tags match securables within their scope (attached
+    securable and its children).
+    """
+    result: set[SecurablePrivilege] = set()
+    if not policy.has_tags and not policy.has_any_of_tags:
+        # Tagless policy — grant directly to the attached securable
+        sec_type = _policy_securable_type(policy)
+        if not _policy_targets_securable_type(policy, sec_type):
+            return result
+        result |= _emit_privileges(sec_type, policy.parent_full_name, policy)
+        return result
+
+    # Tag-matching policy — scoped to the attached securable and its children
+    for full_name, (sec_type, actual_tags) in tag_index.items():
+        if not _policy_targets_securable_type(policy, sec_type):
+            continue
+        if not _is_within_scope(full_name, policy):
+            continue
+        if not _policy_tags_match(policy, actual_tags):
+            continue
+        result |= _emit_privileges(sec_type, full_name, policy)
+    return result
+
+
 def _match_policies(
     policies: list[GrantPolicyConfig],
     tag_index: dict[str, tuple[SecurableType, set[tuple[str, str | None]]]],
@@ -252,23 +292,7 @@ def _match_policies(
     """
     result: set[SecurablePrivilege] = set()
     for policy in policies:
-        if not policy.has_tags and not policy.has_any_of_tags:
-            # Tagless policy — grant directly to the attached securable
-            sec_type = _policy_securable_type(policy)
-            if not _policy_targets_securable_type(policy, sec_type):
-                continue
-            result |= _emit_privileges(sec_type, policy.parent_full_name, policy)
-            continue
-
-        # Tag-matching policy — scoped to the attached securable and its children
-        for full_name, (sec_type, actual_tags) in tag_index.items():
-            if not _policy_targets_securable_type(policy, sec_type):
-                continue
-            if not _is_within_scope(full_name, policy):
-                continue
-            if not _policy_tags_match(policy, actual_tags):
-                continue
-            result |= _emit_privileges(sec_type, full_name, policy)
+        result |= _match_policy(policy, tag_index)
     return result
 
 
@@ -325,3 +349,26 @@ def _tags_match_any(
         ):
             return True
     return False
+
+
+def match_grant_policy_privileges(
+    config: ResourcesConfig,
+    tags: Iterable[SecurableTag],
+    run_date: date,
+) -> list[tuple[GrantPolicyConfig, frozenset[SecurablePrivilege]]]:
+    """Pair every active grant policy with the privileges it alone would emit.
+
+    Used by ``uc-abac dump`` to attribute an actual privilege back to the grant
+    policy config that produces it, so pairs are returned in config hierarchy order
+    (catalog, then schema, then table policies) and overlapping policies are kept
+    separate. ``tags`` are matched exactly as ``compile_desired_privileges`` matches
+    desired tags. Unlike that function, policies referencing ungoverned tag keys are
+    not dropped: this is attribution, not deployment, so there is nothing to protect.
+    Privileges carry unresolved (config display-name) principals.
+    """
+    tag_index = _build_tag_index(set(tags))
+    return [
+        (policy, frozenset(_match_policy(policy, tag_index)))
+        for policy in _collect_policies(config)
+        if is_active_grant_policy(policy, run_date)
+    ]

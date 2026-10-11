@@ -23,7 +23,6 @@ from uc_declarative_abac.dumper.tables import (
     TableSpec,
     build_dump_context,
 )
-from uc_declarative_abac.governed_tags import collect_referenced_tag_keys
 from uc_declarative_abac.helpers import UnityCatalogHelper, WorkspaceHelper
 from uc_declarative_abac.orchestrator import (
     ActualState,
@@ -35,6 +34,7 @@ from uc_declarative_abac.utils import (
     ExecutionError,
     parallel_for_each,
     quote_securable,
+    run_date_for_timezone,
     sql_string_literal,
 )
 
@@ -195,6 +195,7 @@ def dump_state(
     max_parallel_tables: int = DEFAULT_MAX_PARALLEL_TABLES,
     dry_run: bool = False,
     progress_interval_seconds: float = DEFAULT_PROGRESS_INTERVAL_SECONDS,
+    timezone: str = "UTC",
 ) -> None:
     """Fetch the actual state behind the config and write it to the target schema.
 
@@ -224,7 +225,7 @@ def dump_state(
     logger.log_fetching_state()
     state = fetch_actual_state(config, uc_helper, ws_helper)
     logger.log_fetched_state(state)
-    context = build_dump_context(state, frozenset(collect_referenced_tag_keys(config)))
+    context = build_dump_context(state, config, run_date_for_timezone(timezone))
 
     def _on_complete(
         spec: TableSpec, result: tuple[int, int] | None, error: Exception | None

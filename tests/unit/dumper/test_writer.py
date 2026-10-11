@@ -923,3 +923,49 @@ def test_dumper_writer_schema_missing_creates_schema_with_comment(
         f"  SQL: {schema_sql}\n"
         f"  Expected to contain: {expected_comment}"
     )
+
+
+# ---
+# Timezone handling tests
+# ---
+
+
+def test_dumper_writer_builds_context_with_run_date_for_timezone(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state computes run_date using run_date_for_timezone(timezone) and passes it to build_dump_context."""
+    from uc_declarative_abac.utils import run_date_for_timezone
+
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    captured_run_date = None
+
+    def mock_build_dump_context(state, config, run_date):
+        nonlocal captured_run_date
+        captured_run_date = run_date
+        # Return a MagicMock context to allow the test to proceed
+        return MagicMock()
+
+    with (
+        patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch,
+        patch(
+            "uc_declarative_abac.dumper.writer.build_dump_context"
+        ) as mock_build_context,
+    ):
+        mock_fetch.return_value = _build_minimal_actual_state()
+        mock_build_context.side_effect = mock_build_dump_context
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            timezone="Pacific/Kiritimati",
+        )
+
+    # Verify that build_dump_context was called with the run_date computed from the timezone
+    expected_run_date = run_date_for_timezone("Pacific/Kiritimati")
+    assert captured_run_date == expected_run_date, (
+        f"Expected run_date to be {expected_run_date}, got {captured_run_date}"
+    )

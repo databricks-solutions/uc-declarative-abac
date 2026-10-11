@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 
-from uc_declarative_abac.configs import ResourcesConfig
+from uc_declarative_abac.configs import GrantPolicyConfig, ResourcesConfig
 from uc_declarative_abac.logger import ChangeLogger
 from uc_declarative_abac.principals import Principal
 from uc_declarative_abac.privileges import (
     SecurablePrivilege,
     compile_desired_privileges,
+    is_active_grant_policy,
+    match_grant_policy_privileges,
 )
 from uc_declarative_abac.tags import SecurableTag
 from uc_declarative_abac.types import (
@@ -3030,3 +3032,264 @@ def test_privilege_compiler_grants_all_matched_types_when_for_omitted():
     targets = {(p.securable_type, p.securable_full_name) for p in result}
     assert (SecurableType.SCHEMA, "c.s") in targets
     assert (SecurableType.TABLE, "c.s.t") in targets
+
+
+# ---------------------------------------------------------------------------
+# is_active_grant_policy
+# ---------------------------------------------------------------------------
+
+
+def test_privilege_compiler_is_active_grant_policy_when_no_expiry():
+    """A grant policy with no expiry_date is always active."""
+    policy = GrantPolicyConfig.model_validate(
+        {
+            "catalog_name": "cat",
+            "name": "g",
+            "type": "grant",
+            "privileges": ["select"],
+            "to": ["team"],
+            "has_tags": {"env": "prod"},
+        }
+    )
+
+    assert is_active_grant_policy(policy, date(2025, 1, 1))
+    assert is_active_grant_policy(policy, date(2099, 12, 31))
+
+
+def test_privilege_compiler_is_active_grant_policy_when_expiry_after_run_date():
+    """A grant policy whose expiry_date > run_date is active."""
+    policy = GrantPolicyConfig.model_validate(
+        {
+            "catalog_name": "cat",
+            "name": "g",
+            "type": "grant",
+            "privileges": ["select"],
+            "to": ["team"],
+            "has_tags": {"env": "prod"},
+            "expiry_date": date(2026, 12, 31),
+        }
+    )
+
+    assert is_active_grant_policy(policy, date(2025, 1, 1))
+    assert is_active_grant_policy(policy, date(2026, 12, 30))
+
+
+def test_privilege_compiler_is_inactive_grant_policy_when_expiry_on_or_before_run_date():
+    """A grant policy whose expiry_date <= run_date is inactive."""
+    policy_expiry = GrantPolicyConfig.model_validate(
+        {
+            "catalog_name": "cat",
+            "name": "g",
+            "type": "grant",
+            "privileges": ["select"],
+            "to": ["team"],
+            "has_tags": {"env": "prod"},
+            "expiry_date": date(2025, 1, 1),
+        }
+    )
+
+    assert not is_active_grant_policy(policy_expiry, date(2025, 1, 1))
+    assert not is_active_grant_policy(policy_expiry, date(2025, 1, 2))
+
+
+# ---------------------------------------------------------------------------
+# match_grant_policy_privileges
+# ---------------------------------------------------------------------------
+
+
+def test_privilege_compiler_match_grant_policy_privileges_pairs_each_policy_with_its_privileges():
+    """Each policy is paired only with its own privileges."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "policies": [
+                        {
+                            "name": "g1",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["team_a"],
+                            "has_tags": {"env": "prod"},
+                        },
+                        {
+                            "name": "g2",
+                            "type": "grant",
+                            "privileges": ["modify"],
+                            "to": ["team_b"],
+                            "has_tags": {"env": "dev"},
+                        },
+                    ],
+                    "schemas": [
+                        {"name": "s", "tables": [{"name": "prod_t"}, {"name": "dev_t"}]}
+                    ],
+                }
+            }
+        }
+    )
+    tags = {
+        SecurableTag(SecurableType.TABLE, "cat.s.prod_t", "env", "prod"),
+        SecurableTag(SecurableType.TABLE, "cat.s.dev_t", "env", "dev"),
+    }
+
+    result = match_grant_policy_privileges(config, tags, date(2025, 1, 1))
+    by_name = {policy.name: privileges for policy, privileges in result}
+
+    assert {(p.securable_full_name, p.privilege_type) for p in by_name["g1"]} >= {
+        ("cat.s.prod_t", PrivilegeType.SELECT)
+    }
+    assert all(p.securable_full_name != "cat.s.dev_t" for p in by_name["g1"])
+    assert {(p.securable_full_name, p.privilege_type) for p in by_name["g2"]} >= {
+        ("cat.s.dev_t", PrivilegeType.MODIFY)
+    }
+    assert all(p.securable_full_name != "cat.s.prod_t" for p in by_name["g2"])
+
+
+def test_privilege_compiler_match_grant_policy_privileges_keeps_overlapping_policies_separate():
+    """Two policies producing the same privilege are kept as separate pairs, in
+    hierarchy order (catalog-level before schema-level)."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "policies": [
+                        {
+                            "name": "catalog_grant",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["readers"],
+                            "has_tags": {"public": None},
+                        },
+                    ],
+                    "schemas": [
+                        {
+                            "name": "s",
+                            "policies": [
+                                {
+                                    "name": "schema_grant",
+                                    "type": "grant",
+                                    "privileges": ["select"],
+                                    "to": ["readers"],
+                                    "has_tags": {"public": None},
+                                }
+                            ],
+                            "tables": [{"name": "t"}],
+                        }
+                    ],
+                }
+            }
+        }
+    )
+    tags = {SecurableTag(SecurableType.TABLE, "cat.s.t", "public", "")}
+    expected = SecurablePrivilege(
+        SecurableType.TABLE,
+        "cat.s.t",
+        Principal(PrincipalType.UNKNOWN, name="readers"),
+        PrivilegeType.SELECT,
+    )
+
+    result = match_grant_policy_privileges(config, tags, date(2025, 1, 1))
+
+    assert [policy.name for policy, _ in result] == ["catalog_grant", "schema_grant"]
+    assert all(expected in privileges for _, privileges in result)
+
+
+def test_privilege_compiler_match_grant_policy_privileges_excludes_expired_policies():
+    """Expired policies are excluded from the result."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "policies": [
+                        {
+                            "name": "active",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["team"],
+                            "has_tags": {"env": "prod"},
+                        },
+                        {
+                            "name": "expired",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["team"],
+                            "has_tags": {"env": "prod"},
+                            "expiry_date": date(2025, 1, 1),
+                        },
+                    ],
+                    "schemas": [{"name": "s", "tables": [{"name": "t"}]}],
+                }
+            }
+        }
+    )
+
+    desired_tags = {
+        SecurableTag(SecurableType.TABLE, "cat.s.t", "env", "prod"),
+    }
+
+    result = match_grant_policy_privileges(config, desired_tags, date(2025, 1, 2))
+
+    policy_names = {p[0].name for p in result}
+    assert policy_names == {"active"}
+    assert "expired" not in policy_names
+
+
+def test_privilege_compiler_match_grant_policy_privileges_tagless_policy_grants_attached_securable():
+    """A policy with no tags grants on its attached securable."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "policies": [
+                        {
+                            "name": "g",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["team"],
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    desired_tags = set()
+
+    result = match_grant_policy_privileges(config, desired_tags, date(2025, 1, 1))
+
+    assert len(result) == 1
+    policy, privileges = result[0]
+    assert policy.name == "g"
+    assert len(privileges) > 0
+
+
+def test_privilege_compiler_match_grant_policy_privileges_ignores_ungoverned_tag_check():
+    """A policy referencing a tag key still matches; no governed-tag validation."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "policies": [
+                        {
+                            "name": "g",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["team"],
+                            "has_tags": {"ungoverned_key": "*"},
+                        }
+                    ],
+                    "schemas": [{"name": "s", "tables": [{"name": "t"}]}],
+                }
+            }
+        }
+    )
+
+    desired_tags = {
+        SecurableTag(SecurableType.TABLE, "cat.s.t", "ungoverned_key", "whatever"),
+    }
+
+    result = match_grant_policy_privileges(config, desired_tags, date(2025, 1, 1))
+
+    assert len(result) == 1
+    policy, privileges = result[0]
+    assert policy.name == "g"
+    assert len(privileges) > 0

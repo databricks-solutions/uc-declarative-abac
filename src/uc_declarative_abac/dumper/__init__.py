@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from uc_declarative_abac.dumper.attribution import ConfigPaths, build_config_paths
 from uc_declarative_abac.dumper.logger import DumpLogger
 from uc_declarative_abac.dumper.sql import (
     INSERT_MAX_BYTES,
@@ -30,12 +31,14 @@ __all__ = [
     "TABLE_SPECS",
     "TARGET_SCHEMA_COMMENT",
     "ColumnSpec",
+    "ConfigPaths",
     "DumpContext",
     "DumpLogger",
     "InsertBatch",
     "Row",
     "RowValue",
     "TableSpec",
+    "build_config_paths",
     "build_create_table_sql",
     "build_dump_context",
     "build_insert_batches",
