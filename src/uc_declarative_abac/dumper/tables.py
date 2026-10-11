@@ -15,7 +15,8 @@ that declares the corresponding object: the YAML file path from the config's
 ``file_path`` attribute, or NULL when the object is not in config. For privileges,
 the path is attributed to the first active grant policy in config that produces the
 privilege (using the actual tags in state to match). Column tags without a column
-config fall back to their parent table's file path.
+config fall back to their parent table's file path. The pseudo_policies table is read
+from config grant policies (not Unity Catalog state).
 
 Securable path columns follow the ``information_schema`` convention: ``securable_name``
 is the object's own name, and ``catalog_name`` / ``schema_name`` / ``table_name`` are set
@@ -38,13 +39,17 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 
-from uc_declarative_abac.configs import ResourcesConfig
+from uc_declarative_abac.configs import (
+    GrantPolicyConfig,
+    ResourcesConfig,
+    iter_policy_configs,
+)
 from uc_declarative_abac.dumper.attribution import ConfigPaths, build_config_paths
 from uc_declarative_abac.governed_tags import GovernedTag, collect_referenced_tag_keys
 from uc_declarative_abac.orchestrator import ActualState
-from uc_declarative_abac.policies import Policy
+from uc_declarative_abac.policies import Policy, render_tag_when_condition
 from uc_declarative_abac.principals import Group, Principal
-from uc_declarative_abac.privileges import SecurablePrivilege
+from uc_declarative_abac.privileges import SecurablePrivilege, is_active_grant_policy
 from uc_declarative_abac.securables import (
     Column,
     Function,
@@ -88,14 +93,15 @@ class DumpContext:
     ``principals_by_identifier`` maps a canonical identifier to its resolved principal,
     so identifier-only principals (group members, assumers, grantees) can be given a
     type, display name, and internal id. ``referenced_tag_keys`` is the set of governed
-    tag keys the config references — the only tags whose assigners were fetched.
-    ``config_paths`` maps each state object (securable, policy, privilege, etc.) back to
-    its config file path.
+    tag keys the config references — the only tags whose assigners were fetched. ``config_paths`` maps each state object (securable, policy, privilege, etc.)
+    back to its config file path. ``grant_policies`` holds the active grant policy configs,
+    in config hierarchy order, used by the pseudo_policies table.
     """
 
     principals_by_identifier: dict[str, Principal]
     referenced_tag_keys: frozenset[str]
     config_paths: ConfigPaths
+    grant_policies: tuple[GrantPolicyConfig, ...]
 
 
 @dataclass(frozen=True)
@@ -134,10 +140,16 @@ def build_dump_context(
     state: ActualState, config: ResourcesConfig, run_date: date
 ) -> DumpContext:
     """Build the shared row-builder lookups for ``state`` and its ``config``."""
+    grant_policies = tuple(
+        p
+        for p in iter_policy_configs(config)
+        if isinstance(p, GrantPolicyConfig) and is_active_grant_policy(p, run_date)
+    )
     return DumpContext(
         principals_by_identifier={p.identifier: p for p in state.principals.values()},
         referenced_tag_keys=frozenset(collect_referenced_tag_keys(config)),
         config_paths=build_config_paths(config, state, run_date),
+        grant_policies=grant_policies,
     )
 
 
@@ -267,9 +279,14 @@ def _securable_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
     )
 
 
+def _privilege_name(value: str) -> str:
+    """System-table spelling of a privilege, e.g. ``use_catalog`` -> ``USE CATALOG``."""
+    return value.upper().replace("_", " ")
+
+
 def _privilege_type_name(privilege: SecurablePrivilege) -> str:
     """System-table spelling of a privilege, e.g. ``use_catalog`` -> ``USE CATALOG``."""
-    return privilege.privilege_type.value.upper().replace("_", " ")
+    return _privilege_name(privilege.privilege_type.value)
 
 
 def _principal_type_of(identifier: str, context: DumpContext) -> str | None:
@@ -359,14 +376,74 @@ def _abac_policy_row(policy: Policy, context: DumpContext) -> Row:
     }
 
 
-def _abac_policies_rows(state: ActualState, context: DumpContext) -> list[Row]:
-    rows = [_abac_policy_row(policy, context) for policy in state.policies]
+def _sort_policy_rows(rows: list[Row]) -> list[Row]:
+    """Shared ordering for abac_policies and pseudo_policies rows."""
     return sorted(
         rows,
         key=lambda r: _sort_key(
             r["catalog_name"], r["schema_name"], r["securable_name"], r["policy_name"]
         ),
     )
+
+
+def _abac_policies_rows(state: ActualState, context: DumpContext) -> list[Row]:
+    rows = [_abac_policy_row(policy, context) for policy in state.policies]
+    return _sort_policy_rows(rows)
+
+
+def _pseudo_policy_row(
+    policy: GrantPolicyConfig, principals: dict[str, Principal]
+) -> Row:
+    """One pseudo_policies row; config display names in ``to`` are written as
+    canonical identifiers via ``principals`` (keyed by display name), or as-is when
+    they don't resolve."""
+    attached_type = policy.parent_securable_type
+    catalog_name, schema_name, _, securable_name = split_securable_name(
+        attached_type, policy.parent_full_name
+    )
+    to_principals = tuple(
+        principal.identifier if (principal := principals.get(name)) else name
+        for name in policy.to
+    )
+    return {
+        "config_file_path": policy.file_path.as_posix() if policy.file_path else None,
+        "policy_name": policy.name,
+        "policy_type": "GRANT",
+        "catalog_name": catalog_name,
+        "schema_name": schema_name,
+        "securable_name": securable_name,
+        "on_securable_type": attached_type.value,
+        "to_principals": to_principals,
+        "except_principals": None,
+        "for_securable_type": policy.for_securable_type.value
+        if policy.for_securable_type
+        else None,
+        "privileges": tuple(_privilege_name(p.value) for p in policy.privileges),
+        "when_condition": render_tag_when_condition(
+            policy.has_tags, policy.has_any_of_tags
+        ),
+        "match_columns": None,
+        "function_full_name": None,
+        "on_column": None,
+        "using_columns": None,
+        "comment": policy.comment,
+    }
+
+
+def _pseudo_policies_rows(state: ActualState, context: DumpContext) -> list[Row]:
+    """One row per active grant policy, in declared order, from config.
+
+    Grant policies are expanded into concrete privileges (in securable_privileges)
+    rather than deployed as UC ABAC policies, so this table is read from config.
+    Only active (unexpired) grants are included. Columns reserved for mask/filter
+    policies (match_columns, function_full_name, on_column, using_columns, and
+    except_principals) are NULL.
+    """
+    rows = [
+        _pseudo_policy_row(policy, state.principals)
+        for policy in context.grant_policies
+    ]
+    return _sort_policy_rows(rows)
 
 
 def _governed_tag_assigner_row(
@@ -549,6 +626,100 @@ _SECURABLE_TYPE = ColumnSpec(
     f"{_EXTENSION_NOTE}",
 )
 
+_POLICY_COLUMNS: tuple[ColumnSpec, ...] = (
+    _CONFIG_FILE_PATH,
+    ColumnSpec("policy_name", "STRING", "Name of the policy."),
+    ColumnSpec(
+        "policy_type",
+        "STRING",
+        "ROW_FILTER or COLUMN_MASK in abac_policies; GRANT in pseudo_policies.",
+    ),
+    ColumnSpec(
+        "catalog_name",
+        "STRING",
+        "Catalog the policy is attached to, or that contains the securable it "
+        "is attached to.",
+    ),
+    ColumnSpec(
+        "schema_name",
+        "STRING",
+        "Schema the policy is attached to, or that contains the table it is "
+        "attached to. NULL for catalog-level policies.",
+    ),
+    ColumnSpec(
+        "securable_name",
+        "STRING",
+        "Name of the securable the policy is attached to: the catalog, schema, "
+        "or table name. Differs from abac_policy_definitions, which leaves it "
+        "NULL for catalog- and schema-level policies.",
+    ),
+    ColumnSpec(
+        "on_securable_type",
+        "STRING",
+        "Type of securable the policy is attached to: CATALOG, SCHEMA, or TABLE.",
+    ),
+    ColumnSpec(
+        "to_principals",
+        "ARRAY<STRING>",
+        f"Principals the policy applies to, {_IDENTIFIER_NOTE}.",
+    ),
+    ColumnSpec(
+        "except_principals",
+        "ARRAY<STRING>",
+        f"Principals exempted from the policy, {_IDENTIFIER_NOTE}. NULL for grant "
+        "policies.",
+    ),
+    ColumnSpec(
+        "for_securable_type",
+        "STRING",
+        "Type of securable the policy applies to, e.g. TABLE. NULL for a grant policy "
+        "that applies to every securable type.",
+    ),
+    ColumnSpec(
+        "privileges",
+        "ARRAY<STRING>",
+        "Privileges granted, as declared, e.g. SELECT, USE CATALOG, or READ. NULL for "
+        "row filters and column masks.",
+    ),
+    ColumnSpec(
+        "when_condition",
+        "STRING",
+        "WHEN condition limiting the securables the policy applies to (for a grant "
+        "policy, its tag predicate). NULL when the policy has none.",
+    ),
+    ColumnSpec(
+        "match_columns",
+        "ARRAY<STRING>",
+        "MATCH COLUMNS conditions in order, each as '<condition> AS <alias>'. NULL "
+        "for grant policies.",
+    ),
+    ColumnSpec(
+        "function_full_name",
+        "STRING",
+        "Fully qualified name of the row filter or column mask function. NULL for "
+        "grant policies. "
+        f"{_EXTENSION_NOTE}",
+    ),
+    ColumnSpec(
+        "on_column",
+        "STRING",
+        "Alias of the matched column the mask is applied to. NULL for row filters "
+        f"and grant policies. {_EXTENSION_NOTE}",
+    ),
+    ColumnSpec(
+        "using_columns",
+        "ARRAY<STRING>",
+        "Arguments passed to the function via USING COLUMNS, in order. NULL for "
+        "grant policies. "
+        f"{_EXTENSION_NOTE}",
+    ),
+    ColumnSpec(
+        "comment",
+        "STRING",
+        f"Policy comment. NULL when unset. {_EXTENSION_NOTE}",
+    ),
+)
+
 TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec(
         name="securables",
@@ -671,91 +842,19 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             "securables in the uc-abac config's catalogs: one row per policy. Mirrors "
             f"system.information_schema.abac_policy_definitions. {_REPLACED_NOTE}"
         ),
-        columns=(
-            _CONFIG_FILE_PATH,
-            ColumnSpec("policy_name", "STRING", "Name of the policy."),
-            ColumnSpec("policy_type", "STRING", "ROW_FILTER or COLUMN_MASK."),
-            ColumnSpec(
-                "catalog_name",
-                "STRING",
-                "Catalog the policy is attached to, or that contains the securable it "
-                "is attached to.",
-            ),
-            ColumnSpec(
-                "schema_name",
-                "STRING",
-                "Schema the policy is attached to, or that contains the table it is "
-                "attached to. NULL for catalog-level policies.",
-            ),
-            ColumnSpec(
-                "securable_name",
-                "STRING",
-                "Name of the securable the policy is attached to: the catalog, schema, "
-                "or table name. Differs from abac_policy_definitions, which leaves it "
-                "NULL for catalog- and schema-level policies.",
-            ),
-            ColumnSpec(
-                "on_securable_type",
-                "STRING",
-                "Type of securable the policy is attached to: CATALOG, SCHEMA, or TABLE.",
-            ),
-            ColumnSpec(
-                "to_principals",
-                "ARRAY<STRING>",
-                f"Principals the policy applies to, {_IDENTIFIER_NOTE}.",
-            ),
-            ColumnSpec(
-                "except_principals",
-                "ARRAY<STRING>",
-                f"Principals exempted from the policy, {_IDENTIFIER_NOTE}.",
-            ),
-            ColumnSpec(
-                "for_securable_type",
-                "STRING",
-                "Type of securable the policy applies to, e.g. TABLE.",
-            ),
-            ColumnSpec(
-                "privileges",
-                "ARRAY<STRING>",
-                "Reserved for GRANT and DENY ABAC policies. Always NULL for row filter "
-                "and column mask policies.",
-            ),
-            ColumnSpec(
-                "when_condition",
-                "STRING",
-                "WHEN condition limiting the securables the policy applies to. NULL "
-                "when the policy has none.",
-            ),
-            ColumnSpec(
-                "match_columns",
-                "ARRAY<STRING>",
-                "MATCH COLUMNS conditions in order, each as '<condition> AS <alias>'.",
-            ),
-            ColumnSpec(
-                "function_full_name",
-                "STRING",
-                "Fully qualified name of the row filter or column mask function. "
-                f"{_EXTENSION_NOTE}",
-            ),
-            ColumnSpec(
-                "on_column",
-                "STRING",
-                "Alias of the matched column the mask is applied to. NULL for row "
-                f"filters. {_EXTENSION_NOTE}",
-            ),
-            ColumnSpec(
-                "using_columns",
-                "ARRAY<STRING>",
-                "Arguments passed to the function via USING COLUMNS, in order. "
-                f"{_EXTENSION_NOTE}",
-            ),
-            ColumnSpec(
-                "comment",
-                "STRING",
-                f"Policy comment. NULL when unset. {_EXTENSION_NOTE}",
-            ),
-        ),
+        columns=_POLICY_COLUMNS,
         rows=_abac_policies_rows,
+    ),
+    TableSpec(
+        name="pseudo_policies",
+        comment=(
+            "The active grant policies declared in the uc-abac config, in the shape of "
+            "abac_policies: one row per grant policy. Read from the config, not from "
+            "Unity Catalog, since grant policies are expanded into concrete privileges "
+            f"(see securable_privileges). {_REPLACED_NOTE}"
+        ),
+        columns=_POLICY_COLUMNS,
+        rows=_pseudo_policies_rows,
     ),
     TableSpec(
         name="governed_tags",

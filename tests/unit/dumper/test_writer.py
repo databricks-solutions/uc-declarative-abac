@@ -98,6 +98,37 @@ def test_dumper_writer_creates_one_table_per_spec(
         ), f"Table {table_full_name} not found in CREATE statements"
 
 
+def test_dumper_writer_writes_pseudo_policies_table(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state creates the pseudo_policies table with CREATE OR REPLACE TABLE."""
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+        )
+
+    # Check that CREATE OR REPLACE TABLE for pseudo_policies is executed
+    normalized_stmts = [
+        _normalize_sql_backticks(sql) for sql in mock_workspace_client.executed_sql
+    ]
+    pseudo_policies_creates = [
+        s
+        for s in normalized_stmts
+        if "CREATE OR REPLACE TABLE main.state.pseudo_policies" in s
+    ]
+    assert len(pseudo_policies_creates) == 1, (
+        f"Expected exactly one CREATE for pseudo_policies table, got {len(pseudo_policies_creates)}"
+    )
+
+
 def test_dumper_writer_create_precedes_inserts(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:

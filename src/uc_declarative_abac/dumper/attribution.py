@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from datetime import date
 
 from uc_declarative_abac.configs import (
-    BasePolicyConfig,
     CatalogConfig,
     ColumnConfig,
     FunctionConfig,
@@ -64,14 +63,6 @@ def _build_securables_dict(
     return result
 
 
-def _attached_securable_type(policy: BasePolicyConfig) -> SecurableType:
-    if policy.table_name:
-        return SecurableType.TABLE
-    if policy.schema_name:
-        return SecurableType.SCHEMA
-    return SecurableType.CATALOG
-
-
 def _build_policies_dict(
     config: ResourcesConfig,
 ) -> dict[tuple[SecurableType, str, str], str]:
@@ -79,7 +70,7 @@ def _build_policies_dict(
     name, to its config file path. Grant policies are attributed via privileges."""
     return {
         (
-            _attached_securable_type(policy),
+            policy.parent_securable_type,
             policy.parent_full_name,
             policy.name,
         ): policy.file_path.as_posix()

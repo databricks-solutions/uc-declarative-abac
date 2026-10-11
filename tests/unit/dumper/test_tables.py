@@ -110,6 +110,7 @@ def test_dumper_tables_spec_names_and_order():
         "securable_tags",
         "securable_privileges",
         "abac_policies",
+        "pseudo_policies",
         "governed_tags",
         "governed_tag_assigners",
         "domains",
@@ -1041,6 +1042,477 @@ def test_dumper_tables_abac_policies_privileges_always_none():
     rows = _rows("abac_policies", state)
     assert len(rows) == 1
     assert rows[0]["privileges"] is None
+
+
+# --- pseudo_policies table tests ---
+
+
+def test_dumper_tables_pseudo_policies_same_columns_as_abac_policies():
+    """pseudo_policies: has the same columns as abac_policies."""
+    abac_spec = _spec("abac_policies")
+    pseudo_spec = _spec("pseudo_policies")
+    assert pseudo_spec.columns == abac_spec.columns
+
+
+def test_dumper_tables_pseudo_policies_one_row_per_active_grant_policy(
+    tmp_path: Path,
+):
+    """pseudo_policies: one row per ACTIVE grant policy at catalog/schema/table level."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_table
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+          policies:
+            - name: grant_schema
+              type: grant
+              privileges: [use_schema]
+              to: [bob]
+      policies:
+        - name: grant_catalog
+          type: grant
+          privileges: [use_catalog]
+          to: [charlie]
+"""
+    )
+    config = load_config(tmp_path)
+    user1 = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    user2 = Principal(PrincipalType.USER, identifier="bob", name="bob")
+    user3 = Principal(PrincipalType.USER, identifier="charlie", name="charlie")
+    state = _state(principals={"alice": user1, "bob": user2, "charlie": user3})
+    rows = _rows("pseudo_policies", state, config=config)
+    by_name = {
+        r["policy_name"]: (
+            r["catalog_name"],
+            r["schema_name"],
+            r["securable_name"],
+            r["on_securable_type"],
+        )
+        for r in rows
+    }
+    assert by_name == {
+        "grant_catalog": ("main", None, "main", "CATALOG"),
+        "grant_schema": ("main", "public", "public", "SCHEMA"),
+        "grant_table": ("main", "public", "data", "TABLE"),
+    }
+
+
+def test_dumper_tables_pseudo_policies_excludes_expired_policy(tmp_path: Path):
+    """pseudo_policies: excludes policy with expiry_date <= run_date."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: expired
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  expiry_date: 2025-12-31
+                - name: active
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  expiry_date: 2026-01-02
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    # Only the active policy should be included
+    assert len(rows) == 1
+    assert rows[0]["policy_name"] == "active"
+
+
+def test_dumper_tables_pseudo_policies_expiry_equal_run_date_excluded(tmp_path: Path):
+    """pseudo_policies: excludes policy with expiry_date == run_date."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: expires_today
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  expiry_date: 2026-01-01
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    # Policy that expires on run_date should be excluded
+    assert len(rows) == 0
+
+
+def test_dumper_tables_pseudo_policies_includes_policy_expiring_after_run_date(
+    tmp_path: Path,
+):
+    """pseudo_policies: includes policy with expiry_date > run_date."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: future_expiry
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  expiry_date: 2026-12-31
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["policy_name"] == "future_expiry"
+
+
+def test_dumper_tables_pseudo_policies_ignores_mask_and_filter_policies(
+    tmp_path: Path,
+):
+    """pseudo_policies: ignores mask and filter policies, only grants are included."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: mask_policy
+                  type: mask
+                  function: c.s.mask_func
+                  columns:
+                    - alias: email
+                      has_tags:
+                        sensitivity: high
+                - name: filter_policy
+                  type: filter
+                  function: c.s.filter_func
+                  has_tags:
+                    sensitivity: high
+                - name: grant_policy
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    # Only the grant policy should be included
+    assert len(rows) == 1
+    assert rows[0]["policy_name"] == "grant_policy"
+
+
+def test_dumper_tables_pseudo_policies_policy_type_grant(tmp_path: Path):
+    """pseudo_policies: every row has policy_type GRANT."""
+    (tmp_path / "policies.yaml").write_text("""
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [alice]
+""")
+    rows = _rows("pseudo_policies", _state(), config=load_config(tmp_path))
+    assert [r["policy_type"] for r in rows] == ["GRANT"]
+
+
+def test_dumper_tables_pseudo_policies_row_column_alignment(tmp_path: Path):
+    """pseudo_policies rows carry exactly the spec's column names."""
+    (tmp_path / "policies.yaml").write_text("""
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [alice]
+""")
+    (row,) = _rows("pseudo_policies", _state(), config=load_config(tmp_path))
+    assert set(row) == {col.name for col in _spec("pseudo_policies").columns}
+
+
+def test_dumper_tables_pseudo_policies_privileges_rendered(tmp_path: Path):
+    """pseudo_policies: privileges rendered as uppercase with underscores to spaces."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_priv
+                  type: grant
+                  privileges: [select, use_catalog, all_privileges, read]
+                  to: [alice]
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["privileges"] == ("SELECT", "USE CATALOG", "ALL PRIVILEGES", "READ")
+
+
+def test_dumper_tables_pseudo_policies_when_condition_rendered(tmp_path: Path):
+    """pseudo_policies: when_condition rendered from has_tags/has_any_of_tags."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_tagged
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  has_tags:
+                    pii: email
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    # when_condition should be rendered like "has_tag_value('pii', 'email')"
+    assert rows[0]["when_condition"] == "has_tag_value('pii', 'email')"
+
+
+def test_dumper_tables_pseudo_policies_when_condition_none_for_tagless_grant(
+    tmp_path: Path,
+):
+    """pseudo_policies: when_condition is None for grant without tag conditions."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_no_tags
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["when_condition"] is None
+
+
+def test_dumper_tables_pseudo_policies_column_level_columns_none(tmp_path: Path):
+    """pseudo_policies: the mask/filter-only columns are NULL for grant rows."""
+    (tmp_path / "policies.yaml").write_text("""
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [alice]
+""")
+    (row,) = _rows("pseudo_policies", _state(), config=load_config(tmp_path))
+    for column in (
+        "match_columns",
+        "function_full_name",
+        "on_column",
+        "using_columns",
+        "except_principals",
+    ):
+        assert row[column] is None, column
+
+
+def test_dumper_tables_pseudo_policies_for_securable_type(tmp_path: Path):
+    """pseudo_policies: for_securable_type is the 'for' value upper-cased or None."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_for_table
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+                  for: table
+                - name: grant_no_for
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 2
+    # Find the rows by name
+    for_table_row = next(
+        (r for r in rows if r["policy_name"] == "grant_for_table"), None
+    )
+    no_for_row = next((r for r in rows if r["policy_name"] == "grant_no_for"), None)
+    assert for_table_row is not None
+    assert no_for_row is not None
+    assert for_table_row["for_securable_type"] == "TABLE"
+    assert no_for_row["for_securable_type"] is None
+
+
+def test_dumper_tables_pseudo_policies_to_principals_resolved_to_identifiers(
+    tmp_path: Path,
+):
+    """pseudo_policies: to_principals resolved via state.principals to identifiers."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_sp
+                  type: grant
+                  privileges: [select]
+                  to: [my-sp]
+"""
+    )
+    config = load_config(tmp_path)
+    sp = Principal(
+        PrincipalType.SERVICE_PRINCIPAL,
+        identifier="app-uuid-1",
+        name="my-sp",
+    )
+    state = _state(principals={"my-sp": sp})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    # to_principals should have the identifier (app-uuid-1), not the name
+    assert rows[0]["to_principals"] == ("app-uuid-1",)
+
+
+def test_dumper_tables_pseudo_policies_unresolvable_principal_kept_as_name(
+    tmp_path: Path,
+):
+    """pseudo_policies: unresolvable principal kept as raw config name."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_unknown
+                  type: grant
+                  privileges: [select]
+                  to: [unknown-principal]
+"""
+    )
+    config = load_config(tmp_path)
+    state = _state(principals={})  # No principals defined
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    # Unresolvable principal should be kept as the raw name
+    assert rows[0]["to_principals"] == ("unknown-principal",)
+
+
+def test_dumper_tables_pseudo_policies_config_file_path_is_policy_file(
+    tmp_path: Path,
+):
+    """pseudo_policies: config_file_path is the grant policy's own config file."""
+    table_file = tmp_path / "table.yaml"
+    table_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      schemas:
+        - name: public
+          tables:
+            - name: data
+              policies:
+                - name: grant_on_table
+                  type: grant
+                  privileges: [select]
+                  to: [alice]
+"""
+    )
+    config = load_config(tmp_path)
+    user = Principal(PrincipalType.USER, identifier="alice", name="alice")
+    state = _state(principals={"alice": user})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    # config_file_path should be the table's file (where the policy is declared inline)
+    assert rows[0]["config_file_path"] == table_file.as_posix()
 
 
 # --- governed_tags table tests ---

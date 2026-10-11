@@ -4,6 +4,7 @@ from uc_declarative_abac.policies.compiler import (
     compile_desired_policies,
     render_column_tag_value,
     render_tag_value,
+    render_tag_when_condition,
 )
 from uc_declarative_abac.policies.differ import compute_policy_diff
 from uc_declarative_abac.policies.executor import execute_policy_diff
@@ -20,4 +21,5 @@ __all__ = [
     "execute_policy_diff",
     "render_column_tag_value",
     "render_tag_value",
+    "render_tag_when_condition",
 ]

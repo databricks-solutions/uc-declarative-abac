@@ -233,6 +233,16 @@ def _render_tag_atom(key: str, value: str) -> str:
     return f"has_tag_value({_quote(key)}, {_quote(value)})"
 
 
+def render_tag_when_condition(
+    has_tags: dict[str, str] | None, has_any_of_tags: dict[str, str] | None
+) -> str | None:
+    """Render a grant policy's tag predicate (``has_tags`` AND-group, ``has_any_of_tags``
+    OR-group) as a WHEN condition, rendered exactly as the mask/filter compiler renders its
+    tag predicate. Returns None for a tagless policy. Used by uc-abac dump's pseudo_policies
+    table."""
+    return _render_match_expr(has_tags, has_any_of_tags, None, _render_tag_atom)
+
+
 def _render_context_attribute_atom(key: str, value: str) -> str:
     if value == _WILDCARD:
         return f"has_context_attribute({_quote(key)})"

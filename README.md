@@ -89,6 +89,7 @@ Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (a
 | `securable_tags` | Tags assigned to securables (including columns) in the config's catalogs | `information_schema.*_tags` |
 | `securable_privileges` | Privileges granted on securables in the config's catalogs | `information_schema.*_privileges` |
 | `abac_policies` | Row filter and column mask policies in the config's catalogs | `information_schema.abac_policy_definitions` |
+| `pseudo_policies` | The config's active grant policies, in the same columns as `abac_policies` (read from the config, since grant policies are expanded into concrete privileges) | uc-abac config |
 | `governed_tags` | The account's governed tags and their allowed values | Tag Policies API |
 | `governed_tag_assigners` | Principals permitted to assign every governed tag the config references | Tag policy access-control rule sets |
 | `domains` | The workspace's Discovery domains | Domains API |

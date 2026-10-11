@@ -471,6 +471,15 @@ class BasePolicyConfig(BaseConfig, ABC):
             return f"{self.catalog_name}.{self.schema_name}"
         return self.catalog_name
 
+    @property
+    def parent_securable_type(self) -> SecurableType:
+        """Type of the securable the policy is attached to (see ``parent_full_name``)."""
+        if self.table_name:
+            return SecurableType.TABLE
+        if self.schema_name:
+            return SecurableType.SCHEMA
+        return SecurableType.CATALOG
+
     def referenced_tag_keys(self) -> frozenset[str]:
         """Every tag key this policy's match conditions reference.
 

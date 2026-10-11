@@ -100,7 +100,7 @@ def _drop_policies_with_ungoverned_tags(
             kept.append(policy)
             continue
         context = (
-            f"Grant policy on {_policy_securable_type(policy).value} "
+            f"Grant policy on {policy.parent_securable_type.value} "
             f"{policy.parent_full_name}"
         )
         for key in ungoverned:
@@ -154,15 +154,6 @@ def _collect_policies(config: ResourcesConfig) -> list[GrantPolicyConfig]:
 
 def _filter_grants(policies) -> list[GrantPolicyConfig]:
     return [p for p in (policies or []) if isinstance(p, GrantPolicyConfig)]
-
-
-def _policy_securable_type(policy: GrantPolicyConfig) -> SecurableType:
-    """Derive the securable type of the object a policy is attached to."""
-    if policy.table_name:
-        return SecurableType.TABLE
-    if policy.schema_name:
-        return SecurableType.SCHEMA
-    return SecurableType.CATALOG
 
 
 def _is_within_scope(full_name: str, policy: GrantPolicyConfig) -> bool:
@@ -262,7 +253,7 @@ def _match_policy(
     result: set[SecurablePrivilege] = set()
     if not policy.has_tags and not policy.has_any_of_tags:
         # Tagless policy — grant directly to the attached securable
-        sec_type = _policy_securable_type(policy)
+        sec_type = policy.parent_securable_type
         if not _policy_targets_securable_type(policy, sec_type):
             return result
         result |= _emit_privileges(sec_type, policy.parent_full_name, policy)
