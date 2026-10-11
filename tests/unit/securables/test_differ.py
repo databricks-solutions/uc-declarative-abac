@@ -1354,9 +1354,9 @@ def test_securable_differ_skips_column_check_for_table_being_created():
 # ---------------------------------------------------------------------------
 
 
-def test_nonexistent_securable_error_message_recommends_taggable_creation_scopes():
+def test_nonexistent_securable_error_message_recommends_securable_creation_scopes():
     """Without a hint (scope inert → existence check), the message tells the user to
-    add the namespace to --taggable-creation-scopes rather than create it manually."""
+    add the namespace to --securable-creation-scopes rather than create it manually."""
     desired = {_sec(SecurableType.CATALOG, "ghost_catalog")}
     change_logger = _change_logger()
 
@@ -1368,7 +1368,7 @@ def test_nonexistent_securable_error_message_recommends_taggable_creation_scopes
         if isinstance(e.exception, NonexistentSecurableError)
     )
     msg = str(err)
-    assert "--taggable-creation-scopes" in msg
+    assert "--securable-creation-scopes" in msg
     # The old phrasing should be gone.
     assert "Either create it in UC" not in msg
 
@@ -1696,7 +1696,7 @@ def test_nonexistent_securable_error_uses_hint_when_provided_instead_of_flag_boi
     # The hint is surfaced.
     assert "Configure at least one column" in msg
     # The flag-boilerplate should NOT appear when a hint is present.
-    assert "--taggable-creation-scopes" not in msg
+    assert "--securable-creation-scopes" not in msg
 
 
 # ---------------------------------------------------------------------------

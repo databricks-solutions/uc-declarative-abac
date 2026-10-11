@@ -4758,8 +4758,8 @@ def _inert_run_context() -> orchestrator.RunContext:
     return orchestrator.RunContext(
         tag_scope=empty,
         privilege_scope=empty,
-        taggable_management_scope=empty,
-        taggable_creation_scope=empty,
+        securable_management_scope=empty,
+        securable_creation_scope=empty,
         policy_delete_scope=empty,
         group_creation_scope=empty,
         group_management_scope=empty,

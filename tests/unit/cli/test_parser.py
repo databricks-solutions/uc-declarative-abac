@@ -428,3 +428,92 @@ def test_parser_displays_timezone_flag_in_dump_help(capsys):
 def test_parser_accepts_timezone_for_dump_invocations(args):
     namespace = parse_cli_args(args)
     assert namespace.timezone == "Pacific/Kiritimati"
+
+
+def test_parser_accepts_securable_management_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--securable-management-scopes",
+            "main.*",
+        ],
+    )
+
+    assert namespace.securable_management_scopes == "main.*"
+
+
+def test_parser_accepts_securable_creation_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--securable-creation-scopes",
+            "main.*",
+        ],
+    )
+
+    assert namespace.securable_creation_scopes == "main.*"
+
+
+def test_parser_help_documents_securable_scopes_do_not_gate_functions(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    # Normalize whitespace for easier substring checking
+    help_text = " ".join(output.split())
+
+    assert "--securable-management-scopes" in output
+    assert "--securable-creation-scopes" in output
+    assert "function" in help_text
+    assert "columns" in help_text
+    assert "does not gate function" in help_text.lower()
+
+
+def test_parser_help_marks_taggable_scopes_deprecated(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+
+    assert "--taggable-management-scopes" in output
+    assert "--taggable-creation-scopes" in output
+    assert re.search(
+        r"--taggable-management-scopes[\s\S]*?\(Deprecated.*--securable-management-scopes",
+        output,
+    )
+    assert re.search(
+        r"--taggable-creation-scopes[\s\S]*?\(Deprecated.*--securable-creation-scopes",
+        output,
+    )
+
+
+def test_parser_still_accepts_legacy_taggable_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--taggable-management-scopes",
+            "main.*",
+        ],
+    )
+
+    assert namespace.taggable_management_scopes == "main.*"
+
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--taggable-creation-scopes",
+            "staging.*",
+        ],
+    )
+
+    assert namespace.taggable_creation_scopes == "staging.*"

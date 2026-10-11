@@ -338,7 +338,7 @@ def _validate_tables_for_creation(
 ) -> list[Securable]:
     """Validate each Table in ``to_create`` and log errors for invalid ones.
 
-    Non-Table securables pass through unchanged — with ``--enable-taggable-creation``
+    Non-Table securables pass through unchanged — with ``--securable-creation-scopes``
     on, catalogs, schemas, volumes, and valid tables all flow to the executor.
     Tables missing columns or column types are logged as ``NonexistentSecurableError``
     (with a hint explaining the requirement) so the orchestrator's end-of-run

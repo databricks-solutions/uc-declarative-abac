@@ -424,6 +424,167 @@ def test_main_passes_domain_creation_scopes_through_to_run(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Securable scope renaming: deprecated taggable_*_scopes → securable_*_scopes
+# ---------------------------------------------------------------------------
+
+
+def test_main_passes_securable_scope_flags_through_to_run(monkeypatch):
+    captured = _run_legacy(
+        monkeypatch,
+        [
+            "--securable-management-scopes",
+            "main.*",
+            "--securable-creation-scopes",
+            "cat_*",
+        ],
+    )
+    assert captured["securable_management_scopes"] == "main.*"
+    assert captured["securable_creation_scopes"] == "cat_*"
+
+
+@pytest.mark.parametrize(
+    "flag_name,kwarg_name,deprecated_flag",
+    [
+        (
+            "taggable_management_scopes",
+            "securable_management_scopes",
+            "--taggable-management-scopes",
+        ),
+        (
+            "taggable_creation_scopes",
+            "securable_creation_scopes",
+            "--taggable-creation-scopes",
+        ),
+    ],
+)
+def test_main_converts_deprecated_taggable_scope_flag_and_warns(
+    monkeypatch, caplog, flag_name, kwarg_name, deprecated_flag
+):
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured = _run_legacy(monkeypatch, [deprecated_flag, "main.sales*"])
+    assert captured[kwarg_name] == "main.sales*"
+    assert flag_name not in captured or captured[flag_name] is None
+    assert any(
+        deprecated_flag in r.getMessage()
+        and (
+            "--securable-management-scopes" in r.getMessage()
+            or "--securable-creation-scopes" in r.getMessage()
+        )
+        for r in caplog.records
+    )
+
+
+def test_main_converts_deprecated_taggable_scope_from_settings_file_and_warns(
+    monkeypatch, caplog, tmp_path: Path
+):
+    settings_file = tmp_path / "uc_abac.yml"
+    settings_file.write_text("taggable_management_scopes: 'cat_a'", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured: dict = {}
+
+        def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(cli, "run", _fake_run)
+        monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+        exit_code = cli.run_cli(
+            [
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--settings-file",
+                str(settings_file),
+            ],
+        )
+    assert exit_code == 0
+    assert captured["securable_management_scopes"] == "cat_a"
+    assert any(
+        "--taggable-management-scopes" in r.getMessage()
+        and "--securable-management-scopes" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_main_converts_deprecated_taggable_scope_from_env_and_warns(
+    monkeypatch, caplog
+):
+    monkeypatch.setenv("UC_ABAC_TAGGABLE_CREATION_SCOPES", "team_*")
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured = _run_legacy(monkeypatch, [])
+    assert captured["securable_creation_scopes"] == "team_*"
+    assert any(
+        "--taggable-creation-scopes" in r.getMessage()
+        and "--securable-creation-scopes" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "scope_flag,scope_kwarg,deprecated_flag",
+    [
+        (
+            "--securable-management-scopes",
+            "securable_management_scopes",
+            "--taggable-management-scopes",
+        ),
+        (
+            "--securable-creation-scopes",
+            "securable_creation_scopes",
+            "--taggable-creation-scopes",
+        ),
+    ],
+)
+def test_main_fails_when_taggable_and_securable_scope_flags_combined(
+    monkeypatch, scope_flag, scope_kwarg, deprecated_flag
+):
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            deprecated_flag,
+            "main.*",
+            scope_flag,
+            "main.*",
+        ],
+    )
+    assert exit_code == 2
+
+
+def test_main_fails_when_securable_scope_combined_with_deprecated_enable_taggable(
+    monkeypatch,
+):
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--enable-taggable-management",
+            "--securable-management-scopes",
+            "main.*",
+        ],
+    )
+    assert exit_code == 2
+
+
+def test_main_warns_deprecated_enable_taggable_points_to_securable_scopes(
+    monkeypatch, caplog
+):
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        _run_legacy(monkeypatch, ["--enable-taggable-management"])
+    assert any(
+        "--enable-taggable-management" in r.getMessage()
+        and "--securable-management-scopes" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
 # dump subcommand
 # ---------------------------------------------------------------------------
 

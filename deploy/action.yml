@@ -88,7 +88,7 @@ inputs:
   manage-taggables-for-namespaces:
     description: >-
       Comma-separated catalog names or qualified schema names (<catalog>.<schema>)
-      to scope taggable attribute updates (e.g. owner) to (default = all configured
+      to scope attribute updates (e.g. owner) to (default = all configured
       catalogs). Function attributes always flow through. No effect unless
       ``enable-taggable-management`` is set.
     required: false
@@ -126,18 +126,35 @@ inputs:
       ``enable-privilege-management`` + ``manage-privileges-for-namespaces``.
     required: false
     default: ''
+  securable-management-scopes:
+    description: >-
+      Scope attribute updates (owner, comment, rfa_destinations) on existing
+      catalogs, schemas, tables, volumes, and columns to matching securables.
+      Does not gate function management — functions are always managed by the
+      engine as a core capability. Supersedes ``enable-taggable-management`` +
+      ``manage-taggables-for-namespaces``.
+    required: false
+    default: ''
+  securable-creation-scopes:
+    description: >-
+      Scope creation of missing catalogs, schemas, tables, volumes, and columns
+      to matching securables. Does not gate function creation — functions are
+      always created by the engine as a core capability. Supersedes
+      ``enable-taggable-creation`` + ``create-taggables-for-namespaces``.
+    required: false
+    default: ''
   taggable-management-scopes:
     description: >-
-      Scope taggable attribute updates (e.g. owner) to matching securables
-      (function attributes always flow through). Supersedes
-      ``enable-taggable-management`` + ``manage-taggables-for-namespaces``.
+      Deprecated — use ``securable-management-scopes``. Forwarded to the CLI's
+      deprecated flag when set (which logs a warning); cannot be combined with
+      ``securable-management-scopes``.
     required: false
     default: ''
   taggable-creation-scopes:
     description: >-
-      Scope creation of missing catalogs/schemas/tables/volumes to matching
-      securables (function creation always flows through). Supersedes
-      ``enable-taggable-creation`` + ``create-taggables-for-namespaces``.
+      Deprecated — use ``securable-creation-scopes``. Forwarded to the CLI's
+      deprecated flag when set (which logs a warning); cannot be combined with
+      ``securable-creation-scopes``.
     required: false
     default: ''
   policy-deletion-scopes:
@@ -344,6 +361,8 @@ runs:
         DELETE_POLICIES_FOR_NAMESPACES: ${{ inputs.delete-policies-for-namespaces }}
         TAG_MANAGEMENT_SCOPES: ${{ inputs.tag-management-scopes }}
         PRIVILEGE_MANAGEMENT_SCOPES: ${{ inputs.privilege-management-scopes }}
+        SECURABLE_MANAGEMENT_SCOPES: ${{ inputs.securable-management-scopes }}
+        SECURABLE_CREATION_SCOPES: ${{ inputs.securable-creation-scopes }}
         TAGGABLE_MANAGEMENT_SCOPES: ${{ inputs.taggable-management-scopes }}
         TAGGABLE_CREATION_SCOPES: ${{ inputs.taggable-creation-scopes }}
         POLICY_DELETION_SCOPES: ${{ inputs.policy-deletion-scopes }}
@@ -431,6 +450,12 @@ runs:
         fi
         if [[ -n "$PRIVILEGE_MANAGEMENT_SCOPES" ]]; then
           args+=(--privilege-management-scopes "$PRIVILEGE_MANAGEMENT_SCOPES")
+        fi
+        if [[ -n "$SECURABLE_MANAGEMENT_SCOPES" ]]; then
+          args+=(--securable-management-scopes "$SECURABLE_MANAGEMENT_SCOPES")
+        fi
+        if [[ -n "$SECURABLE_CREATION_SCOPES" ]]; then
+          args+=(--securable-creation-scopes "$SECURABLE_CREATION_SCOPES")
         fi
         if [[ -n "$TAGGABLE_MANAGEMENT_SCOPES" ]]; then
           args+=(--taggable-management-scopes "$TAGGABLE_MANAGEMENT_SCOPES")

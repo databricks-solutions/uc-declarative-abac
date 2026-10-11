@@ -17,8 +17,8 @@ timezone: Australia/Sydney
 # to deploy from scratch and are non-destructive.
 tag_management_scopes: '*'          # create/update/remove tag assignments
 privilege_management_scopes: '*'    # GRANT/REVOKE privileges from grant policies
-taggable_management_scopes: '*'     # owners, comments, RFA destinations
-taggable_creation_scopes: '*'       # create catalogs/schemas/tables/volumes that don't exist yet
+securable_management_scopes: '*'    # owners, comments, RFA destinations
+securable_creation_scopes: '*'      # create catalogs/schemas/tables/volumes that don't exist yet
 
 # Group creation + membership reconciliation. Scoped to this project's groups by
 # name prefix. Creation makes the nested group hierarchy exist (with members);
