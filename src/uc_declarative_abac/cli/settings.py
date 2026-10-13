@@ -51,19 +51,22 @@ _ENV_FIELD_MAP: dict[str, str] = {
     # New unified scope flags (supersede the enable_* + *_for_namespaces pairs).
     "tag_management_scopes": "TAG_MANAGEMENT_SCOPES",
     "privilege_management_scopes": "PRIVILEGE_MANAGEMENT_SCOPES",
-    "securable_management_scopes": "SECURABLE_MANAGEMENT_SCOPES",
+    "securable_modification_scopes": "SECURABLE_MODIFICATION_SCOPES",
     "securable_creation_scopes": "SECURABLE_CREATION_SCOPES",
-    # Deprecated aliases of securable_*_scopes (resolved and warned in commands.py).
-    "taggable_management_scopes": "TAGGABLE_MANAGEMENT_SCOPES",
-    "taggable_creation_scopes": "TAGGABLE_CREATION_SCOPES",
     "policy_deletion_scopes": "POLICY_DELETION_SCOPES",
     "group_creation_scopes": "GROUP_CREATION_SCOPES",
-    "group_management_scopes": "GROUP_MANAGEMENT_SCOPES",
+    "group_modification_scopes": "GROUP_MODIFICATION_SCOPES",
     "group_deletion_scopes": "GROUP_DELETION_SCOPES",
     "governed_tag_deletion_scopes": "GOVERNED_TAG_DELETION_SCOPES",
     "domain_creation_scopes": "DOMAIN_CREATION_SCOPES",
-    "domain_management_scopes": "DOMAIN_MANAGEMENT_SCOPES",
+    "domain_modification_scopes": "DOMAIN_MODIFICATION_SCOPES",
     "domain_deletion_scopes": "DOMAIN_DELETION_SCOPES",
+    # Deprecated aliases of renamed scopes (resolved and warned in commands.py).
+    "taggable_management_scopes": "TAGGABLE_MANAGEMENT_SCOPES",
+    "taggable_creation_scopes": "TAGGABLE_CREATION_SCOPES",
+    "securable_management_scopes": "SECURABLE_MANAGEMENT_SCOPES",
+    "group_management_scopes": "GROUP_MANAGEMENT_SCOPES",
+    "domain_management_scopes": "DOMAIN_MANAGEMENT_SCOPES",
     "force": "FORCE",
     "ref_override_strategy": "REF_OVERRIDE_STRATEGY",
     "max_parallel_changes": "MAX_PARALLEL_CHANGES",
@@ -104,19 +107,22 @@ class RunSettings(BaseModel):
     # "") ⇒ new-style scope, where "" disables and "*" covers everything.
     tag_management_scopes: str | None = None
     privilege_management_scopes: str | None = None
-    securable_management_scopes: str | None = None
+    securable_modification_scopes: str | None = None
     securable_creation_scopes: str | None = None
-    # Deprecated aliases of securable_*_scopes (resolved and warned in commands.py).
-    taggable_management_scopes: str | None = None
-    taggable_creation_scopes: str | None = None
     policy_deletion_scopes: str | None = None
     group_creation_scopes: str | None = None
-    group_management_scopes: str | None = None
+    group_modification_scopes: str | None = None
     group_deletion_scopes: str | None = None
     governed_tag_deletion_scopes: str | None = None
     domain_creation_scopes: str | None = None
-    domain_management_scopes: str | None = None
+    domain_modification_scopes: str | None = None
     domain_deletion_scopes: str | None = None
+    # Deprecated aliases of renamed scopes (resolved and warned in commands.py).
+    taggable_management_scopes: str | None = None
+    taggable_creation_scopes: str | None = None
+    securable_management_scopes: str | None = None
+    group_management_scopes: str | None = None
+    domain_management_scopes: str | None = None
     force: bool = False
     ref_override_strategy: Literal["merge", "replace"] = "merge"
     max_parallel_changes: int = Field(default=8, ge=1)

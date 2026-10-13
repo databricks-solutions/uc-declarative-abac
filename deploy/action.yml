@@ -126,11 +126,11 @@ inputs:
       ``enable-privilege-management`` + ``manage-privileges-for-namespaces``.
     required: false
     default: ''
-  securable-management-scopes:
+  securable-modification-scopes:
     description: >-
       Scope attribute updates (owner, comment, rfa_destinations) on existing
       catalogs, schemas, tables, volumes, and columns to matching securables.
-      Does not gate function management — functions are always managed by the
+      Updates only — never creates or deletes securables. Does not gate function management — functions are always managed by the
       engine as a core capability. Supersedes ``enable-taggable-management`` +
       ``manage-taggables-for-namespaces``.
     required: false
@@ -145,9 +145,15 @@ inputs:
     default: ''
   taggable-management-scopes:
     description: >-
-      Deprecated — use ``securable-management-scopes``. Forwarded to the CLI's
+      Deprecated — use ``securable-modification-scopes``. Forwarded to the CLI's
       deprecated flag when set (which logs a warning); cannot be combined with
-      ``securable-management-scopes``.
+      ``securable-modification-scopes``.
+    required: false
+    default: ''
+  securable-management-scopes:
+    description: >-
+      Deprecated — use ``securable-modification-scopes``. Forwarded to the CLI's deprecated flag when
+      set (which logs a warning); cannot be combined with ``securable-modification-scopes``.
     required: false
     default: ''
   taggable-creation-scopes:
@@ -172,11 +178,18 @@ inputs:
       Supersedes ``enable-group-creation``.
     required: false
     default: ''
+  group-modification-scopes:
+    description: >-
+      Scope updates (member/assumer reconciliation, renames, expiry) of matching
+      account groups by display name (same flat grammar as
+      ``group-creation-scopes``). Updates only — never creates or deletes groups.
+      Supersedes ``enable-group-management``.
+    required: false
+    default: ''
   group-management-scopes:
     description: >-
-      Scope account-group membership reconciliation to matching groups by
-      display name (same flat grammar as ``group-creation-scopes``). Supersedes
-      ``enable-group-management``.
+      Deprecated — use ``group-modification-scopes``. Forwarded to the CLI's deprecated flag when
+      set (which logs a warning); cannot be combined with ``group-modification-scopes``.
     required: false
     default: ''
   group-deletion-scopes:
@@ -202,11 +215,18 @@ inputs:
       ``governed-tag-deletion-scopes``).
     required: false
     default: ''
-  domain-management-scopes:
+  domain-modification-scopes:
     description: >-
       Scope metadata updates of explicitly declared Discovery domains that
       already exist, by governed-tag key (same flat grammar as
-      ``governed-tag-deletion-scopes``).
+      ``governed-tag-deletion-scopes``). Updates only — never creates or
+      deletes domains.
+    required: false
+    default: ''
+  domain-management-scopes:
+    description: >-
+      Deprecated — use ``domain-modification-scopes``. Forwarded to the CLI's deprecated flag when
+      set (which logs a warning); cannot be combined with ``domain-modification-scopes``.
     required: false
     default: ''
   domain-deletion-scopes:
@@ -361,16 +381,19 @@ runs:
         DELETE_POLICIES_FOR_NAMESPACES: ${{ inputs.delete-policies-for-namespaces }}
         TAG_MANAGEMENT_SCOPES: ${{ inputs.tag-management-scopes }}
         PRIVILEGE_MANAGEMENT_SCOPES: ${{ inputs.privilege-management-scopes }}
+        SECURABLE_MODIFICATION_SCOPES: ${{ inputs.securable-modification-scopes }}
         SECURABLE_MANAGEMENT_SCOPES: ${{ inputs.securable-management-scopes }}
         SECURABLE_CREATION_SCOPES: ${{ inputs.securable-creation-scopes }}
         TAGGABLE_MANAGEMENT_SCOPES: ${{ inputs.taggable-management-scopes }}
         TAGGABLE_CREATION_SCOPES: ${{ inputs.taggable-creation-scopes }}
         POLICY_DELETION_SCOPES: ${{ inputs.policy-deletion-scopes }}
         GROUP_CREATION_SCOPES: ${{ inputs.group-creation-scopes }}
+        GROUP_MODIFICATION_SCOPES: ${{ inputs.group-modification-scopes }}
         GROUP_MANAGEMENT_SCOPES: ${{ inputs.group-management-scopes }}
         GROUP_DELETION_SCOPES: ${{ inputs.group-deletion-scopes }}
         GOVERNED_TAG_DELETION_SCOPES: ${{ inputs.governed-tag-deletion-scopes }}
         DOMAIN_CREATION_SCOPES: ${{ inputs.domain-creation-scopes }}
+        DOMAIN_MODIFICATION_SCOPES: ${{ inputs.domain-modification-scopes }}
         DOMAIN_MANAGEMENT_SCOPES: ${{ inputs.domain-management-scopes }}
         DOMAIN_DELETION_SCOPES: ${{ inputs.domain-deletion-scopes }}
         MANAGE_TAGS_FOR_CATALOGS: ${{ inputs.manage-tags-for-catalogs }}
@@ -451,6 +474,9 @@ runs:
         if [[ -n "$PRIVILEGE_MANAGEMENT_SCOPES" ]]; then
           args+=(--privilege-management-scopes "$PRIVILEGE_MANAGEMENT_SCOPES")
         fi
+        if [[ -n "$SECURABLE_MODIFICATION_SCOPES" ]]; then
+          args+=(--securable-modification-scopes "$SECURABLE_MODIFICATION_SCOPES")
+        fi
         if [[ -n "$SECURABLE_MANAGEMENT_SCOPES" ]]; then
           args+=(--securable-management-scopes "$SECURABLE_MANAGEMENT_SCOPES")
         fi
@@ -469,6 +495,9 @@ runs:
         if [[ -n "$GROUP_CREATION_SCOPES" ]]; then
           args+=(--group-creation-scopes "$GROUP_CREATION_SCOPES")
         fi
+        if [[ -n "$GROUP_MODIFICATION_SCOPES" ]]; then
+          args+=(--group-modification-scopes "$GROUP_MODIFICATION_SCOPES")
+        fi
         if [[ -n "$GROUP_MANAGEMENT_SCOPES" ]]; then
           args+=(--group-management-scopes "$GROUP_MANAGEMENT_SCOPES")
         fi
@@ -480,6 +509,9 @@ runs:
         fi
         if [[ -n "$DOMAIN_CREATION_SCOPES" ]]; then
           args+=(--domain-creation-scopes "$DOMAIN_CREATION_SCOPES")
+        fi
+        if [[ -n "$DOMAIN_MODIFICATION_SCOPES" ]]; then
+          args+=(--domain-modification-scopes "$DOMAIN_MODIFICATION_SCOPES")
         fi
         if [[ -n "$DOMAIN_MANAGEMENT_SCOPES" ]]; then
           args+=(--domain-management-scopes "$DOMAIN_MANAGEMENT_SCOPES")

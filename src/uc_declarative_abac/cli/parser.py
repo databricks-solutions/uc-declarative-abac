@@ -123,7 +123,7 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "Permit the engine to update attributes (e.g. owner) on existing catalogs, schemas, "
             "tables, and volumes. Off by default. "
-            "(Deprecated: use --securable-management-scopes.)"
+            "(Deprecated: use --securable-modification-scopes.)"
         ),
     )
     parser.add_argument(
@@ -169,7 +169,7 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
             "scope attribute updates (e.g. owner) to (default = all configured "
             "catalogs). Function attributes always flow through. No effect unless "
             "--enable-taggable-management is set. "
-            "(Deprecated: use --securable-management-scopes.)"
+            "(Deprecated: use --securable-modification-scopes.)"
         ),
     )
     parser.add_argument(
@@ -232,13 +232,14 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--securable-management-scopes",
+        "--securable-modification-scopes",
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
             "Scope attribute updates (owner, comment, rfa_destinations) on existing "
             "catalogs, schemas, tables, volumes, and columns to matching securables. "
+            "Updates only — never creates or deletes securables. "
             "Does not gate function management — functions are always managed by the "
             f"engine as a core capability. {_HIER_SCOPE_GRAMMAR} "
             "Supersedes --enable-taggable-management and "
@@ -263,7 +264,14 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
-        help="(Deprecated: use --securable-management-scopes.)",
+        help="(Deprecated: use --securable-modification-scopes.)",
+    )
+    parser.add_argument(
+        "--securable-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --securable-modification-scopes.)",
     )
     parser.add_argument(
         "--taggable-creation-scopes",
@@ -295,14 +303,23 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--group-management-scopes",
+        "--group-modification-scopes",
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
-            "Scope account-group membership reconciliation to matching groups (by "
-            f"display name). {_FLAT_SCOPE_GRAMMAR} Supersedes --enable-group-management."
+            "Scope updates (member/assumer reconciliation, renames, expiry) of "
+            "matching account groups (by display name). Updates only — never creates "
+            "or deletes groups (see --group-creation-scopes / --group-deletion-scopes). "
+            f"{_FLAT_SCOPE_GRAMMAR} Supersedes --enable-group-management."
         ),
+    )
+    parser.add_argument(
+        "--group-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --group-modification-scopes.)",
     )
     parser.add_argument(
         "--group-deletion-scopes",
@@ -352,15 +369,23 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--domain-management-scopes",
+        "--domain-modification-scopes",
         type=str,
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
             "Scope metadata updates of explicitly declared resources.domains "
-            "that already exist, by governed-tag key. "
-            f"{_FLAT_SCOPE_GRAMMAR}"
+            "that already exist, by governed-tag key. Updates only — never creates "
+            "or deletes domains (see --domain-creation-scopes / "
+            f"--domain-deletion-scopes). {_FLAT_SCOPE_GRAMMAR}"
         ),
+    )
+    parser.add_argument(
+        "--domain-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --domain-modification-scopes.)",
     )
     parser.add_argument(
         "--manage-tags-for-catalogs",
@@ -433,7 +458,7 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
             "from config (an empty members list removes all). Off by default. Requires the "
             "engine principal to hold the MANAGER role on each managed group. Does not create "
             "missing groups (use --enable-group-creation for that). "
-            "(Deprecated: use --group-management-scopes.)"
+            "(Deprecated: use --group-modification-scopes.)"
         ),
     )
     parser.add_argument(

@@ -63,20 +63,39 @@ class _ScopeFeature:
     hierarchical: bool = True
 
 
-# Renamed scope settings as (old_field, old_flag, new_field, new_flag). The old
-# name is folded into the new one, with a deprecation warning, before validation.
-_RENAMED_SCOPE_SETTINGS: tuple[tuple[str, str, str, str], ...] = (
-    (
-        "taggable_management_scopes",
-        "--taggable-management-scopes",
-        "securable_management_scopes",
-        "--securable-management-scopes",
+@dataclass(frozen=True)
+class _RenamedScope:
+    """Maps a renamed scope field to its deprecated ``(old_field, old_flag)`` aliases."""
+
+    new_field: str
+    new_flag: str
+    aliases: tuple[tuple[str, str], ...] = ()
+
+
+# One entry per renamed scope; each alias points straight at the final name.
+_RENAMED_SCOPE_SETTINGS: tuple[_RenamedScope, ...] = (
+    _RenamedScope(
+        "securable_modification_scopes",
+        "--securable-modification-scopes",
+        (
+            ("taggable_management_scopes", "--taggable-management-scopes"),
+            ("securable_management_scopes", "--securable-management-scopes"),
+        ),
     ),
-    (
-        "taggable_creation_scopes",
-        "--taggable-creation-scopes",
+    _RenamedScope(
         "securable_creation_scopes",
         "--securable-creation-scopes",
+        (("taggable_creation_scopes", "--taggable-creation-scopes"),),
+    ),
+    _RenamedScope(
+        "group_modification_scopes",
+        "--group-modification-scopes",
+        (("group_management_scopes", "--group-management-scopes"),),
+    ),
+    _RenamedScope(
+        "domain_modification_scopes",
+        "--domain-modification-scopes",
+        (("domain_management_scopes", "--domain-management-scopes"),),
     ),
 )
 
@@ -105,8 +124,8 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         "--manage-privileges-for-catalogs",
     ),
     _ScopeFeature(
-        "securable_management_scopes",
-        "--securable-management-scopes",
+        "securable_modification_scopes",
+        "--securable-modification-scopes",
         "enable_taggable_management",
         "--enable-taggable-management",
         "manage_taggables_for_namespaces",
@@ -140,8 +159,8 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         hierarchical=False,
     ),
     _ScopeFeature(
-        "group_management_scopes",
-        "--group-management-scopes",
+        "group_modification_scopes",
+        "--group-modification-scopes",
         "enable_group_management",
         "--enable-group-management",
         hierarchical=False,
@@ -166,8 +185,8 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         hierarchical=False,
     ),
     _ScopeFeature(
-        "domain_management_scopes",
-        "--domain-management-scopes",
+        "domain_modification_scopes",
+        "--domain-modification-scopes",
         hierarchical=False,
     ),
     _ScopeFeature(
@@ -245,33 +264,50 @@ def _resolve_namespace_values(
     }
 
 
-def _apply_renamed_scope_settings(settings: RunSettings) -> RunSettings:
-    """Resolve renamed scope settings (taggable_*_scopes → securable_*_scopes).
+def _set_aliases(settings: RunSettings, entry: _RenamedScope) -> list[tuple[str, str]]:
+    """The ``(old_field, old_flag)`` aliases of ``entry`` that are set (non-None)."""
+    return [
+        (old_field, old_flag)
+        for old_field, old_flag in entry.aliases
+        if getattr(settings, old_field) is not None
+    ]
 
-    Folds legacy taggable scope names to their new securable equivalents,
-    handling conversions from any source (CLI flag, env var, settings file)
-    before scope-conflict checks, so deprecated names never reach run().
+
+def _apply_renamed_scope_settings(settings: RunSettings) -> RunSettings:
+    """Fold deprecated scope aliases into their renamed fields.
+
+    Runs before ``_resolve_scope_flags`` and covers every source (CLI flag, env var,
+    settings file), so deprecated names never reach ``run()``. A renamed field may
+    have several aliases (``securable_modification_scopes`` replaces both
+    ``taggable_management_scopes`` and ``securable_management_scopes``); each alias
+    points straight at the final name. Setting more than one of a field's names is a
+    usage error naming every flag that was set; a lone alias logs a deprecation
+    warning and its value moves to the new field. Returns a new ``RunSettings``.
     """
-    current = settings
-    for old_field, old_flag, new_field, new_flag in _RENAMED_SCOPE_SETTINGS:
-        old_value = getattr(current, old_field)
-        if old_value is None:
-            continue
-        new_value = getattr(current, new_field)
-        if new_value is not None:
+    for entry in _RENAMED_SCOPE_SETTINGS:
+        aliases = _set_aliases(settings, entry)
+        flags = [flag for _, flag in aliases]
+        if getattr(settings, entry.new_field) is not None:
+            flags.append(entry.new_flag)
+        if len(flags) > 1:
             raise CliUsageError(
-                f"{old_flag} is deprecated and cannot be combined with {new_flag}. "
-                f"Use {new_flag} only."
+                f"{', '.join(flags)} cannot be combined (the deprecated names are "
+                f"aliases of {entry.new_flag}). Use {entry.new_flag} only."
             )
+        if not aliases:
+            continue
+        old_field, old_flag = aliases[0]
         _logger.warning(
             "%s (settings key '%s') is deprecated; use %s (settings key '%s') instead.",
             old_flag,
             old_field,
-            new_flag,
-            new_field,
+            entry.new_flag,
+            entry.new_field,
         )
-        current = current.model_copy(update={new_field: old_value, old_field: None})
-    return current
+        settings = settings.model_copy(
+            update={entry.new_field: getattr(settings, old_field), old_field: None}
+        )
+    return settings
 
 
 def _deprecated_flags_for_warning(
@@ -410,15 +446,15 @@ def _run_kwargs(
         "delete_policies_for_namespaces": delete_policies,
         "tag_management_scopes": settings.tag_management_scopes,
         "privilege_management_scopes": settings.privilege_management_scopes,
-        "securable_management_scopes": settings.securable_management_scopes,
+        "securable_modification_scopes": settings.securable_modification_scopes,
         "securable_creation_scopes": settings.securable_creation_scopes,
         "policy_deletion_scopes": settings.policy_deletion_scopes,
         "group_creation_scopes": settings.group_creation_scopes,
-        "group_management_scopes": settings.group_management_scopes,
+        "group_modification_scopes": settings.group_modification_scopes,
         "group_deletion_scopes": settings.group_deletion_scopes,
         "governed_tag_deletion_scopes": settings.governed_tag_deletion_scopes,
         "domain_creation_scopes": settings.domain_creation_scopes,
-        "domain_management_scopes": settings.domain_management_scopes,
+        "domain_modification_scopes": settings.domain_modification_scopes,
         "domain_deletion_scopes": settings.domain_deletion_scopes,
         "retain_tag_prefixes": settings.retain_tag_prefixes,
         "force": settings.force,

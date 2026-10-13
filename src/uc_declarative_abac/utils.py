@@ -345,15 +345,15 @@ class RunContext:
 
     tag_scope: Scope
     privilege_scope: Scope
-    securable_management_scope: Scope
+    securable_modification_scope: Scope
     securable_creation_scope: Scope
     policy_delete_scope: Scope
     group_creation_scope: Scope
-    group_management_scope: Scope
+    group_modification_scope: Scope
     group_deletion_scope: Scope
     governed_tag_deletion_scope: Scope
     domain_creation_scope: Scope
-    domain_management_scope: Scope
+    domain_modification_scope: Scope
     domain_deletion_scope: Scope
     run_date: date
     retain_prefixes: frozenset[str]
@@ -375,8 +375,8 @@ class RunContext:
         return self.privilege_scope.is_active()
 
     @property
-    def enable_securable_management(self) -> bool:
-        return self.securable_management_scope.is_active()
+    def enable_securable_modification(self) -> bool:
+        return self.securable_modification_scope.is_active()
 
     @property
     def enable_securable_creation(self) -> bool:
@@ -391,8 +391,8 @@ class RunContext:
         return self.group_creation_scope.is_active()
 
     @property
-    def enable_group_management(self) -> bool:
-        return self.group_management_scope.is_active()
+    def enable_group_modification(self) -> bool:
+        return self.group_modification_scope.is_active()
 
     @property
     def enable_group_deletion(self) -> bool:
@@ -404,13 +404,13 @@ class RunContext:
 
     @property
     def group_domain_active(self) -> bool:
-        return self.enable_group_creation or self.enable_group_management
+        return self.enable_group_creation or self.enable_group_modification
 
     @property
     def domain_workflow_active(self) -> bool:
         return (
             self.domain_creation_scope.is_active()
-            or self.domain_management_scope.is_active()
+            or self.domain_modification_scope.is_active()
             or self.domain_deletion_scope.is_active()
         )
 

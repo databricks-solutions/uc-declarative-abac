@@ -219,22 +219,22 @@ def _handle_missing_group(
     change_logger: ChangeLogger,
     ignore_unresolvable: frozenset[str],
     enable_group_creation: bool,
-    enable_group_management: bool,
+    enable_group_modification: bool,
     diff: GroupDiff,
 ) -> None:
     """Handle a desired group with no actual counterpart.
 
     With creation enabled the group is queued for creation **empty** (its
-    members/assumers are applied by the management path, not at creation). Under
-    management — for a group being created this run **or** an already-existing one that
+    members/assumers are applied by the modification path, not at creation). Under
+    modification — for a group being created this run **or** an already-existing one that
     creation won't cover — its members and assumers are reconciled against an empty
     actual group, so a group provisioned this run gets its configured members/assumers.
-    Under management without creation, a missing group is a fatal error directing the
+    Under modification without creation, a missing group is a fatal error directing the
     operator to ``--group-creation-scopes``; with neither gate it is silently ignored."""
     name = desired_group.display_name
     if enable_group_creation:
         diff.groups_to_create.add(name)
-    elif enable_group_management:
+    elif enable_group_modification:
         change_logger.log_error(
             ExecutionError(
                 context=f"Configure GROUP {name}",
@@ -245,7 +245,7 @@ def _handle_missing_group(
             )
         )
         return
-    if enable_group_management:
+    if enable_group_modification:
         empty_actual = Group(
             display_name=name, members=frozenset(), assumers=frozenset()
         )
@@ -342,15 +342,15 @@ def compute_group_diff(
     resolver: PrincipalResolver,
     change_logger: ChangeLogger,
     enable_group_creation: bool = False,
-    enable_group_management: bool = False,
+    enable_group_modification: bool = False,
     enable_group_deletion: bool = False,
     ignore_unresolvable: frozenset[str] = frozenset(),
     all_account_groups: set[Group] = frozenset(),
     creation_scope: Scope | None = None,
-    management_scope: Scope | None = None,
+    modification_scope: Scope | None = None,
     deletion_scope: Scope | None = None,
 ) -> GroupDiff:
-    """Compute the group-management diff between desired and actual.
+    """Compute the groups-domain diff between desired and actual.
 
     Members and assumers on both sides are resolved before comparison so the two sides
     speak the same dialect (config-side has display names; UC-side has identifiers).
@@ -359,11 +359,11 @@ def compute_group_diff(
 
     - **Creation** (``enable_group_creation``): a desired group with no actual
       counterpart is queued for creation **empty** in ``groups_to_create`` (a set of
-      display names). Its configured members/assumers are applied by the management
+      display names). Its configured members/assumers are applied by the modification
       path, not at creation. Without the flag, a missing group is a fatal error only
-      when management is on (directing the operator to pass ``--group-creation-scopes``);
+      when modification is on (directing the operator to pass ``--group-creation-scopes``);
       with neither flag it is ignored.
-    - **Management** (``enable_group_management``): a group's members and assumers are
+    - **Modification** (``enable_group_modification``): a group's members and assumers are
       reconciled — for **existing** groups and for groups created this run (whose actual
       state is treated as empty, so their configured members/assumers are all added).
       Members: ``members_to_add = desired − actual`` and ``members_to_remove = actual −
@@ -389,7 +389,7 @@ def compute_group_diff(
     actual-state member/assumer identifiers (the principal is still dropped, so it is
     never removed).
 
-    ``creation_scope`` / ``management_scope`` / ``deletion_scope`` further restrict
+    ``creation_scope`` / ``modification_scope`` / ``deletion_scope`` further restrict
     each gate to groups whose display name they match; ``None`` (the default)
     means unscoped, preserving the legacy enable-only behaviour.
     """
@@ -405,8 +405,8 @@ def compute_group_diff(
         # the group's display name is in its scope.
         name = desired_group.display_name
         grp_create = enable_group_creation and _in_scope(creation_scope, name)
-        grp_manage = enable_group_management and _in_scope(management_scope, name)
-        if not grp_create and not grp_manage:
+        grp_modify = enable_group_modification and _in_scope(modification_scope, name)
+        if not grp_create and not grp_modify:
             continue
 
         actual_group, ok = _find_actual_group(
@@ -422,13 +422,13 @@ def compute_group_diff(
                 change_logger,
                 ignore_unresolvable,
                 grp_create,
-                grp_manage,
+                grp_modify,
                 diff,
             )
             continue
 
-        # Existing group: only reconciled (and renamed) under group management.
-        if not grp_manage:
+        # Existing group: only reconciled (and renamed) under group modification.
+        if not grp_modify:
             continue
 
         # Externally-managed (IdP-provisioned) groups: their membership is owned by the

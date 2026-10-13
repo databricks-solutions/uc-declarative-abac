@@ -393,9 +393,9 @@ def test_main_passes_group_creation_scope_through_to_run(monkeypatch):
     assert captured["group_creation_scopes"] == "team_*"
 
 
-def test_main_passes_domain_management_scopes_through_to_run(monkeypatch):
-    captured = _run_legacy(monkeypatch, ["--domain-management-scopes", "finance*"])
-    assert captured["domain_management_scopes"] == "finance*"
+def test_main_passes_domain_modification_scopes_through_to_run(monkeypatch):
+    captured = _run_legacy(monkeypatch, ["--domain-modification-scopes", "finance*"])
+    assert captured["domain_modification_scopes"] == "finance*"
 
 
 def test_main_passes_domain_deletion_scopes_through_to_run(monkeypatch):
@@ -432,13 +432,13 @@ def test_main_passes_securable_scope_flags_through_to_run(monkeypatch):
     captured = _run_legacy(
         monkeypatch,
         [
-            "--securable-management-scopes",
+            "--securable-modification-scopes",
             "main.*",
             "--securable-creation-scopes",
             "cat_*",
         ],
     )
-    assert captured["securable_management_scopes"] == "main.*"
+    assert captured["securable_modification_scopes"] == "main.*"
     assert captured["securable_creation_scopes"] == "cat_*"
 
 
@@ -447,7 +447,7 @@ def test_main_passes_securable_scope_flags_through_to_run(monkeypatch):
     [
         (
             "taggable_management_scopes",
-            "securable_management_scopes",
+            "securable_modification_scopes",
             "--taggable-management-scopes",
         ),
         (
@@ -467,7 +467,7 @@ def test_main_converts_deprecated_taggable_scope_flag_and_warns(
     assert any(
         deprecated_flag in r.getMessage()
         and (
-            "--securable-management-scopes" in r.getMessage()
+            "--securable-modification-scopes" in r.getMessage()
             or "--securable-creation-scopes" in r.getMessage()
         )
         for r in caplog.records
@@ -498,10 +498,10 @@ def test_main_converts_deprecated_taggable_scope_from_settings_file_and_warns(
             ],
         )
     assert exit_code == 0
-    assert captured["securable_management_scopes"] == "cat_a"
+    assert captured["securable_modification_scopes"] == "cat_a"
     assert any(
         "--taggable-management-scopes" in r.getMessage()
-        and "--securable-management-scopes" in r.getMessage()
+        and "--securable-modification-scopes" in r.getMessage()
         for r in caplog.records
     )
 
@@ -524,8 +524,8 @@ def test_main_converts_deprecated_taggable_scope_from_env_and_warns(
     "scope_flag,scope_kwarg,deprecated_flag",
     [
         (
-            "--securable-management-scopes",
-            "securable_management_scopes",
+            "--securable-modification-scopes",
+            "securable_modification_scopes",
             "--taggable-management-scopes",
         ),
         (
@@ -565,7 +565,7 @@ def test_main_fails_when_securable_scope_combined_with_deprecated_enable_taggabl
             "--warehouse-id",
             "wh",
             "--enable-taggable-management",
-            "--securable-management-scopes",
+            "--securable-modification-scopes",
             "main.*",
         ],
     )
@@ -579,7 +579,269 @@ def test_main_warns_deprecated_enable_taggable_points_to_securable_scopes(
         _run_legacy(monkeypatch, ["--enable-taggable-management"])
     assert any(
         "--enable-taggable-management" in r.getMessage()
-        and "--securable-management-scopes" in r.getMessage()
+        and "--securable-modification-scopes" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Modification scope renaming: deprecated *_management_scopes → *_modification_scopes
+# ---------------------------------------------------------------------------
+
+
+def test_main_passes_modification_scope_flags_through_to_run(monkeypatch):
+    captured = _run_legacy(
+        monkeypatch,
+        [
+            "--securable-modification-scopes",
+            "main.*",
+            "--group-modification-scopes",
+            "team_*",
+            "--domain-modification-scopes",
+            "finance*",
+        ],
+    )
+    assert captured["securable_modification_scopes"] == "main.*"
+    assert captured["group_modification_scopes"] == "team_*"
+    assert captured["domain_modification_scopes"] == "finance*"
+
+
+@pytest.mark.parametrize(
+    "feature_name,scope_kwarg,deprecated_flag,scope_value",
+    [
+        (
+            "securable",
+            "securable_modification_scopes",
+            "--securable-management-scopes",
+            "main.*",
+        ),
+        (
+            "group",
+            "group_modification_scopes",
+            "--group-management-scopes",
+            "team_*",
+        ),
+        (
+            "domain",
+            "domain_modification_scopes",
+            "--domain-management-scopes",
+            "finance*",
+        ),
+    ],
+)
+def test_main_converts_deprecated_management_scope_flag_and_warns(
+    monkeypatch, caplog, feature_name, scope_kwarg, deprecated_flag, scope_value
+):
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured = _run_legacy(monkeypatch, [deprecated_flag, scope_value])
+    # Value should reach run() under the new kwarg
+    assert captured[scope_kwarg] == scope_value
+    # Warning should mention both the deprecated flag and the new flag
+    expected_new_flag = deprecated_flag.replace("management", "modification")
+    assert any(
+        deprecated_flag in r.getMessage() and expected_new_flag in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_main_converts_deprecated_taggable_management_scope_directly_to_modification(
+    monkeypatch, caplog
+):
+    """Verify --taggable-management-scopes maps directly to --securable-modification-scopes,
+    not --securable-management-scopes."""
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured = _run_legacy(monkeypatch, ["--taggable-management-scopes", "main.*"])
+    assert captured["securable_modification_scopes"] == "main.*"
+    # Warning must mention --securable-modification-scopes and NOT suggest --securable-management-scopes
+    warning_found = False
+    for r in caplog.records:
+        msg = r.getMessage()
+        if "--taggable-management-scopes" in msg:
+            assert "--securable-modification-scopes" in msg
+            assert "--securable-management-scopes" not in msg
+            warning_found = True
+    assert warning_found, "No warning about --taggable-management-scopes found"
+
+
+@pytest.mark.parametrize(
+    "feature_name,scope_field,scope_kwarg,deprecated_field,scope_value",
+    [
+        (
+            "group",
+            "group_management_scopes",
+            "group_modification_scopes",
+            "--group-management-scopes",
+            "team_*",
+        ),
+        (
+            "domain",
+            "domain_management_scopes",
+            "domain_modification_scopes",
+            "--domain-management-scopes",
+            "finance*",
+        ),
+    ],
+)
+def test_main_converts_deprecated_management_scope_from_settings_file_and_warns(
+    monkeypatch,
+    caplog,
+    tmp_path: Path,
+    feature_name,
+    scope_field,
+    scope_kwarg,
+    deprecated_field,
+    scope_value,
+):
+    settings_file = tmp_path / "uc_abac.yml"
+    settings_file.write_text(f"{scope_field}: '{scope_value}'", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured: dict = {}
+
+        def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(cli, "run", _fake_run)
+        monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+        exit_code = cli.run_cli(
+            [
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--settings-file",
+                str(settings_file),
+            ],
+        )
+    assert exit_code == 0
+    assert captured[scope_kwarg] == scope_value
+    # Warning should mention both the deprecated flag and new flag
+    expected_new_flag = deprecated_field.replace("management", "modification")
+    assert any(
+        deprecated_field in r.getMessage() and expected_new_flag in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "feature_name,env_var,scope_kwarg,scope_value",
+    [
+        (
+            "group",
+            "UC_ABAC_GROUP_MANAGEMENT_SCOPES",
+            "group_modification_scopes",
+            "team_*",
+        ),
+        (
+            "domain",
+            "UC_ABAC_DOMAIN_MANAGEMENT_SCOPES",
+            "domain_modification_scopes",
+            "finance*",
+        ),
+    ],
+)
+def test_main_converts_deprecated_management_scope_from_env_and_warns(
+    monkeypatch, caplog, feature_name, env_var, scope_kwarg, scope_value
+):
+    monkeypatch.setenv(env_var, scope_value)
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        captured = _run_legacy(monkeypatch, [])
+    assert captured[scope_kwarg] == scope_value
+    # Build expected new flag name from env var
+    deprecated_flag = "--" + env_var[len("UC_ABAC_") :].replace("_", "-").lower()
+    expected_new_flag = deprecated_flag.replace("management", "modification")
+    assert any(
+        deprecated_flag in r.getMessage() and expected_new_flag in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "feature_name,management_flag,modification_flag,scope_value",
+    [
+        (
+            "securable",
+            "--securable-management-scopes",
+            "--securable-modification-scopes",
+            "main.*",
+        ),
+        (
+            "group",
+            "--group-management-scopes",
+            "--group-modification-scopes",
+            "team_*",
+        ),
+        (
+            "domain",
+            "--domain-management-scopes",
+            "--domain-modification-scopes",
+            "finance*",
+        ),
+    ],
+)
+def test_main_fails_when_management_and_modification_scope_flags_combined(
+    monkeypatch, feature_name, management_flag, modification_flag, scope_value
+):
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            management_flag,
+            scope_value,
+            modification_flag,
+            scope_value,
+        ],
+    )
+    assert exit_code == 2
+
+
+def test_main_fails_when_taggable_and_securable_management_scopes_combined(monkeypatch):
+    """When both --taggable-management-scopes and --securable-management-scopes are used,
+    error message must name both deprecated flags."""
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--taggable-management-scopes",
+            "main.*",
+            "--securable-management-scopes",
+            "main.*",
+        ],
+    )
+    assert exit_code == 2
+
+
+def test_main_fails_when_group_modification_scope_combined_with_deprecated_enable_group_management(
+    monkeypatch,
+):
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--enable-group-management",
+            "--group-modification-scopes",
+            "team_*",
+        ],
+    )
+    assert exit_code == 2
+
+
+def test_main_warns_deprecated_enable_group_management_points_to_group_modification_scopes(
+    monkeypatch, caplog
+):
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        _run_legacy(monkeypatch, ["--enable-group-management"])
+    assert any(
+        "--enable-group-management" in r.getMessage()
+        and "--group-modification-scopes" in r.getMessage()
         for r in caplog.records
     )
 

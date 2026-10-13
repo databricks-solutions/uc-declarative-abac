@@ -445,7 +445,7 @@ def test_orchestrator_creates_only_domains_matching_creation_scopes(
     }
 
 
-def test_orchestrator_does_not_create_declared_domain_when_only_management_scope_active(
+def test_orchestrator_does_not_create_declared_domain_when_only_modification_scope_active(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Management scope gates updates only: with no creation scope, a declared
@@ -473,14 +473,14 @@ def test_orchestrator_does_not_create_declared_domain_when_only_management_scope
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
     assert result.domain_diff.to_create == set()
 
 
-def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
+def test_orchestrator_creation_and_modification_scopes_gate_domains_independently(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Creation scope gates creates and management scope gates updates, acting
@@ -523,7 +523,7 @@ def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
             domain_creation_scopes="finance*",
-            domain_management_scopes="operations*",
+            domain_modification_scopes="operations*",
             dry_run=True,
         )
 
@@ -540,7 +540,7 @@ def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
     }
 
 
-def test_orchestrator_protects_declared_domain_outside_management_scope_from_deletion(
+def test_orchestrator_protects_declared_domain_outside_modification_scope_from_deletion(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     config = {
@@ -578,7 +578,7 @@ def test_orchestrator_protects_declared_domain_outside_management_scope_from_del
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="finance*",
+            domain_modification_scopes="finance*",
             domain_deletion_scopes="operations*",
             dry_run=True,
         )
@@ -742,7 +742,7 @@ def test_orchestrator_reads_domain_owners_after_principal_maps_are_built(
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
@@ -830,7 +830,7 @@ def test_orchestrator_updates_domain_with_configured_description_when_fetched_ta
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
@@ -4758,15 +4758,15 @@ def _inert_run_context() -> orchestrator.RunContext:
     return orchestrator.RunContext(
         tag_scope=empty,
         privilege_scope=empty,
-        securable_management_scope=empty,
+        securable_modification_scope=empty,
         securable_creation_scope=empty,
         policy_delete_scope=empty,
         group_creation_scope=empty,
-        group_management_scope=empty,
+        group_modification_scope=empty,
         group_deletion_scope=empty,
         governed_tag_deletion_scope=empty,
         domain_creation_scope=empty,
-        domain_management_scope=empty,
+        domain_modification_scope=empty,
         domain_deletion_scope=empty,
         run_date=orchestrator.run_date_for_timezone("UTC"),
         retain_prefixes=frozenset(),
