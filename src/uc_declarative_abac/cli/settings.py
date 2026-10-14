@@ -50,6 +50,7 @@ _ENV_FIELD_MAP: dict[str, str] = {
     "enable_policy_deletion": "ENABLE_POLICY_DELETION",
     # New unified scope flags (supersede the enable_* + *_for_namespaces pairs).
     "tag_management_scopes": "TAG_MANAGEMENT_SCOPES",
+    "tag_assignment_scopes": "TAG_ASSIGNMENT_SCOPES",
     "privilege_management_scopes": "PRIVILEGE_MANAGEMENT_SCOPES",
     "securable_modification_scopes": "SECURABLE_MODIFICATION_SCOPES",
     "securable_creation_scopes": "SECURABLE_CREATION_SCOPES",
@@ -106,6 +107,7 @@ class RunSettings(BaseModel):
     # legacy enable_* + *_for_namespaces machinery); any string value (including
     # "") ⇒ new-style scope, where "" disables and "*" covers everything.
     tag_management_scopes: str | None = None
+    tag_assignment_scopes: str | None = None
     privilege_management_scopes: str | None = None
     securable_modification_scopes: str | None = None
     securable_creation_scopes: str | None = None

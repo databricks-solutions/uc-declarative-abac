@@ -5,8 +5,11 @@ from uc_declarative_abac.tags import (
     TagDiff,
     compute_tag_diff,
     filter_retained_removals,
+    filter_unmanaged_removals,
+    project_tag_state,
 )
 from uc_declarative_abac.types import SecurableType
+from uc_declarative_abac.utils import parse_hierarchical_scope
 
 # ---------------------------------------------------------------------------
 # Tags to add, update and remove
@@ -328,3 +331,160 @@ def test_tag_differ_matches_prefix_not_substring():
 
     assert new_diff.to_remove == {tag}
     assert retained == set()
+
+
+# ---------------------------------------------------------------------------
+# filter_unmanaged_removals
+# ---------------------------------------------------------------------------
+
+
+def test_filter_unmanaged_removals_drops_removals_outside_management_scope():
+    """Removals whose securable_full_name is not matched by management_scope
+    are filtered out; matched removals are retained."""
+    managed_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="main.sales.orders",
+        tag_name="pii",
+        tag_value="true",
+    )
+    unmanaged_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="other.schema.table",
+        tag_name="deprecated",
+        tag_value="true",
+    )
+    diff = TagDiff(to_remove={managed_tag, unmanaged_tag})
+    management_scope = parse_hierarchical_scope("main")
+
+    new_diff, dropped = filter_unmanaged_removals(diff, management_scope)
+
+    assert new_diff.to_remove == {managed_tag}
+    assert dropped == {unmanaged_tag}
+
+
+def test_filter_unmanaged_removals_keeps_adds_and_updates():
+    """to_add, to_update and old_values are carried through unchanged;
+    only to_remove is filtered."""
+    add_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="other.schema.table",
+        tag_name="new_tag",
+        tag_value="x",
+    )
+    update_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="other.schema.table",
+        tag_name="env",
+        tag_value="prod",
+    )
+    remove_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="other.schema.table",
+        tag_name="old_tag",
+        tag_value="y",
+    )
+    old_values = {
+        (SecurableType.TABLE, "other.schema.table", "env"): "staging",
+    }
+    diff = TagDiff(
+        to_add={add_tag},
+        to_update={update_tag},
+        to_remove={remove_tag},
+        old_values=old_values,
+    )
+    management_scope = parse_hierarchical_scope("main")
+
+    new_diff, dropped = filter_unmanaged_removals(diff, management_scope)
+
+    assert new_diff.to_add == {add_tag}
+    assert new_diff.to_update == {update_tag}
+    assert new_diff.old_values == old_values
+    assert dropped == {remove_tag}
+
+
+def test_filter_unmanaged_removals_is_noop_when_management_scope_covers_all():
+    """With a match-all scope ('*'), nothing is dropped."""
+    tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="any.schema.table",
+        tag_name="tag",
+        tag_value="x",
+    )
+    diff = TagDiff(to_remove={tag})
+    management_scope = parse_hierarchical_scope("*")
+
+    new_diff, dropped = filter_unmanaged_removals(diff, management_scope)
+
+    assert new_diff.to_remove == {tag}
+    assert dropped == set()
+
+
+# ---------------------------------------------------------------------------
+# project_tag_state
+# ---------------------------------------------------------------------------
+
+
+def test_project_tag_state_applies_adds_updates_and_removals():
+    """Post-run tag state includes to_add, to_update (new values), excludes
+    tags removed, and keeps unchanged actual tags."""
+    unchanged_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="catalog.schema.orders",
+        tag_name="team",
+        tag_value="revenue",
+    )
+    updated_tag_old = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="catalog.schema.orders",
+        tag_name="env",
+        tag_value="dev",
+    )
+    updated_tag_new = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="catalog.schema.orders",
+        tag_name="env",
+        tag_value="prod",
+    )
+    removed_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="catalog.schema.orders",
+        tag_name="deprecated",
+        tag_value="true",
+    )
+    added_tag = SecurableTag(
+        securable_type=SecurableType.TABLE,
+        securable_full_name="catalog.schema.orders",
+        tag_name="pii",
+        tag_value="true",
+    )
+    actual = {unchanged_tag, updated_tag_old, removed_tag}
+    diff = TagDiff(
+        to_add={added_tag},
+        to_update={updated_tag_new},
+        to_remove={removed_tag},
+    )
+
+    projected = project_tag_state(actual, diff)
+
+    assert unchanged_tag in projected
+    assert updated_tag_old not in projected
+    assert updated_tag_new in projected
+    assert removed_tag not in projected
+    assert added_tag in projected
+
+
+def test_project_tag_state_keeps_actual_tags_not_removed():
+    """Actual tags that are neither removed nor updated pass through unchanged."""
+    kept_tag = SecurableTag(
+        securable_type=SecurableType.CATALOG,
+        securable_full_name="my_catalog",
+        tag_name="owner",
+        tag_value="data_team",
+    )
+    actual = {kept_tag}
+    diff = TagDiff()
+
+    projected = project_tag_state(actual, diff)
+
+    assert kept_tag in projected
+    assert len(projected) == 1

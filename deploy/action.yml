@@ -110,13 +110,21 @@ inputs:
     default: ''
   tag-management-scopes:
     description: >-
-      Scope tag-assignment management to matching securables. Comma-separated
+      Scope full tag management (add, update, and remove tag assignments) to
+      matching securables; subsumes ``tag-assignment-scopes``. Comma-separated
       dotted namespace prefixes: empty (default) disables it, "*" covers all, a
       trailing "*" is a raw name prefix ("main.*" = everything under main
       excluding the catalog node, "main.sales*" = matching schemas and their
       subtrees), an entry without "*" covers that node and its whole subtree
       ("main" = the catalog and everything under it). Supersedes the
       ``enable-tag-management`` + ``manage-tags-for-namespaces`` inputs.
+    required: false
+    default: ''
+  tag-assignment-scopes:
+    description: >-
+      Scope tag assignment (add missing tags, update tag values) to matching
+      securables (same dotted-prefix grammar as ``tag-management-scopes``).
+      Never removes tags — ``tag-management-scopes`` subsumes it.
     required: false
     default: ''
   privilege-management-scopes:
@@ -380,6 +388,7 @@ runs:
         CREATE_TAGGABLES_FOR_NAMESPACES: ${{ inputs.create-taggables-for-namespaces }}
         DELETE_POLICIES_FOR_NAMESPACES: ${{ inputs.delete-policies-for-namespaces }}
         TAG_MANAGEMENT_SCOPES: ${{ inputs.tag-management-scopes }}
+        TAG_ASSIGNMENT_SCOPES: ${{ inputs.tag-assignment-scopes }}
         PRIVILEGE_MANAGEMENT_SCOPES: ${{ inputs.privilege-management-scopes }}
         SECURABLE_MODIFICATION_SCOPES: ${{ inputs.securable-modification-scopes }}
         SECURABLE_MANAGEMENT_SCOPES: ${{ inputs.securable-management-scopes }}
@@ -470,6 +479,9 @@ runs:
         fi
         if [[ -n "$TAG_MANAGEMENT_SCOPES" ]]; then
           args+=(--tag-management-scopes "$TAG_MANAGEMENT_SCOPES")
+        fi
+        if [[ -n "$TAG_ASSIGNMENT_SCOPES" ]]; then
+          args+=(--tag-assignment-scopes "$TAG_ASSIGNMENT_SCOPES")
         fi
         if [[ -n "$PRIVILEGE_MANAGEMENT_SCOPES" ]]; then
           args+=(--privilege-management-scopes "$PRIVILEGE_MANAGEMENT_SCOPES")

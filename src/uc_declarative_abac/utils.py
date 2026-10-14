@@ -234,6 +234,14 @@ class Scope:
         """True when ``identifier`` is matched by any entry."""
         return any(entry.matches(identifier) for entry in self.entries)
 
+    def union(self, other: Scope) -> Scope:
+        """Return a new scope matching anything either scope alone would match.
+
+        Used to build the effective tag-assignment scope by unioning tag
+        management scope with its assignment scope — management subsumes both.
+        """
+        return Scope(entries=self.entries + other.entries)
+
     def unmatched_entries(self, universe: Iterable[str]) -> list[str]:
         """Return the source text of entries that match nothing in ``universe``.
 
@@ -343,11 +351,12 @@ class RunContext:
     import, leaving the door open for the cli settings layer to converge on it.
     """
 
-    tag_scope: Scope
-    privilege_scope: Scope
+    tag_management_scope: Scope
+    tag_assignment_scope: Scope
+    privilege_management_scope: Scope
     securable_modification_scope: Scope
     securable_creation_scope: Scope
-    policy_delete_scope: Scope
+    policy_deletion_scope: Scope
     group_creation_scope: Scope
     group_modification_scope: Scope
     group_deletion_scope: Scope
@@ -368,11 +377,15 @@ class RunContext:
 
     @property
     def enable_tag_management(self) -> bool:
-        return self.tag_scope.is_active()
+        return self.tag_management_scope.is_active()
+
+    @property
+    def enable_tag_assignment(self) -> bool:
+        return self.tag_assignment_scope.is_active()
 
     @property
     def enable_privilege_management(self) -> bool:
-        return self.privilege_scope.is_active()
+        return self.privilege_management_scope.is_active()
 
     @property
     def enable_securable_modification(self) -> bool:
@@ -384,7 +397,7 @@ class RunContext:
 
     @property
     def enable_policy_deletion(self) -> bool:
-        return self.policy_delete_scope.is_active()
+        return self.policy_deletion_scope.is_active()
 
     @property
     def enable_group_creation(self) -> bool:

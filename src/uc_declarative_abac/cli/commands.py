@@ -113,6 +113,7 @@ _SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
         "manage_tags_for_catalogs",
         "--manage-tags-for-catalogs",
     ),
+    _ScopeFeature("tag_assignment_scopes", "--tag-assignment-scopes"),
     _ScopeFeature(
         "privilege_management_scopes",
         "--privilege-management-scopes",
@@ -445,6 +446,7 @@ def _run_kwargs(
         ],
         "delete_policies_for_namespaces": delete_policies,
         "tag_management_scopes": settings.tag_management_scopes,
+        "tag_assignment_scopes": settings.tag_assignment_scopes,
         "privilege_management_scopes": settings.privilege_management_scopes,
         "securable_modification_scopes": settings.securable_modification_scopes,
         "securable_creation_scopes": settings.securable_creation_scopes,

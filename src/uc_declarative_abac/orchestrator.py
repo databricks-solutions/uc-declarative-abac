@@ -76,6 +76,8 @@ from uc_declarative_abac.tags import (
     compute_tag_diff,
     execute_tag_diff,
     filter_retained_removals,
+    filter_unmanaged_removals,
+    project_tag_state,
 )
 from uc_declarative_abac.types import SecurableType
 from uc_declarative_abac.utils import (
@@ -364,6 +366,7 @@ def _build_run_context(
     create_taggables_for_namespaces: str,
     delete_policies_for_namespaces: str,
     tag_management_scopes: str | None,
+    tag_assignment_scopes: str | None,
     privilege_management_scopes: str | None,
     securable_modification_scopes: str | None,
     securable_creation_scopes: str | None,
@@ -400,13 +403,21 @@ def _build_run_context(
     configured_namespaces = _collect_configured_namespaces(config)
     configured_full_names = _collect_configured_full_names(config)
 
-    tag_scope = _build_hierarchical_scope(
+    tag_management_scope = _build_hierarchical_scope(
         tag_management_scopes,
         legacy_enabled=enable_tag_management,
         legacy_namespaces=manage_tags_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    privilege_scope = _build_hierarchical_scope(
+    # Raw assignment scope for warning; effective scope is the union (management subsumes).
+    raw_tag_assignment_scope = parse_hierarchical_scope(tag_assignment_scopes or "")
+    # Store the EFFECTIVE scope in RunContext: assignment scope unioned with management
+    # scope. When both are set, management scope subsumes assignment scope, so all
+    # management-scoped securables also get assignment behavior.
+    effective_tag_assignment_scope = raw_tag_assignment_scope.union(
+        tag_management_scope
+    )
+    privilege_management_scope = _build_hierarchical_scope(
         privilege_management_scopes,
         legacy_enabled=enable_privilege_management,
         legacy_namespaces=manage_privileges_for_namespaces,
@@ -424,7 +435,7 @@ def _build_run_context(
         legacy_namespaces=create_taggables_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    policy_delete_scope = _build_hierarchical_scope(
+    policy_deletion_scope = _build_hierarchical_scope(
         policy_deletion_scopes,
         legacy_enabled=enable_policy_deletion,
         legacy_namespaces=delete_policies_for_namespaces,
@@ -468,11 +479,16 @@ def _build_run_context(
     # configured securable — a likely typo that would silently govern nothing.
     _warn_unmatched_scopes(
         [
-            ("--tag-management-scopes", tag_management_scopes, tag_scope),
+            ("--tag-management-scopes", tag_management_scopes, tag_management_scope),
+            (
+                "--tag-assignment-scopes",
+                tag_assignment_scopes,
+                raw_tag_assignment_scope,
+            ),
             (
                 "--privilege-management-scopes",
                 privilege_management_scopes,
-                privilege_scope,
+                privilege_management_scope,
             ),
             (
                 "--securable-modification-scopes",
@@ -484,7 +500,7 @@ def _build_run_context(
                 securable_creation_scopes,
                 securable_creation_scope,
             ),
-            ("--policy-deletion-scopes", policy_deletion_scopes, policy_delete_scope),
+            ("--policy-deletion-scopes", policy_deletion_scopes, policy_deletion_scope),
         ],
         configured_full_names,
     )
@@ -541,11 +557,12 @@ def _build_run_context(
     )
 
     return RunContext(
-        tag_scope=tag_scope,
-        privilege_scope=privilege_scope,
+        tag_management_scope=tag_management_scope,
+        tag_assignment_scope=effective_tag_assignment_scope,
+        privilege_management_scope=privilege_management_scope,
         securable_modification_scope=securable_modification_scope,
         securable_creation_scope=securable_creation_scope,
-        policy_delete_scope=policy_delete_scope,
+        policy_deletion_scope=policy_deletion_scope,
         group_creation_scope=group_creation_scope,
         group_modification_scope=group_modification_scope,
         group_deletion_scope=group_deletion_scope,
@@ -577,11 +594,12 @@ def _full_fetch_context() -> RunContext:
     all_hierarchical = parse_hierarchical_scope("*")
     all_flat = parse_flat_scope("*")
     return RunContext(
-        tag_scope=all_hierarchical,
-        privilege_scope=all_hierarchical,
+        tag_management_scope=all_hierarchical,
+        tag_assignment_scope=all_hierarchical,
+        privilege_management_scope=all_hierarchical,
         securable_modification_scope=all_hierarchical,
         securable_creation_scope=all_hierarchical,
-        policy_delete_scope=all_hierarchical,
+        policy_deletion_scope=all_hierarchical,
         group_creation_scope=all_flat,
         group_modification_scope=all_flat,
         group_deletion_scope=all_flat,
@@ -741,8 +759,9 @@ def fetch_actual_state(
     }
 
     # actual_tags is needed by either the tags domain (for the diff) or the privileges
-    # domain (for policy matching against on-disk tag state when tag management is off).
-    need_actual_tags = ctx.enable_tag_management or ctx.enable_privilege_management
+    # domain (for policy matching against on-disk tag state when tag assignment/
+    # management is off). The effective assignment scope (union) covers both.
+    need_actual_tags = ctx.enable_tag_assignment or ctx.enable_privilege_management
     with ThreadPoolExecutor() as pool:
         actual_securables_f = pool.submit(
             uc_helper.fetch_actual_securables,
@@ -815,6 +834,61 @@ def fetch_actual_state(
         privileges=frozenset(actual_privileges),
         principals=ws_helper.get_principals(),
     )
+
+
+def _compute_tag_workflow(
+    config: ResourcesConfig,
+    governed_tags: set[GovernedTag],
+    actual_tags: set[SecurableTag],
+    settings: RunContext,
+    retain_prefixes: frozenset[str],
+    change_logger: ChangeLogger,
+) -> tuple[TagDiff, set[SecurableTag]]:
+    """Compute the tag diff and the tag state used for grant-policy matching.
+
+    The effective assignment scope (the union of ``--tag-assignment-scopes`` and
+    ``--tag-management-scopes``, since management subsumes assignment) drives the
+    diff, so in-scope securables get tags added and values updated. Removals are
+    then kept only for securables in the management scope, and never for tags
+    matching a retained prefix.
+
+    Grant policies are matched against the projected post-run state (actual tags,
+    minus removals, plus adds and updates) — what UC will hold once the diff is
+    applied. Tags left in place (retained prefixes, assignment-only securables) still
+    count, and tags about to be added count this run. Out-of-scope securables pass
+    through unchanged because the diff never touches them. With both scopes empty
+    the engine applies no tags, so grants match against the on-disk state.
+    """
+    if not settings.enable_tag_assignment:
+        return TagDiff(), actual_tags
+
+    desired_tags = compile_desired_tags(config, governed_tags, change_logger)
+    in_scope_desired_tags = {
+        t
+        for t in desired_tags
+        if settings.tag_assignment_scope.matches(t.securable_full_name)
+    }
+    in_scope_actual_tags = {
+        t
+        for t in actual_tags
+        if settings.tag_assignment_scope.matches(t.securable_full_name)
+    }
+    tag_diff = compute_tag_diff(in_scope_desired_tags, in_scope_actual_tags)
+    tag_diff, retained_tags = filter_retained_removals(tag_diff, retain_prefixes)
+    if retained_tags:
+        _logger.info(
+            f"  Retaining {len(retained_tags)} unconfigured tag(s) matching "
+            f"prefix(es) {sorted(retain_prefixes)} — these will not be removed"
+        )
+    tag_diff, kept_by_scope = filter_unmanaged_removals(
+        tag_diff, settings.tag_management_scope
+    )
+    if kept_by_scope:
+        _logger.info(
+            f"  Keeping {len(kept_by_scope)} tag(s) on securables covered only by "
+            f"--tag-assignment-scopes — these will not be removed"
+        )
+    return tag_diff, project_tag_state(actual_tags, tag_diff)
 
 
 def _execute_changes(
@@ -966,36 +1040,10 @@ def _execute_changes(
         ignore_unresolvable=ignore_unresolvable,
     )
 
-    # Tags workflow.
-    if settings.enable_tag_management:
-        desired_tags = compile_desired_tags(config, governed_tags, change_logger)
-        in_scope_desired_tags = {
-            t for t in desired_tags if settings.tag_scope.matches(t.securable_full_name)
-        }
-        in_scope_actual_tags = {
-            t for t in actual_tags if settings.tag_scope.matches(t.securable_full_name)
-        }
-        out_of_scope_actual_tags = {
-            t
-            for t in actual_tags
-            if not settings.tag_scope.matches(t.securable_full_name)
-        }
-        tag_diff = compute_tag_diff(in_scope_desired_tags, in_scope_actual_tags)
-        tag_diff, retained_tags = filter_retained_removals(tag_diff, retain_prefixes)
-        if retained_tags:
-            _logger.info(
-                f"  Retaining {len(retained_tags)} unconfigured tag(s) matching "
-                f"prefix(es) {sorted(retain_prefixes)} — these will not be removed"
-            )
-        # Post-run tag state used by the privileges compiler: in-scope catalogs
-        # reflect the desired (about to be applied); out-of-scope reflect actual.
-        tags_for_privilege_matching = in_scope_desired_tags | out_of_scope_actual_tags
-    else:
-        tag_diff = TagDiff()
-        # When tag management is off the engine will not reconcile the config's desired
-        # tags onto UC this run, so the privileges compiler must match its policies
-        # against the on-disk tag state to stay honest.
-        tags_for_privilege_matching = actual_tags
+    # Tags workflow (see _compute_tag_workflow).
+    tag_diff, tags_for_privilege_matching = _compute_tag_workflow(
+        config, governed_tags, actual_tags, settings, retain_prefixes, change_logger
+    )
 
     # Policies workflow (mask/filter).
     desired_policies = compile_desired_policies(
@@ -1009,7 +1057,7 @@ def _execute_changes(
         resolver,
         change_logger,
         ignore_unresolvable=ignore_unresolvable,
-        delete_scope=settings.policy_delete_scope,
+        delete_scope=settings.policy_deletion_scope,
     )
 
     # Privileges workflow.
@@ -1024,12 +1072,12 @@ def _execute_changes(
         in_scope_compiled_privileges = {
             p
             for p in compiled_privileges
-            if settings.privilege_scope.matches(p.securable_full_name)
+            if settings.privilege_management_scope.matches(p.securable_full_name)
         }
         in_scope_actual_privileges = {
             p
             for p in actual_privileges
-            if settings.privilege_scope.matches(p.securable_full_name)
+            if settings.privilege_management_scope.matches(p.securable_full_name)
         }
         privilege_diff = compute_privilege_diff(
             in_scope_compiled_privileges,
@@ -1169,6 +1217,7 @@ def run(
     create_taggables_for_namespaces: str = "*",
     delete_policies_for_namespaces: str = "*",
     tag_management_scopes: str | None = None,
+    tag_assignment_scopes: str | None = None,
     privilege_management_scopes: str | None = None,
     securable_modification_scopes: str | None = None,
     securable_creation_scopes: str | None = None,
@@ -1200,11 +1249,18 @@ def run(
     behaviour (strict ``parse_namespace_filter`` validation preserved). Effective
     enablement is ``scope.is_active()``: when a scope is empty the corresponding
     domain is skipped in both dry-run and real-run (no fetch, no diff, no log, no
-    execute). An active ``privilege_management`` scope with an inactive
-    ``tag_management`` scope makes the privileges compiler match its grant
-    policies against the on-disk (``actual``) tag state instead of the config's
-    desired tags. A new-style scope entry that matches no applicable resource
+    execute). An active ``privilege_management`` scope with both tag scopes
+    (``tag_management`` and ``tag_assignment``) inactive makes the privileges
+    compiler match its grant policies against the on-disk (``actual``) tag state
+    instead of the projected post-run tags. A new-style scope entry that matches no applicable resource
     logs a warning (likely typo) but never fails the run.
+
+    ``tag_assignment_scopes`` and ``tag_management_scopes`` are two scopes for
+    tag governance. ``tag_assignment_scopes`` adds and updates tags but never
+    removes them (assignment-only). ``tag_management_scopes`` subsumes assignment
+    and additionally enables removal of unconfigured tags. When both are set,
+    the effective assignment scope is their union, and tags are removed only for
+    securables matched by the management scope.
 
     ``domain_creation_scopes``, ``domain_modification_scopes``, and
     ``domain_deletion_scopes`` are three independent flat governed-tag-key scopes
@@ -1277,6 +1333,7 @@ def run(
         create_taggables_for_namespaces=create_taggables_for_namespaces,
         delete_policies_for_namespaces=delete_policies_for_namespaces,
         tag_management_scopes=tag_management_scopes,
+        tag_assignment_scopes=tag_assignment_scopes,
         privilege_management_scopes=privilege_management_scopes,
         securable_modification_scopes=securable_modification_scopes,
         securable_creation_scopes=securable_creation_scopes,

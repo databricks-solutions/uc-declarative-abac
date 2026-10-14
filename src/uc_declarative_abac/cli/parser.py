@@ -215,9 +215,21 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
-            "Scope tag-assignment management to matching securables. "
+            "Scope full tag management (add, update, and remove tag assignments) to "
+            "matching securables; subsumes --tag-assignment-scopes. "
             f"{_HIER_SCOPE_GRAMMAR} Supersedes --enable-tag-management and "
             "--manage-tags-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--tag-assignment-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope tag assignment (add missing tags, update tag values) to matching "
+            "securables. Never removes tags — use --tag-management-scopes for full "
+            f"management, which subsumes this. {_HIER_SCOPE_GRAMMAR}"
         ),
     )
     parser.add_argument(

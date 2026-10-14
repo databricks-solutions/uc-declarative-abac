@@ -608,3 +608,28 @@ def test_parser_help_keeps_tag_and_privilege_management_scopes(capsys):
         r"--privilege-management-scopes[\s\S]{0,100}\(Deprecated",
         output,
     )
+
+
+def test_parser_accepts_tag_assignment_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--tag-assignment-scopes",
+            "main.sales*",
+        ],
+    )
+
+    assert namespace.tag_assignment_scopes == "main.sales*"
+
+
+def test_parser_help_documents_tag_assignment_scopes_never_remove(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    # Normalize whitespace for easier substring checking
+    help_text = " ".join(output.split())
+
+    assert "--tag-assignment-scopes" in output
+    assert "Never removes tags" in help_text

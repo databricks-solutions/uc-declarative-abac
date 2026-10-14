@@ -388,6 +388,26 @@ def test_main_fails_on_malformed_new_scope(monkeypatch):
     assert exit_code == 2
 
 
+def test_main_passes_tag_assignment_scopes_through_to_run(monkeypatch):
+    captured = _run_legacy(monkeypatch, ["--tag-assignment-scopes", "main.sales*"])
+    assert captured["tag_assignment_scopes"] == "main.sales*"
+
+
+def test_main_fails_on_malformed_tag_assignment_scope(monkeypatch):
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--tag-assignment-scopes",
+            "ma*in",
+        ],
+    )
+    assert exit_code == 2
+
+
 def test_main_passes_group_creation_scope_through_to_run(monkeypatch):
     captured = _run_legacy(monkeypatch, ["--group-creation-scopes", "team_*"])
     assert captured["group_creation_scopes"] == "team_*"

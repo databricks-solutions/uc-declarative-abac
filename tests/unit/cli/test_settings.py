@@ -307,3 +307,9 @@ def test_settings_loads_legacy_management_scopes_from_settings_file(tmp_path: Pa
     assert settings.securable_management_scopes == "main.*"
     assert settings.group_management_scopes == "team_*"
     assert settings.domain_management_scopes == "fin*"
+
+
+def test_settings_loads_tag_assignment_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_TAG_ASSIGNMENT_SCOPES", "main.sales*")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.tag_assignment_scopes == "main.sales*"
