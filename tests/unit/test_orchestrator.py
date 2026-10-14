@@ -445,7 +445,7 @@ def test_orchestrator_creates_only_domains_matching_creation_scopes(
     }
 
 
-def test_orchestrator_does_not_create_declared_domain_when_only_management_scope_active(
+def test_orchestrator_does_not_create_declared_domain_when_only_modification_scope_active(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Management scope gates updates only: with no creation scope, a declared
@@ -473,14 +473,14 @@ def test_orchestrator_does_not_create_declared_domain_when_only_management_scope
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
     assert result.domain_diff.to_create == set()
 
 
-def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
+def test_orchestrator_creation_and_modification_scopes_gate_domains_independently(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Creation scope gates creates and management scope gates updates, acting
@@ -523,7 +523,7 @@ def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
             domain_creation_scopes="finance*",
-            domain_management_scopes="operations*",
+            domain_modification_scopes="operations*",
             dry_run=True,
         )
 
@@ -540,7 +540,7 @@ def test_orchestrator_creation_and_management_scopes_gate_domains_independently(
     }
 
 
-def test_orchestrator_protects_declared_domain_outside_management_scope_from_deletion(
+def test_orchestrator_protects_declared_domain_outside_modification_scope_from_deletion(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     config = {
@@ -578,7 +578,7 @@ def test_orchestrator_protects_declared_domain_outside_management_scope_from_del
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="finance*",
+            domain_modification_scopes="finance*",
             domain_deletion_scopes="operations*",
             dry_run=True,
         )
@@ -742,7 +742,7 @@ def test_orchestrator_reads_domain_owners_after_principal_maps_are_built(
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
@@ -830,7 +830,7 @@ def test_orchestrator_updates_domain_with_configured_description_when_fetched_ta
             config_dir=root,
             workspace_client=mock_workspace_client,
             warehouse_id="test-warehouse-id",
-            domain_management_scopes="*",
+            domain_modification_scopes="*",
             dry_run=True,
         )
 
@@ -2762,6 +2762,313 @@ def test_orchestrator_tag_filter_accepts_mix_of_catalog_and_qualified_schema(
     names_in_diff = {t.securable_full_name for t in result.tag_diff.to_add}
     assert names_in_diff == {"cat_a", "cat_b.sch1"}, (
         f"Expected only cat_a and cat_b.sch1 in tag_diff.to_add, got: {names_in_diff}"
+    )
+
+
+# ---
+# tag_assignment_scopes tests
+# ---
+
+
+def test_orchestrator_tag_assignment_scope_adds_and_updates_but_never_removes_tags(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """With tag_assignment_scopes matching a catalog, tags are added and updated,
+    but tags present in UC and absent from config are NEVER removed."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "cat_a": {"tags": {"env": "prod", "new_tag": "value1"}},
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    # UC actual state: env=dev (different value) and old_tag=unconfigured (should NOT be removed)
+    actual_tag_rows = [
+        [
+            "CATALOG",
+            "cat_a",
+            '[{"tag_name":"env","tag_value":"dev"},{"tag_name":"old_tag","tag_value":"old"}]',
+        ],
+    ]
+    _install_fetch_router(monkeypatch, config, tag_rows=actual_tag_rows)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    result = run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_assignment_scopes="cat_a",
+    )
+
+    # Check tag_diff: should have to_add (new_tag) and to_update (env), but to_remove empty
+    to_add_tags = {t.tag_name for t in result.tag_diff.to_add}
+    to_update_tags = {t.tag_name for t in result.tag_diff.to_update}
+    to_remove_tags = {t.tag_name for t in result.tag_diff.to_remove}
+
+    assert "new_tag" in to_add_tags, (
+        f"Expected new_tag to be added, got to_add: {to_add_tags}"
+    )
+    assert "env" in to_update_tags, (
+        f"Expected env to be updated, got to_update: {to_update_tags}"
+    )
+    assert to_remove_tags == set(), (
+        f"Expected no tags to be removed, got to_remove: {to_remove_tags}"
+    )
+
+
+def test_orchestrator_tag_management_scope_subsumes_assignment_scope(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """When the same securable is matched by tag_management_scope, full management
+    applies (including removals), even if also matched by tag_assignment_scope."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "cat_a": {"tags": {"env": "prod"}},
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    # UC actual state: unconfigured tag old_tag
+    actual_tag_rows = [
+        ["CATALOG", "cat_a", '[{"tag_name":"old_tag","tag_value":"old"}]'],
+    ]
+    _install_fetch_router(monkeypatch, config, tag_rows=actual_tag_rows)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    result = run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_management_scopes="cat_a",
+        tag_assignment_scopes="cat_a",
+    )
+
+    # With tag_management_scope active, removals should be present
+    to_remove_tags = {t.tag_name for t in result.tag_diff.to_remove}
+    assert "old_tag" in to_remove_tags, (
+        f"Expected old_tag to be removed by management scope, got to_remove: {to_remove_tags}"
+    )
+
+
+def test_orchestrator_tag_assignment_scope_fetches_actual_tags_when_management_disabled(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """With only tag_assignment_scopes set (tag_management disabled), actual tags
+    must still be fetched for the assignment workflow."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "cat_a": {"tags": {"env": "prod"}},
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_assignment_scopes="cat_a",
+    )
+
+    # Verify that tag-table queries were executed (actual_tags fetched)
+    tag_queries = [
+        s for s in mock_workspace_client.executed_sql if "_tags" in s.lower()
+    ]
+    assert tag_queries, (
+        "Expected tag-table queries when tag_assignment_scopes active, got none"
+    )
+
+
+def test_orchestrator_tag_assignment_scope_projects_retained_tags_for_grant_matching(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """An unconfigured actual tag on an assignment-only securable still satisfies
+    a grant policy matching that tag, because grant matching uses projected post-run
+    state (actual tags that are not removed)."""
+    config = {
+        "resources": {
+            "governed_tags": {
+                "env": {"allowed_values": ["prod", "dev"]},
+                "tier": {"allowed_values": ["gold"]},
+            },
+            "catalogs": {
+                "cat_a": {
+                    "tags": {"tier": "gold"},
+                    "policies": [
+                        {
+                            "name": "g1",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["data_engineers"],
+                            "has_tags": {
+                                "env": "dev"
+                            },  # matches the unconfigured UC tag
+                        },
+                    ],
+                }
+            },
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    # UC actual state: env=dev (not in config, but matches the grant policy)
+    actual_tag_rows = [
+        ["CATALOG", "cat_a", '[{"tag_name":"env","tag_value":"dev"}]'],
+    ]
+    _install_fetch_router(monkeypatch, config, tag_rows=actual_tag_rows)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    result = run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_assignment_scopes="cat_a",
+        enable_privilege_management=True,
+    )
+
+    # Grant should be produced because env=dev matches the policy (not removed)
+    cat_a_grants = [
+        p for p in result.privilege_diff.to_grant if p.securable_full_name == "cat_a"
+    ]
+    assert cat_a_grants, (
+        f"Expected grant from unconfigured tag under assignment scope, got: {result.privilege_diff.to_grant}"
+    )
+
+
+def test_orchestrator_tag_assignment_scope_counts_added_tags_for_grant_matching(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """A tag the run is about to add on an assignment-only securable satisfies a
+    grant policy matching it in the same run (grants match the projected state)."""
+    config = {
+        "resources": {
+            "governed_tags": {
+                "env": {"allowed_values": ["prod", "dev"]},
+            },
+            "catalogs": {
+                "cat_a": {
+                    "tags": {"env": "prod"},
+                    "policies": [
+                        {
+                            "name": "g1",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["data_engineers"],
+                            "has_tags": {"env": "prod"},
+                        },
+                    ],
+                }
+            },
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config, tag_rows=[])
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    result = run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_assignment_scopes="cat_a",
+        enable_privilege_management=True,
+    )
+
+    assert any(t.tag_name == "env" for t in result.tag_diff.to_add)
+    assert any(p.securable_full_name == "cat_a" for p in result.privilege_diff.to_grant)
+
+
+def test_orchestrator_retained_prefix_tags_count_for_grant_matching_under_management(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """Under tag_management_scopes, a tag matching a retain prefix, even if not in
+    config, is NOT removed and therefore still satisfies a grant policy matching it."""
+    config = {
+        "resources": {
+            "governed_tags": {
+                "environment": {"allowed_values": ["prod", "dev"]},
+            },
+            "catalogs": {
+                "cat_a": {
+                    "policies": [
+                        {
+                            "name": "g1",
+                            "type": "grant",
+                            "privileges": ["select"],
+                            "to": ["data_engineers"],
+                            "has_tags": {"environment": "dev"},
+                        },
+                    ],
+                }
+            },
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    # UC actual state: environment=dev tag exists on catalog but NOT in config
+    actual_tag_rows = [
+        ["CATALOG", "cat_a", '[{"tag_name":"environment","tag_value":"dev"}]'],
+    ]
+    _install_fetch_router(monkeypatch, config, tag_rows=actual_tag_rows)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    result = run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        tag_management_scopes="cat_a",
+        enable_privilege_management=True,
+        force=True,
+        retain_tag_prefixes="environ",
+    )
+
+    # Grant should be produced: environment=dev is retained (matches "environ" prefix),
+    # so it's available for grant matching.
+    cat_a_grants = [
+        p for p in result.privilege_diff.to_grant if p.securable_full_name == "cat_a"
+    ]
+    assert cat_a_grants, (
+        f"Expected grant from retained tag, got: {result.privilege_diff.to_grant}"
+    )
+
+
+def test_orchestrator_warns_unmatched_tag_assignment_scope_entries(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch, caplog
+):
+    """A tag_assignment_scopes entry that matches no configured securable logs
+    a warning mentioning '--tag-assignment-scopes'."""
+    config = _two_catalog_tags_config()
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config)
+    _setup_mock_principals(mock_workspace_client, "data_engineers")
+
+    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+        result = run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            tag_assignment_scopes="main",  # typo for a configured catalog
+        )
+
+    assert result.tag_diff == TagDiff()
+    assert any(
+        "mian" in r.getMessage() and "--tag-assignment-scopes" in r.getMessage()
+        for r in caplog.records
+    ) or any(
+        "main" in r.getMessage() and "--tag-assignment-scopes" in r.getMessage()
+        for r in caplog.records
+    ), (
+        f"Expected warning with 'main' or 'mian' and '--tag-assignment-scopes', got: "
+        f"{[r.getMessage() for r in caplog.records]}"
     )
 
 
@@ -4756,17 +5063,18 @@ def _inert_run_context() -> orchestrator.RunContext:
     """A RunContext with every feature scope empty — nothing is fetched/gated on."""
     empty = orchestrator.Scope()
     return orchestrator.RunContext(
-        tag_scope=empty,
-        privilege_scope=empty,
-        securable_management_scope=empty,
+        tag_management_scope=empty,
+        tag_assignment_scope=empty,
+        privilege_management_scope=empty,
+        securable_modification_scope=empty,
         securable_creation_scope=empty,
-        policy_delete_scope=empty,
+        policy_deletion_scope=empty,
         group_creation_scope=empty,
-        group_management_scope=empty,
+        group_modification_scope=empty,
         group_deletion_scope=empty,
         governed_tag_deletion_scope=empty,
         domain_creation_scope=empty,
-        domain_management_scope=empty,
+        domain_modification_scope=empty,
         domain_deletion_scope=empty,
         run_date=orchestrator.run_date_for_timezone("UTC"),
         retain_prefixes=frozenset(),

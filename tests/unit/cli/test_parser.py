@@ -120,7 +120,7 @@ def test_parser_help_documents_domain_management_behavior(capsys):
     output = _help_output(["deploy", "--help"], capsys)
     help_text = " ".join(output.split())
 
-    assert "--domain-management-scopes" in output
+    assert "--domain-modification-scopes" in output
     assert "explicitly declared resources.domains" in help_text
     assert "by governed-tag key" in help_text
     assert re.search(r"Comma-\s*separated names", output)
@@ -207,7 +207,7 @@ def test_parser_deploy_dry_run_sets_flag():
     assert namespace.dry_run is True
 
 
-def test_parser_accepts_domain_management_scopes():
+def test_parser_accepts_domain_modification_scopes():
     namespace = parse_cli_args(
         [
             "deploy",
@@ -215,12 +215,12 @@ def test_parser_accepts_domain_management_scopes():
             "/tmp/configs",
             "--warehouse-id",
             "wh",
-            "--domain-management-scopes",
+            "--domain-modification-scopes",
             "finance*",
         ],
     )
 
-    assert namespace.domain_management_scopes == "finance*"
+    assert namespace.domain_modification_scopes == "finance*"
 
     with pytest.raises(SystemExit) as exc_info:
         parse_cli_args(
@@ -430,7 +430,7 @@ def test_parser_accepts_timezone_for_dump_invocations(args):
     assert namespace.timezone == "Pacific/Kiritimati"
 
 
-def test_parser_accepts_securable_management_scopes():
+def test_parser_accepts_securable_modification_scopes():
     namespace = parse_cli_args(
         [
             "deploy",
@@ -438,12 +438,12 @@ def test_parser_accepts_securable_management_scopes():
             "/tmp/configs",
             "--warehouse-id",
             "wh",
-            "--securable-management-scopes",
+            "--securable-modification-scopes",
             "main.*",
         ],
     )
 
-    assert namespace.securable_management_scopes == "main.*"
+    assert namespace.securable_modification_scopes == "main.*"
 
 
 def test_parser_accepts_securable_creation_scopes():
@@ -467,7 +467,7 @@ def test_parser_help_documents_securable_scopes_do_not_gate_functions(capsys):
     # Normalize whitespace for easier substring checking
     help_text = " ".join(output.split())
 
-    assert "--securable-management-scopes" in output
+    assert "--securable-modification-scopes" in output
     assert "--securable-creation-scopes" in output
     assert "function" in help_text
     assert "columns" in help_text
@@ -480,7 +480,7 @@ def test_parser_help_marks_taggable_scopes_deprecated(capsys):
     assert "--taggable-management-scopes" in output
     assert "--taggable-creation-scopes" in output
     assert re.search(
-        r"--taggable-management-scopes[\s\S]*?\(Deprecated.*--securable-management-scopes",
+        r"--taggable-management-scopes[\s\S]*?\(Deprecated.*--securable-modification-scopes",
         output,
     )
     assert re.search(
@@ -517,3 +517,119 @@ def test_parser_still_accepts_legacy_taggable_scopes():
     )
 
     assert namespace.taggable_creation_scopes == "staging.*"
+
+
+def test_parser_accepts_group_modification_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--group-modification-scopes",
+            "team_*",
+        ],
+    )
+
+    assert namespace.group_modification_scopes == "team_*"
+
+
+def test_parser_help_documents_modification_scopes_never_create_or_delete(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    help_text = " ".join(output.split())
+
+    # Check that the three modification scopes flags are present
+    assert "--securable-modification-scopes" in output
+    assert "--group-modification-scopes" in output
+    assert "--domain-modification-scopes" in output
+
+    # Check that help says updates only / never creates or deletes
+    # (loose: the normalised help contains "never creates or deletes" at least 3 times)
+    assert help_text.count("never creates or deletes") >= 3
+
+
+def test_parser_help_marks_management_scopes_deprecated(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+
+    # Check that deprecated management scopes are marked as deprecated
+    assert re.search(
+        r"--securable-management-scopes[\s\S]*?\(Deprecated.*--securable-modification-scopes",
+        output,
+    )
+    assert re.search(
+        r"--group-management-scopes[\s\S]*?\(Deprecated.*--group-modification-scopes",
+        output,
+    )
+    assert re.search(
+        r"--domain-management-scopes[\s\S]*?\(Deprecated.*--domain-modification-scopes",
+        output,
+    )
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "attr"),
+    [
+        ("--securable-management-scopes", "main.*", "securable_management_scopes"),
+        ("--group-management-scopes", "team_*", "group_management_scopes"),
+        ("--domain-management-scopes", "fin*", "domain_management_scopes"),
+    ],
+)
+def test_parser_still_accepts_legacy_management_scopes(flag, value, attr):
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            flag,
+            value,
+        ],
+    )
+
+    assert getattr(namespace, attr) == value
+
+
+def test_parser_help_keeps_tag_and_privilege_management_scopes(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+
+    # Check that tag and privilege management scopes are present
+    assert "--tag-management-scopes" in output
+    assert "--privilege-management-scopes" in output
+
+    # Check they are NOT marked as deprecated (by making sure the word
+    # "Deprecated" does not appear near them)
+    assert not re.search(
+        r"--tag-management-scopes[\s\S]{0,100}\(Deprecated",
+        output,
+    )
+    assert not re.search(
+        r"--privilege-management-scopes[\s\S]{0,100}\(Deprecated",
+        output,
+    )
+
+
+def test_parser_accepts_tag_assignment_scopes():
+    namespace = parse_cli_args(
+        [
+            "deploy",
+            "--config-dir",
+            "/tmp/configs",
+            "--warehouse-id",
+            "wh",
+            "--tag-assignment-scopes",
+            "main.sales*",
+        ],
+    )
+
+    assert namespace.tag_assignment_scopes == "main.sales*"
+
+
+def test_parser_help_documents_tag_assignment_scopes_never_remove(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    # Normalize whitespace for easier substring checking
+    help_text = " ".join(output.split())
+
+    assert "--tag-assignment-scopes" in output
+    assert "Never removes tags" in help_text

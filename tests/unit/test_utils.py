@@ -636,3 +636,33 @@ def test_utils_normalise_data_type_idempotent_on_canonical_input():
     assert normalise_data_type("STRING") == "STRING"
     assert normalise_data_type("DECIMAL(18,4)") == "DECIMAL(18,4)"
     assert normalise_data_type("MAP<STRING,INT>") == "MAP<STRING,INT>"
+
+
+# ---------------------------------------------------------------------------
+# Scope.union
+# ---------------------------------------------------------------------------
+
+
+def test_scope_union_matches_entries_from_either_scope():
+    """Union of two scopes matches anything either scope alone would match."""
+    scope_a = parse_hierarchical_scope("main")
+    scope_b = parse_hierarchical_scope("other")
+
+    union = scope_a.union(scope_b)
+
+    assert union.matches("main")
+    assert union.matches("main.sales.orders")
+    assert union.matches("other")
+    assert union.matches("other.schema.table")
+    assert not union.matches("third")
+
+
+def test_scope_union_of_two_empty_scopes_is_inactive():
+    """Union of two empty scopes is itself empty and inactive."""
+    scope_a = Scope()
+    scope_b = Scope()
+
+    union = scope_a.union(scope_b)
+
+    assert union.is_active() is False
+    assert not union.matches("anything")

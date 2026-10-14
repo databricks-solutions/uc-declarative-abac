@@ -76,6 +76,8 @@ from uc_declarative_abac.tags import (
     compute_tag_diff,
     execute_tag_diff,
     filter_retained_removals,
+    filter_unmanaged_removals,
+    project_tag_state,
 )
 from uc_declarative_abac.types import SecurableType
 from uc_declarative_abac.utils import (
@@ -98,7 +100,7 @@ _logger = logging.getLogger("uc_declarative_abac")
 class OrchestratorDiffsResult:
     """Computed diffs from one ``orchestrator.run()`` invocation, one per domain.
 
-    Ordered as the domains are orchestrated — group management runs first.
+    Ordered as the domains are orchestrated — the groups domain runs first.
     """
 
     group_diff: GroupDiff
@@ -147,7 +149,7 @@ def _filter_securable_attributes(
     """Drop non-function attributes whose namespace isn't in scope.
 
     FUNCTION attributes always flow through (functions are engine-managed
-    independently of the securable-management scope). When ``scope`` is empty
+    independently of the securable-modification scope). When ``scope`` is empty
     (inert), this collapses to "function attributes only" — which is the
     behaviour when securable management is off.
     """
@@ -258,13 +260,13 @@ def _warn_unmatched_scopes(
 def _scope_domain_changes(
     diff: DomainDiff,
     creation_scope: Scope,
-    management_scope: Scope,
+    modification_scope: Scope,
 ) -> DomainDiff:
     """Gate domain creates and updates independently while preserving scoped deletions.
 
-    The creation scope gates ``to_create`` and the management scope gates
+    The creation scope gates ``to_create`` and the modification scope gates
     ``to_update`` (with its ``old_values`` / ``update_masks``), so the two act as
-    independent gates — mirroring the group creation/management scopes. Deletion
+    independent gates — mirroring the group creation/modification scopes. Deletion
     authority is evaluated against the full declared domain set before this helper
     runs, so a declared domain outside both scopes remains protected from deletion
     while its metadata stays untouched.
@@ -278,18 +280,18 @@ def _scope_domain_changes(
         to_update={
             domain
             for domain in diff.to_update
-            if management_scope.matches(domain.tag_key)
+            if modification_scope.matches(domain.tag_key)
         },
         to_delete=set(diff.to_delete),
         old_values={
             tag_key: domain
             for tag_key, domain in diff.old_values.items()
-            if management_scope.matches(tag_key)
+            if modification_scope.matches(tag_key)
         },
         update_masks={
             tag_key: mask
             for tag_key, mask in diff.update_masks.items()
-            if management_scope.matches(tag_key)
+            if modification_scope.matches(tag_key)
         },
     )
 
@@ -364,16 +366,17 @@ def _build_run_context(
     create_taggables_for_namespaces: str,
     delete_policies_for_namespaces: str,
     tag_management_scopes: str | None,
+    tag_assignment_scopes: str | None,
     privilege_management_scopes: str | None,
-    securable_management_scopes: str | None,
+    securable_modification_scopes: str | None,
     securable_creation_scopes: str | None,
     policy_deletion_scopes: str | None,
     group_creation_scopes: str | None,
-    group_management_scopes: str | None,
+    group_modification_scopes: str | None,
     group_deletion_scopes: str | None,
     governed_tag_deletion_scopes: str | None,
     domain_creation_scopes: str | None,
-    domain_management_scopes: str | None,
+    domain_modification_scopes: str | None,
     domain_deletion_scopes: str | None,
     retain_tag_prefixes: str,
     ref_override_strategy: str,
@@ -400,20 +403,28 @@ def _build_run_context(
     configured_namespaces = _collect_configured_namespaces(config)
     configured_full_names = _collect_configured_full_names(config)
 
-    tag_scope = _build_hierarchical_scope(
+    tag_management_scope = _build_hierarchical_scope(
         tag_management_scopes,
         legacy_enabled=enable_tag_management,
         legacy_namespaces=manage_tags_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    privilege_scope = _build_hierarchical_scope(
+    # Raw assignment scope for warning; effective scope is the union (management subsumes).
+    raw_tag_assignment_scope = parse_hierarchical_scope(tag_assignment_scopes or "")
+    # Store the EFFECTIVE scope in RunContext: assignment scope unioned with management
+    # scope. When both are set, management scope subsumes assignment scope, so all
+    # management-scoped securables also get assignment behavior.
+    effective_tag_assignment_scope = raw_tag_assignment_scope.union(
+        tag_management_scope
+    )
+    privilege_management_scope = _build_hierarchical_scope(
         privilege_management_scopes,
         legacy_enabled=enable_privilege_management,
         legacy_namespaces=manage_privileges_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    securable_management_scope = _build_hierarchical_scope(
-        securable_management_scopes,
+    securable_modification_scope = _build_hierarchical_scope(
+        securable_modification_scopes,
         legacy_enabled=enable_taggable_management,
         legacy_namespaces=manage_taggables_for_namespaces,
         configured_namespaces=configured_namespaces,
@@ -424,7 +435,7 @@ def _build_run_context(
         legacy_namespaces=create_taggables_for_namespaces,
         configured_namespaces=configured_namespaces,
     )
-    policy_delete_scope = _build_hierarchical_scope(
+    policy_deletion_scope = _build_hierarchical_scope(
         policy_deletion_scopes,
         legacy_enabled=enable_policy_deletion,
         legacy_namespaces=delete_policies_for_namespaces,
@@ -433,8 +444,8 @@ def _build_run_context(
     group_creation_scope = _build_flat_scope(
         group_creation_scopes, legacy_enabled=enable_group_creation
     )
-    group_management_scope = _build_flat_scope(
-        group_management_scopes, legacy_enabled=enable_group_management
+    group_modification_scope = _build_flat_scope(
+        group_modification_scopes, legacy_enabled=enable_group_management
     )
     group_deletion_scope = _build_flat_scope(
         group_deletion_scopes, legacy_enabled=enable_group_deletion
@@ -445,8 +456,8 @@ def _build_run_context(
     domain_creation_scope = _build_flat_scope(
         domain_creation_scopes, legacy_enabled=False
     )
-    domain_management_scope = _build_flat_scope(
-        domain_management_scopes, legacy_enabled=False
+    domain_modification_scope = _build_flat_scope(
+        domain_modification_scopes, legacy_enabled=False
     )
     domain_deletion_scope = _build_flat_scope(
         domain_deletion_scopes, legacy_enabled=False
@@ -456,7 +467,7 @@ def _build_run_context(
     # declared domain sets owners.
     domain_workflow_active = (
         domain_creation_scope.is_active()
-        or domain_management_scope.is_active()
+        or domain_modification_scope.is_active()
         or domain_deletion_scope.is_active()
     )
     manage_domain_owners = domain_workflow_active and any(
@@ -468,23 +479,28 @@ def _build_run_context(
     # configured securable — a likely typo that would silently govern nothing.
     _warn_unmatched_scopes(
         [
-            ("--tag-management-scopes", tag_management_scopes, tag_scope),
+            ("--tag-management-scopes", tag_management_scopes, tag_management_scope),
+            (
+                "--tag-assignment-scopes",
+                tag_assignment_scopes,
+                raw_tag_assignment_scope,
+            ),
             (
                 "--privilege-management-scopes",
                 privilege_management_scopes,
-                privilege_scope,
+                privilege_management_scope,
             ),
             (
-                "--securable-management-scopes",
-                securable_management_scopes,
-                securable_management_scope,
+                "--securable-modification-scopes",
+                securable_modification_scopes,
+                securable_modification_scope,
             ),
             (
                 "--securable-creation-scopes",
                 securable_creation_scopes,
                 securable_creation_scope,
             ),
-            ("--policy-deletion-scopes", policy_deletion_scopes, policy_delete_scope),
+            ("--policy-deletion-scopes", policy_deletion_scopes, policy_deletion_scope),
         ],
         configured_full_names,
     )
@@ -495,7 +511,7 @@ def _build_run_context(
     # --use-workspace-scim is unsupported. (Configuring groups without any group
     # scope is inert and compatible with --use-workspace-scim.)
     group_domain_active = (
-        group_creation_scope.is_active() or group_management_scope.is_active()
+        group_creation_scope.is_active() or group_modification_scope.is_active()
     )
     if config.groups and group_domain_active and use_workspace_scim:
         raise OrchestratorError(
@@ -504,7 +520,7 @@ def _build_run_context(
             "manage the groups declared in config."
         )
     # Resolving user members of a managed group requires the account users list, so
-    # group management cannot run alongside --skip-users-fetch.
+    # group modification cannot run alongside --skip-users-fetch.
     if config.groups and group_domain_active and skip_users_fetch:
         raise OrchestratorError(
             "Group creation/management requires the account users list to resolve "
@@ -541,17 +557,18 @@ def _build_run_context(
     )
 
     return RunContext(
-        tag_scope=tag_scope,
-        privilege_scope=privilege_scope,
-        securable_management_scope=securable_management_scope,
+        tag_management_scope=tag_management_scope,
+        tag_assignment_scope=effective_tag_assignment_scope,
+        privilege_management_scope=privilege_management_scope,
+        securable_modification_scope=securable_modification_scope,
         securable_creation_scope=securable_creation_scope,
-        policy_delete_scope=policy_delete_scope,
+        policy_deletion_scope=policy_deletion_scope,
         group_creation_scope=group_creation_scope,
-        group_management_scope=group_management_scope,
+        group_modification_scope=group_modification_scope,
         group_deletion_scope=group_deletion_scope,
         governed_tag_deletion_scope=governed_tag_deletion_scope,
         domain_creation_scope=domain_creation_scope,
-        domain_management_scope=domain_management_scope,
+        domain_modification_scope=domain_modification_scope,
         domain_deletion_scope=domain_deletion_scope,
         run_date=run_date,
         retain_prefixes=retain_prefixes,
@@ -577,17 +594,18 @@ def _full_fetch_context() -> RunContext:
     all_hierarchical = parse_hierarchical_scope("*")
     all_flat = parse_flat_scope("*")
     return RunContext(
-        tag_scope=all_hierarchical,
-        privilege_scope=all_hierarchical,
-        securable_management_scope=all_hierarchical,
+        tag_management_scope=all_hierarchical,
+        tag_assignment_scope=all_hierarchical,
+        privilege_management_scope=all_hierarchical,
+        securable_modification_scope=all_hierarchical,
         securable_creation_scope=all_hierarchical,
-        policy_delete_scope=all_hierarchical,
+        policy_deletion_scope=all_hierarchical,
         group_creation_scope=all_flat,
-        group_management_scope=all_flat,
+        group_modification_scope=all_flat,
         group_deletion_scope=all_flat,
         governed_tag_deletion_scope=all_flat,
         domain_creation_scope=all_flat,
-        domain_management_scope=all_flat,
+        domain_modification_scope=all_flat,
         domain_deletion_scope=all_flat,
         run_date=run_date_for_timezone("UTC"),
         retain_prefixes=frozenset(),
@@ -630,11 +648,11 @@ def _deploy_group_fetch_sets(
     """Group fetch sets for a deploy: declared groups only.
 
     Membership and assumers are authoritative only when supplied, so each is fetched
-    only for the groups whose field is non-None AND in the management scope (the only
+    only for the groups whose field is non-None AND in the modification scope (the only
     scope that reconciles them). Identity comes from the principal-fetch caches (no
     extra call).
     """
-    scope = ctx.group_management_scope
+    scope = ctx.group_modification_scope
     members = _groups_managing("members", desired_groups, scope)
     assumers = _groups_managing("assumers", desired_groups, scope)
     return _GroupFetchSets(
@@ -716,7 +734,7 @@ def fetch_actual_state(
     desired_attributes = compile_desired_attributes(config)
     # RFA targets restrict the attribute fetch to securables that declare
     # ``rfa_destinations``. Non-function securables are gated by the securable-
-    # management scope (RFA is a managed attribute), but FUNCTION targets are always
+    # modification scope (RFA is a managed attribute), but FUNCTION targets are always
     # fetched — functions are engine-managed independently of the scope. Without this
     # a function's actual RFA state stays ``None`` when the scope is empty, and an
     # explicit empty list ("remove all") silently no-ops against a ``None`` actual.
@@ -725,24 +743,25 @@ def fetch_actual_state(
         for a in desired_attributes
         if a.rfa_destinations is not None
         and (
-            ctx.enable_securable_management
+            ctx.enable_securable_modification
             or a.securable_type == SecurableType.FUNCTION
         )
     }
     # Parent tables of every in-scope column that declares a comment. Column comments
     # are a managed (securable) attribute, so — unlike rfa_targets, which has a FUNCTION
-    # exception — they are fetched only for tables in the securable-management scope.
+    # exception — they are fetched only for tables in the securable-modification scope.
     column_comment_tables: set[str] = {
         a.full_name.rpartition(".")[0]
         for a in desired_attributes
         if a.securable_type == SecurableType.COLUMN
         and a.comment is not None
-        and ctx.securable_management_scope.matches(a.full_name)
+        and ctx.securable_modification_scope.matches(a.full_name)
     }
 
     # actual_tags is needed by either the tags domain (for the diff) or the privileges
-    # domain (for policy matching against on-disk tag state when tag management is off).
-    need_actual_tags = ctx.enable_tag_management or ctx.enable_privilege_management
+    # domain (for policy matching against on-disk tag state when tag assignment/
+    # management is off). The effective assignment scope (union) covers both.
+    need_actual_tags = ctx.enable_tag_assignment or ctx.enable_privilege_management
     with ThreadPoolExecutor() as pool:
         actual_securables_f = pool.submit(
             uc_helper.fetch_actual_securables,
@@ -817,6 +836,61 @@ def fetch_actual_state(
     )
 
 
+def _compute_tag_workflow(
+    config: ResourcesConfig,
+    governed_tags: set[GovernedTag],
+    actual_tags: set[SecurableTag],
+    settings: RunContext,
+    retain_prefixes: frozenset[str],
+    change_logger: ChangeLogger,
+) -> tuple[TagDiff, set[SecurableTag]]:
+    """Compute the tag diff and the tag state used for grant-policy matching.
+
+    The effective assignment scope (the union of ``--tag-assignment-scopes`` and
+    ``--tag-management-scopes``, since management subsumes assignment) drives the
+    diff, so in-scope securables get tags added and values updated. Removals are
+    then kept only for securables in the management scope, and never for tags
+    matching a retained prefix.
+
+    Grant policies are matched against the projected post-run state (actual tags,
+    minus removals, plus adds and updates) — what UC will hold once the diff is
+    applied. Tags left in place (retained prefixes, assignment-only securables) still
+    count, and tags about to be added count this run. Out-of-scope securables pass
+    through unchanged because the diff never touches them. With both scopes empty
+    the engine applies no tags, so grants match against the on-disk state.
+    """
+    if not settings.enable_tag_assignment:
+        return TagDiff(), actual_tags
+
+    desired_tags = compile_desired_tags(config, governed_tags, change_logger)
+    in_scope_desired_tags = {
+        t
+        for t in desired_tags
+        if settings.tag_assignment_scope.matches(t.securable_full_name)
+    }
+    in_scope_actual_tags = {
+        t
+        for t in actual_tags
+        if settings.tag_assignment_scope.matches(t.securable_full_name)
+    }
+    tag_diff = compute_tag_diff(in_scope_desired_tags, in_scope_actual_tags)
+    tag_diff, retained_tags = filter_retained_removals(tag_diff, retain_prefixes)
+    if retained_tags:
+        _logger.info(
+            f"  Retaining {len(retained_tags)} unconfigured tag(s) matching "
+            f"prefix(es) {sorted(retain_prefixes)} — these will not be removed"
+        )
+    tag_diff, kept_by_scope = filter_unmanaged_removals(
+        tag_diff, settings.tag_management_scope
+    )
+    if kept_by_scope:
+        _logger.info(
+            f"  Keeping {len(kept_by_scope)} tag(s) on securables covered only by "
+            f"--tag-assignment-scopes — these will not be removed"
+        )
+    return tag_diff, project_tag_state(actual_tags, tag_diff)
+
+
 def _execute_changes(
     config: ResourcesConfig,
     actual_state: ActualState,
@@ -882,12 +956,12 @@ def _execute_changes(
             resolver,
             change_logger,
             enable_group_creation=settings.enable_group_creation,
-            enable_group_management=settings.enable_group_management,
+            enable_group_modification=settings.enable_group_modification,
             enable_group_deletion=settings.enable_group_deletion,
             ignore_unresolvable=ignore_unresolvable,
             all_account_groups=all_account_groups,
             creation_scope=settings.group_creation_scope,
-            management_scope=settings.group_management_scope,
+            modification_scope=settings.group_modification_scope,
             deletion_scope=settings.group_deletion_scope,
         )
         if settings.group_domain_active
@@ -942,18 +1016,18 @@ def _execute_changes(
     domain_diff = _scope_domain_changes(
         computed_domain_diff,
         settings.domain_creation_scope,
-        settings.domain_management_scope,
+        settings.domain_modification_scope,
     )
 
     # Securables workflow (before tags and privileges). Drop non-function attribute
-    # updates whose namespace isn't in the securable-management scope; function
+    # updates whose namespace isn't in the securable-modification scope; function
     # attributes always flow through (FUNCTION creation/replacement is always
     # engine-managed).
     desired_attributes = _filter_securable_attributes(
-        compile_desired_attributes(config), settings.securable_management_scope
+        compile_desired_attributes(config), settings.securable_modification_scope
     )
     in_scope_actual_attributes = _filter_securable_attributes(
-        actual_attributes, settings.securable_management_scope
+        actual_attributes, settings.securable_modification_scope
     )
     securable_diff = compute_securable_diff(
         desired_attributes,
@@ -966,36 +1040,10 @@ def _execute_changes(
         ignore_unresolvable=ignore_unresolvable,
     )
 
-    # Tags workflow.
-    if settings.enable_tag_management:
-        desired_tags = compile_desired_tags(config, governed_tags, change_logger)
-        in_scope_desired_tags = {
-            t for t in desired_tags if settings.tag_scope.matches(t.securable_full_name)
-        }
-        in_scope_actual_tags = {
-            t for t in actual_tags if settings.tag_scope.matches(t.securable_full_name)
-        }
-        out_of_scope_actual_tags = {
-            t
-            for t in actual_tags
-            if not settings.tag_scope.matches(t.securable_full_name)
-        }
-        tag_diff = compute_tag_diff(in_scope_desired_tags, in_scope_actual_tags)
-        tag_diff, retained_tags = filter_retained_removals(tag_diff, retain_prefixes)
-        if retained_tags:
-            _logger.info(
-                f"  Retaining {len(retained_tags)} unconfigured tag(s) matching "
-                f"prefix(es) {sorted(retain_prefixes)} — these will not be removed"
-            )
-        # Post-run tag state used by the privileges compiler: in-scope catalogs
-        # reflect the desired (about to be applied); out-of-scope reflect actual.
-        tags_for_privilege_matching = in_scope_desired_tags | out_of_scope_actual_tags
-    else:
-        tag_diff = TagDiff()
-        # When tag management is off the engine will not reconcile the config's desired
-        # tags onto UC this run, so the privileges compiler must match its policies
-        # against the on-disk tag state to stay honest.
-        tags_for_privilege_matching = actual_tags
+    # Tags workflow (see _compute_tag_workflow).
+    tag_diff, tags_for_privilege_matching = _compute_tag_workflow(
+        config, governed_tags, actual_tags, settings, retain_prefixes, change_logger
+    )
 
     # Policies workflow (mask/filter).
     desired_policies = compile_desired_policies(
@@ -1009,7 +1057,7 @@ def _execute_changes(
         resolver,
         change_logger,
         ignore_unresolvable=ignore_unresolvable,
-        delete_scope=settings.policy_delete_scope,
+        delete_scope=settings.policy_deletion_scope,
     )
 
     # Privileges workflow.
@@ -1024,12 +1072,12 @@ def _execute_changes(
         in_scope_compiled_privileges = {
             p
             for p in compiled_privileges
-            if settings.privilege_scope.matches(p.securable_full_name)
+            if settings.privilege_management_scope.matches(p.securable_full_name)
         }
         in_scope_actual_privileges = {
             p
             for p in actual_privileges
-            if settings.privilege_scope.matches(p.securable_full_name)
+            if settings.privilege_management_scope.matches(p.securable_full_name)
         }
         privilege_diff = compute_privilege_diff(
             in_scope_compiled_privileges,
@@ -1041,7 +1089,7 @@ def _execute_changes(
     else:
         privilege_diff = PrivilegeDiff()
 
-    # Log and execute (or dry-run) — group management runs first.
+    # Log and execute (or dry-run) — the groups domain runs first.
     if (
         group_diff.groups_to_create
         or group_diff.members_to_add
@@ -1169,16 +1217,17 @@ def run(
     create_taggables_for_namespaces: str = "*",
     delete_policies_for_namespaces: str = "*",
     tag_management_scopes: str | None = None,
+    tag_assignment_scopes: str | None = None,
     privilege_management_scopes: str | None = None,
-    securable_management_scopes: str | None = None,
+    securable_modification_scopes: str | None = None,
     securable_creation_scopes: str | None = None,
     policy_deletion_scopes: str | None = None,
     group_creation_scopes: str | None = None,
-    group_management_scopes: str | None = None,
+    group_modification_scopes: str | None = None,
     group_deletion_scopes: str | None = None,
     governed_tag_deletion_scopes: str | None = None,
     domain_creation_scopes: str | None = None,
-    domain_management_scopes: str | None = None,
+    domain_modification_scopes: str | None = None,
     domain_deletion_scopes: str | None = None,
     retain_tag_prefixes: str = "class.",
     force: bool = False,
@@ -1200,20 +1249,27 @@ def run(
     behaviour (strict ``parse_namespace_filter`` validation preserved). Effective
     enablement is ``scope.is_active()``: when a scope is empty the corresponding
     domain is skipped in both dry-run and real-run (no fetch, no diff, no log, no
-    execute). An active ``privilege_management`` scope with an inactive
-    ``tag_management`` scope makes the privileges compiler match its grant
-    policies against the on-disk (``actual``) tag state instead of the config's
-    desired tags. A new-style scope entry that matches no applicable resource
+    execute). An active ``privilege_management`` scope with both tag scopes
+    (``tag_management`` and ``tag_assignment``) inactive makes the privileges
+    compiler match its grant policies against the on-disk (``actual``) tag state
+    instead of the projected post-run tags. A new-style scope entry that matches no applicable resource
     logs a warning (likely typo) but never fails the run.
 
-    ``domain_creation_scopes``, ``domain_management_scopes``, and
+    ``tag_assignment_scopes`` and ``tag_management_scopes`` are two scopes for
+    tag governance. ``tag_assignment_scopes`` adds and updates tags but never
+    removes them (assignment-only). ``tag_management_scopes`` subsumes assignment
+    and additionally enables removal of unconfigured tags. When both are set,
+    the effective assignment scope is their union, and tags are removed only for
+    securables matched by the management scope.
+
+    ``domain_creation_scopes``, ``domain_modification_scopes``, and
     ``domain_deletion_scopes`` are three independent flat governed-tag-key scopes
-    (mirroring the group creation/management/deletion gates): creation gates
-    creating declared ``resources.domains`` missing from the workspace, management
+    (mirroring the group creation/modification/deletion gates): creation gates
+    creating declared ``resources.domains`` missing from the workspace, modification
     gates metadata updates of declared domains that already exist, and deletion
     independently selects actual-only domains for removal. Any active scope fetches
     and diffs domain state; each gate acts alone, so a domain outside the creation
-    scope is never created even when it matches the management scope, and vice
+    scope is never created even when it matches the modification scope, and vice
     versa. Deletions prompt for confirmation unless ``force`` is set.
 
     The deprecated ``*_for_namespaces`` strings scope each enabled domain to a
@@ -1231,16 +1287,17 @@ def run(
     protect UC auto data classification tags. An empty string allows the engine
     to remove any unconfigured tag.
 
-    Group management is the first domain orchestrated (before governed tags),
-    gated by two orthogonal flags. ``enable_group_creation`` creates configured
-    groups that don't yet exist, with their configured members (atomically; the
-    engine auto-receives the MANAGER role on groups it creates).
-    ``enable_group_management`` reconciles the membership of *existing* groups —
-    adding missing members and removing members absent from config (an empty
-    members list removes all); it requires the MANAGER role on each managed group.
-    A configured group that doesn't exist is a fatal error under management unless
+    The groups domain is the first domain orchestrated (before governed tags),
+    gated by two orthogonal scopes. ``group_creation_scopes`` creates configured
+    groups that don't yet exist (the engine auto-receives the MANAGER role on
+    groups it creates). ``group_modification_scopes`` reconciles the membership of
+    *existing* groups — adding missing members and removing members absent from
+    config (an empty members list removes all); it never creates or deletes groups
+    and requires the MANAGER role on each modified group. The deprecated
+    ``enable_group_creation`` / ``enable_group_management`` booleans map onto these.
+    A configured group that doesn't exist is a fatal error under modification unless
     creation is also enabled; existing externally-managed (IdP-provisioned) groups
-    are a fatal error. With neither flag the group domain is inert. Both flags
+    are a fatal error. With neither scope the group domain is inert. Both scopes
     require the account SCIM proxy, so combining them with
     ``use_workspace_scim=True`` raises immediately.
 
@@ -1276,16 +1333,17 @@ def run(
         create_taggables_for_namespaces=create_taggables_for_namespaces,
         delete_policies_for_namespaces=delete_policies_for_namespaces,
         tag_management_scopes=tag_management_scopes,
+        tag_assignment_scopes=tag_assignment_scopes,
         privilege_management_scopes=privilege_management_scopes,
-        securable_management_scopes=securable_management_scopes,
+        securable_modification_scopes=securable_modification_scopes,
         securable_creation_scopes=securable_creation_scopes,
         policy_deletion_scopes=policy_deletion_scopes,
         group_creation_scopes=group_creation_scopes,
-        group_management_scopes=group_management_scopes,
+        group_modification_scopes=group_modification_scopes,
         group_deletion_scopes=group_deletion_scopes,
         governed_tag_deletion_scopes=governed_tag_deletion_scopes,
         domain_creation_scopes=domain_creation_scopes,
-        domain_management_scopes=domain_management_scopes,
+        domain_modification_scopes=domain_modification_scopes,
         domain_deletion_scopes=domain_deletion_scopes,
         retain_tag_prefixes=retain_tag_prefixes,
         ref_override_strategy=ref_override_strategy,

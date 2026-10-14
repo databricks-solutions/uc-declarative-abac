@@ -42,7 +42,7 @@ def compile_desired_groups(
     A group whose ``expiry_date`` is on or before ``run_date`` (defaulting to today in
     UTC) is *expired*: it is still emitted with its name and id, but with **empty
     members and empty assumers** (both authoritative), so the differ removes every
-    current member and every assumer under ``--group-management-scopes`` while leaving
+    current member and every assumer under ``--group-modification-scopes`` while leaving
     the group in place (it is not deleted). Mirrors the grant-policy expiry filter in
     ``compile_desired_privileges``.
     """

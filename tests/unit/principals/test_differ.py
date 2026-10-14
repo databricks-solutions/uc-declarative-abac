@@ -131,7 +131,7 @@ def test_group_differ_adds_desired_member_missing_from_existing_group():
     resolver = _resolver(name_to_principal={"alice@example.com": _alice_resolved})
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_add["analysts"]
@@ -157,7 +157,7 @@ def test_group_differ_omits_group_when_all_desired_members_present():
     )
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert "analysts" not in diff.members_to_add
@@ -184,7 +184,7 @@ def test_group_differ_resolves_both_sides_before_comparison():
     )
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert "analysts" not in diff.members_to_add
@@ -222,7 +222,7 @@ def test_group_differ_removes_member_present_in_actual_but_not_desired():
     )
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     # alice already present (no add); bob removed.
@@ -242,7 +242,7 @@ def test_group_differ_empty_desired_members_removes_all():
     resolver = _resolver(identifier_to_principal={"alice@example.com": _alice_resolved})
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_remove["analysts"]
@@ -269,7 +269,7 @@ def test_group_differ_adds_and_removes_in_one_group():
     )
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_add["analysts"]
@@ -327,7 +327,7 @@ def test_group_differ_errors_when_group_missing_and_creation_disabled_under_mana
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -354,7 +354,7 @@ def test_group_differ_creates_group_with_members_when_creation_enabled():
         resolver,
         change_logger,
         enable_group_creation=True,
-        enable_group_management=True,
+        enable_group_modification=True,
     )
 
     # Group name is in groups_to_create (created empty), members flow through members_to_add.
@@ -381,7 +381,7 @@ def test_group_differ_errors_when_managing_externally_managed_group():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -412,7 +412,7 @@ def test_group_differ_actual_side_unresolvable_member_is_warning():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Unresolvable actual member is dropped, so it is neither added nor removed.
@@ -440,7 +440,7 @@ def test_group_differ_suppresses_warning_for_ignored_unresolvable_member():
         actual,
         resolver,
         change_logger,
-        enable_group_management=True,
+        enable_group_modification=True,
         ignore_unresolvable=frozenset({ignored_id}),
     )
 
@@ -461,7 +461,7 @@ def test_group_differ_desired_side_unresolvable_member_is_error():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -505,7 +505,7 @@ def test_group_differ_handles_multiple_groups_independently():
     )
 
     diff = compute_group_diff(
-        desired, actual, resolver, ChangeLogger(), enable_group_management=True
+        desired, actual, resolver, ChangeLogger(), enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_add["analysts"]
@@ -542,7 +542,7 @@ def test_group_differ_matches_by_id_when_id_present():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Matched by id, so not a creation; members are identical, so no membership churn.
@@ -559,7 +559,7 @@ def test_group_differ_emits_rename_when_id_matches_and_name_differs():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert (
@@ -581,7 +581,7 @@ def test_group_differ_no_rename_when_id_matches_and_name_same():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert diff.groups_to_rename == []
@@ -611,7 +611,7 @@ def test_group_differ_reconciles_membership_under_new_name_when_renamed():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_add["analysts_new"]
@@ -628,7 +628,7 @@ def test_group_differ_errors_when_id_has_no_matching_actual_group():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -648,7 +648,7 @@ def test_group_differ_errors_when_rename_target_name_already_taken():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -666,7 +666,7 @@ def test_group_differ_errors_when_renaming_externally_managed_group():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors
@@ -701,7 +701,7 @@ def test_group_differ_falls_back_to_name_match_when_id_absent():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert _alice_resolved in diff.members_to_add["analysts"]
@@ -729,7 +729,7 @@ def test_group_differ_reconciles_assumers_when_desired_differs_from_actual():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Full desired set in assumers_to_set.
@@ -765,7 +765,7 @@ def test_group_differ_omits_assumers_when_desired_and_actual_are_identical():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Identical, so not in assumers_to_set (idempotent).
@@ -788,7 +788,7 @@ def test_group_differ_skips_assumers_when_desired_assumers_is_none():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Unmanaged (None), so not reconciled.
@@ -812,7 +812,7 @@ def test_group_differ_skips_members_when_desired_members_is_none():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Unmanaged (None), so membership not touched.
@@ -835,7 +835,7 @@ def test_group_differ_removes_all_members_when_desired_is_empty_frozenset():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Empty desired is authoritative, so all members removed.
@@ -856,7 +856,7 @@ def test_group_differ_errors_when_external_group_has_members_supplied():
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # Error logged, group dropped from membership reconciliation.
@@ -886,7 +886,7 @@ def test_group_differ_reconciles_assumers_for_external_group_with_members_none()
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     # No error, no membership changes, but assumers are reconciled.
@@ -921,7 +921,7 @@ def test_group_differ_keys_external_group_assumers_by_actual_name_when_matched_b
     change_logger = ChangeLogger()
 
     diff = compute_group_diff(
-        desired, actual, resolver, change_logger, enable_group_management=True
+        desired, actual, resolver, change_logger, enable_group_modification=True
     )
 
     assert change_logger.has_errors is False
@@ -957,7 +957,7 @@ def test_group_differ_creates_and_manages_group_with_members_and_assumers():
         resolver,
         change_logger,
         enable_group_creation=True,
-        enable_group_management=True,
+        enable_group_modification=True,
     )
 
     # Group queued for creation (empty).
@@ -1092,7 +1092,7 @@ def test_group_differ_creation_scope_filters_by_display_name():
     assert set(diff.groups_to_create) == {"team_data"}
 
 
-def test_group_differ_management_scope_filters_reconciliation():
+def test_group_differ_modification_scope_filters_reconciliation():
     """An existing group outside the management scope is left untouched."""
     desired = {
         _group(
@@ -1111,8 +1111,8 @@ def test_group_differ_management_scope_filters_reconciliation():
         actual,
         _resolver(name_to_principal={"alice@example.com": _alice_resolved}),
         ChangeLogger(),
-        enable_group_management=True,
-        management_scope=parse_flat_scope("team_*"),
+        enable_group_modification=True,
+        modification_scope=parse_flat_scope("team_*"),
     )
 
     assert "team_data" in diff.members_to_add

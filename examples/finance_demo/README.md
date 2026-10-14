@@ -105,8 +105,8 @@ hierarchy declared under `resources/domains/`:
 
 Each domain sets a `subtitle` and an `icon`; the description falls back to the referenced
 governed tag, keeping it single-sourced. Domains are gated by three independent scopes
-(`domain_creation_scopes`, `domain_management_scopes`, `domain_deletion_scopes` in
-`uc_abac.yml`) that mirror the group create/manage/delete gates.
+(`domain_creation_scopes`, `domain_modification_scopes`, `domain_deletion_scopes` in
+`uc_abac.yml`) that mirror the group create/modify/delete gates.
 
 ## Group hierarchy
 

@@ -89,21 +89,21 @@ class GroupRename:
 
 @dataclass
 class GroupDiff:
-    """Computed group-management changes.
+    """Computed groups-domain changes.
 
     ``groups_to_create`` holds the display names of not-yet-existent groups to create
     (populated only when group creation is enabled — groups are created **empty**;
-    their configured members/assumers flow through the management fields below and are
+    their configured members/assumers flow through the modification fields below and are
     applied after creation). ``members_to_add`` and ``members_to_remove`` map a group's
     display name to the resolved Principals to add to / remove from it (populated only
-    when group management is enabled — for existing groups **and** groups created this
+    when group modification is enabled — for existing groups **and** groups created this
     run, whose actual membership is treated as empty). ``assumers_to_set`` maps a
     group's display name to the full resolved set of desired assumers to write to its
     account access-control ruleset (populated only when that group's assumers changed);
     ``assumers_to_add`` / ``assumers_to_remove`` carry the same change as deltas, for
     logging. ``groups_to_rename`` holds the renames detected by matching a desired
     group's ``id`` to an existing group whose display name differs (populated only under
-    group management). ``groups_to_delete`` holds the Databricks-managed account groups
+    group modification). ``groups_to_delete`` holds the Databricks-managed account groups
     absent from config that should be deleted (populated only when group deletion is
     enabled; each Group carries ``display_name`` + ``id`` and no members — the executor
     deletes by id). All principal values hold fully-resolved Principals — the differ

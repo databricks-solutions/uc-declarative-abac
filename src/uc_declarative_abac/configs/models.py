@@ -1151,7 +1151,7 @@ class GroupConfig(BaseConfig):
     removes all, a populated list reconciles to exactly those principals. ``assumers``
     are the principals granted the ``roles/group.assumer`` role on the group's account
     access-control ruleset (see the Databricks RBAC docs); reconciled under
-    ``--group-management-scopes``, like members.
+    ``--group-modification-scopes``, like members.
 
     Externally-managed groups (SCIM-provisioned from an IdP) may be declared, but only
     without ``members`` (their membership is owned by the IdP) — a non-``None``
@@ -1163,7 +1163,7 @@ class GroupConfig(BaseConfig):
 
     ``expiry_date`` makes the group time-bound: when a deployment runs on or past this
     date, all of the group's members **and** assumers are removed (the group itself is
-    not deleted). It takes effect only under ``--group-management-scopes`` — the arg
+    not deleted). It takes effect only under ``--group-modification-scopes`` — the arg
     that reconciles membership and assumers — and is a no-op without it. Omitted
     (``None``) means the group never expires. Mirrors ``GrantPolicyConfig.expiry_date``.
     """

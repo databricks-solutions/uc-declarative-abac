@@ -102,10 +102,10 @@ def test_settings_loads_namespace_scope_from_env(monkeypatch):
     assert settings.manage_tags_for_namespaces == "cat_env.sch1"
 
 
-def test_settings_loads_domain_management_scopes_from_env(monkeypatch):
-    monkeypatch.setenv("UC_ABAC_DOMAIN_MANAGEMENT_SCOPES", "finance*")
+def test_settings_loads_domain_modification_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_DOMAIN_MODIFICATION_SCOPES", "finance*")
     settings = resolve_settings({}, settings_file=None)
-    assert settings.domain_management_scopes == "finance*"
+    assert settings.domain_modification_scopes == "finance*"
 
 
 def test_settings_loads_domain_deletion_scopes_from_env(monkeypatch):
@@ -257,10 +257,10 @@ def test_settings_env_target_schema_overrides_file(monkeypatch, tmp_path: Path):
     assert settings.target_schema == "main.env_schema"
 
 
-def test_settings_loads_securable_management_scopes_from_env(monkeypatch):
-    monkeypatch.setenv("UC_ABAC_SECURABLE_MANAGEMENT_SCOPES", "main.*")
+def test_settings_loads_securable_modification_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_SECURABLE_MODIFICATION_SCOPES", "main.*")
     settings = resolve_settings({}, settings_file=None)
-    assert settings.securable_management_scopes == "main.*"
+    assert settings.securable_modification_scopes == "main.*"
 
 
 def test_settings_loads_securable_creation_scopes_from_env(monkeypatch):
@@ -283,3 +283,33 @@ def test_settings_loads_legacy_taggable_scopes_from_settings_file(tmp_path: Path
     settings = resolve_settings({}, settings_file=settings_path)
     assert settings.taggable_management_scopes == "main.*"
     assert settings.taggable_creation_scopes == "staging.*"
+
+
+def test_settings_loads_group_modification_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_GROUP_MODIFICATION_SCOPES", "team_*")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.group_modification_scopes == "team_*"
+
+
+def test_settings_loads_legacy_management_scopes_from_settings_file(tmp_path: Path):
+    settings_path = tmp_path / "uc_abac.yml"
+    settings_path.write_text(
+        yaml.dump(
+            {
+                "securable_management_scopes": "main.*",
+                "group_management_scopes": "team_*",
+                "domain_management_scopes": "fin*",
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.securable_management_scopes == "main.*"
+    assert settings.group_management_scopes == "team_*"
+    assert settings.domain_management_scopes == "fin*"
+
+
+def test_settings_loads_tag_assignment_scopes_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_TAG_ASSIGNMENT_SCOPES", "main.sales*")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.tag_assignment_scopes == "main.sales*"
