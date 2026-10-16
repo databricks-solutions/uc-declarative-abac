@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -750,7 +752,12 @@ def _state_with_securables(count: int) -> ActualState:
     )
 
 
-def _dump(mock_workspace_client: MagicMock, tmp_path: Path, state: ActualState):
+def _dump(
+    mock_workspace_client: MagicMock,
+    tmp_path: Path,
+    state: ActualState,
+    max_parallel_tables: int = 1,
+):
     with patch(
         "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
     ):
@@ -759,7 +766,7 @@ def _dump(mock_workspace_client: MagicMock, tmp_path: Path, state: ActualState):
             config_dir=_build_minimal_config_dir(tmp_path),
             warehouse_id="warehouse-1",
             target_schema="main.state",
-            max_parallel_tables=1,
+            max_parallel_tables=max_parallel_tables,
         )
 
 
@@ -1180,7 +1187,7 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
 ) -> None:
     """Once the progress interval has elapsed, each completed batch logs the rows
     written so far out of the table's total; the final batch is covered by the
-    'Wrote to' line instead. Progress is logged on the staging table."""
+    'Wrote to' line instead."""
     state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
     with (
         patch(
@@ -1193,6 +1200,7 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
             config_dir=_build_minimal_config_dir(tmp_path),
             warehouse_id="warehouse-1",
             target_schema="main.state",
+            max_parallel_tables=1,
             progress_interval_seconds=0,
         )
 
@@ -1201,6 +1209,45 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
         "1000 of 2500 rows)",
         "2000 of 2500 rows)",
     ]
+
+
+def test_dumper_writer_logs_progress_while_later_batches_are_still_running(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """Progress is logged as batches complete, not only once the whole table is in:
+    by the time the last batch runs, an earlier batch's progress line is out."""
+    state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
+    progress_seen_per_batch: list[int] = []
+    original = mock_workspace_client.statement_execution.execute_statement.side_effect
+
+    def _side_effect(*args, **kwargs):
+        statement = _normalize_sql_backticks(kwargs.get("statement", ""))
+        if statement.startswith("INSERT INTO main.state._tmp_securables "):
+            progress_seen_per_batch.append(
+                len(_progress_lines(caplog, "main.state.securables"))
+            )
+        return original(*args, **kwargs)
+
+    mock_workspace_client.statement_execution.execute_statement.side_effect = (
+        _side_effect
+    )
+    with (
+        patch(
+            "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        dump_state(
+            mock_workspace_client,
+            config_dir=_build_minimal_config_dir(tmp_path),
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            max_parallel_tables=1,
+            progress_interval_seconds=0,
+        )
+
+    assert len(progress_seen_per_batch) == 3
+    assert progress_seen_per_batch[-1] >= 1
 
 
 def test_dumper_writer_logs_no_progress_for_a_table_written_within_the_interval(
@@ -1490,3 +1537,159 @@ def test_dumper_writer_dry_run_logs_staging_create(
         f"Expected dry run to log staging table creation, got: {log_text}"
     )
     assert len(mock_workspace_client.executed_sql) == 0, "Dry run should execute no SQL"
+
+
+# ---------------------------------------------------------------------------
+# Concurrent batch execution tests
+# ---------------------------------------------------------------------------
+
+
+_STAGING_SECURABLES_INSERT = "INSERT INTO main.state._tmp_securables "
+
+
+def _track_peak_in_flight(
+    mock_workspace_client: MagicMock, predicate, *, seconds: float = 0.02
+) -> list[int]:
+    """Hold every statement matching ``predicate`` for ``seconds`` and track how many
+    are in flight at once; returns a one-item list holding the peak."""
+    original = mock_workspace_client.statement_execution.execute_statement.side_effect
+    lock = threading.Lock()
+    in_flight = [0]
+    peak = [0]
+
+    def _side_effect(*args: Any, **kwargs: Any) -> MagicMock:
+        if not predicate(_normalize_sql_backticks(kwargs.get("statement", ""))):
+            return original(*args, **kwargs)
+        with lock:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+        time.sleep(seconds)
+        with lock:
+            in_flight[0] -= 1
+        return original(*args, **kwargs)
+
+    mock_workspace_client.statement_execution.execute_statement.side_effect = (
+        _side_effect
+    )
+    return peak
+
+
+def test_dumper_writer_runs_a_tables_batches_concurrently(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state runs one table's INSERT batches concurrently, up to the limit."""
+    peak = _track_peak_in_flight(
+        mock_workspace_client, lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT)
+    )
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=4,
+    )
+
+    assert 1 < peak[0] <= 4
+
+
+def test_dumper_writer_caps_statements_in_flight_across_tables(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state never has more than max_parallel_tables statements in flight across
+    every table and batch, and reaches that cap."""
+    peak = _track_peak_in_flight(mock_workspace_client, lambda sql: True)
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=2,
+    )
+
+    assert peak[0] == 2
+
+
+def test_dumper_writer_runs_sequentially_with_one_worker(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state with max_parallel_tables=1 runs one statement at a time."""
+    peak = _track_peak_in_flight(mock_workspace_client, lambda sql: True, seconds=0.005)
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 3),
+        max_parallel_tables=1,
+    )
+
+    assert peak[0] == 1
+
+
+def test_dumper_writer_executes_every_batch_when_parallel(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state executes every batch INSERT exactly once when batches run in
+    parallel."""
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=4,
+    )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    inserts = [s for s in statements if s.startswith(_STAGING_SECURABLES_INSERT)]
+    assert len(inserts) == 6
+    assert len(set(inserts)) == 6
+
+
+def test_dumper_writer_does_not_swap_when_a_parallel_batch_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state fails a table whose parallel batch fails: the target is never
+    touched and the staging table is still dropped."""
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT) and "'c1'" in sql,
+        message="batch failed",
+    )
+
+    with pytest.raises(ExecutionBatchError, match="batch failed"):
+        _dump(
+            mock_workspace_client,
+            tmp_path,
+            _state_with_securables(INSERT_MAX_ROWS * 4),
+            max_parallel_tables=4,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    assert not any("main.state.securables " in s for s in statements)
+    assert "DROP TABLE IF EXISTS main.state._tmp_securables" in statements
+
+
+def test_dumper_writer_skips_remaining_batches_after_a_batch_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state stops submitting a table's batches once one has failed."""
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT),
+        message="batch failed",
+    )
+
+    with pytest.raises(ExecutionBatchError):
+        _dump(
+            mock_workspace_client,
+            tmp_path,
+            _state_with_securables(INSERT_MAX_ROWS * 4),
+            max_parallel_tables=1,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    assert len([s for s in statements if s.startswith(_STAGING_SECURABLES_INSERT)]) == 1

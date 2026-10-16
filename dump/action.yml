@@ -52,8 +52,9 @@ inputs:
     default: 'false'
   max-parallel-changes:
     description: >-
-      Maximum number of tables written concurrently. Defaults to "8". Set to "1" to
-      write tables sequentially.
+      Maximum number of SQL statements run concurrently while writing tables (across
+      all tables and their insert batches). Defaults to "8". Set to "1" to write
+      sequentially.
     required: false
     default: '8'
 
