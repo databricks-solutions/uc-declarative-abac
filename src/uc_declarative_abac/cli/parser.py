@@ -626,6 +626,16 @@ def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help="Print the statements that would be executed without executing them.",
     )
+    parser.add_argument(
+        "--replace-tables",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Recreate each table (CREATE OR REPLACE) before loading it, so new columns "
+            "land in order and comments are refreshed, at the cost of a brief window "
+            "where the table is empty. By default each table's rows are swapped in atomically."
+        ),
+    )
 
 
 def _build_modern_parser() -> argparse.ArgumentParser:

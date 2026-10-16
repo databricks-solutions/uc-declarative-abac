@@ -60,6 +60,29 @@ def build_create_table_sql(table_full_name: str, spec: TableSpec) -> str:
     )
 
 
+def staging_table_name(table_full_name: str) -> str:
+    """The staging table a dump table is loaded into before its data is swapped in:
+    ``<catalog>.<schema>._tmp_<table>``."""
+    head, sep, tail = table_full_name.rpartition(".")
+    return f"{head}{sep}_tmp_{tail}"
+
+
+def build_overwrite_from_sql(
+    target_full_name: str, source_full_name: str, *, schema_evolution: bool
+) -> str:
+    """Build the ``INSERT ... OVERWRITE ... BY NAME SELECT * FROM <source>`` that
+    swaps a staging table's rows into its target, optionally with schema evolution.
+
+    BY NAME is required so data never lands in the wrong column when columns are added
+    mid-table; schema evolution appends new columns at the end of an existing table.
+    """
+    evolution_clause = "WITH SCHEMA EVOLUTION " if schema_evolution else ""
+    return (
+        f"INSERT {evolution_clause}OVERWRITE {quote_securable(target_full_name)} "
+        f"BY NAME SELECT * FROM {quote_securable(source_full_name)}"
+    )
+
+
 def _render_row(row: Row, spec: TableSpec) -> str:
     values = ", ".join(
         render_sql_literal(row.get(col.name), sql_type=col.sql_type)

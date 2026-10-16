@@ -15,6 +15,8 @@ from uc_declarative_abac.dumper.sql import (
     InsertBatch,
     build_create_table_sql,
     build_insert_batches,
+    build_overwrite_from_sql,
+    staging_table_name,
 )
 from uc_declarative_abac.dumper.tables import (
     TABLE_SPECS,
@@ -82,28 +84,104 @@ def _execute(
         uc_helper.execute_sql(statement)
 
 
-def _truncate_after_failure(
-    table_full_name: str,
-    failure: Exception,
+def _drop_staging(
+    staging_full_name: str,
+    failure: Exception | None,
+    *,
     uc_helper: UnityCatalogHelper,
     logger: DumpLogger,
+    dry_run: bool,
 ) -> None:
-    """Empty a table whose INSERTs failed part-way.
+    """Drop a table's staging table after its load, successful or not.
 
-    Without this the table would keep the batches that did land: a silently
-    truncated snapshot that reads as complete. An empty table (alongside the run's
-    non-zero exit) is unambiguous. If the TRUNCATE also fails, both errors are raised
-    together so neither is lost.
+    A drop failure after an earlier ``failure`` is raised together with it so neither
+    is lost; a drop failure on its own fails the table.
     """
-    statement = f"TRUNCATE TABLE {quote_securable(table_full_name)}"
+    statement = f"DROP TABLE IF EXISTS {quote_securable(staging_full_name)}"
     logger.log_statement(statement)
     try:
-        uc_helper.execute_sql(statement)
-    except Exception as truncate_exc:  # noqa: BLE001 — report alongside the original failure
-        raise RuntimeError(
-            f"{failure}; truncating the partially written table also failed: "
-            f"{truncate_exc}"
-        ) from failure
+        if not dry_run:
+            uc_helper.execute_sql(statement)
+    except Exception as drop_exc:
+        if failure is not None:
+            raise RuntimeError(
+                f"{failure}; dropping the staging table {staging_full_name} also "
+                f"failed: {drop_exc}"
+            ) from failure
+        raise
+
+
+def _replace_target(
+    target_full_name: str,
+    staging_full_name: str,
+    spec: TableSpec,
+    *,
+    uc_helper: UnityCatalogHelper,
+    logger: DumpLogger,
+    dry_run: bool,
+) -> None:
+    """Recreate the target from the spec, then load it from the staging table.
+
+    Not atomic: the target is empty between the two statements.
+    """
+    _execute(build_create_table_sql(target_full_name, spec), uc_helper, logger, dry_run)
+    _execute(
+        build_overwrite_from_sql(
+            target_full_name, staging_full_name, schema_evolution=False
+        ),
+        uc_helper,
+        logger,
+        dry_run,
+    )
+
+
+def _swap_into_target(
+    target_full_name: str,
+    staging_full_name: str,
+    spec: TableSpec,
+    *,
+    replace_tables: bool,
+    uc_helper: UnityCatalogHelper,
+    logger: DumpLogger,
+    dry_run: bool,
+) -> None:
+    """Move the staging table's rows into the target.
+
+    By default a single ``INSERT WITH SCHEMA EVOLUTION OVERWRITE ... BY NAME`` swaps
+    the rows in atomically, so readers keep the previous snapshot until it commits;
+    columns new to an existing target are appended at its end. If that fails for any
+    reason (e.g. the target doesn't exist yet, or a column's type changed
+    incompatibly), a warning
+    is logged and the target is recreated instead (``_replace_target``).
+    ``replace_tables`` skips straight to the recreate. If both paths fail, both errors
+    are raised together. A recreate is not atomic: if its load fails, the target is
+    left empty.
+    """
+    replace = partial(
+        _replace_target,
+        target_full_name,
+        staging_full_name,
+        spec,
+        uc_helper=uc_helper,
+        logger=logger,
+        dry_run=dry_run,
+    )
+    if replace_tables:
+        replace()
+        return
+    evolution_sql = build_overwrite_from_sql(
+        target_full_name, staging_full_name, schema_evolution=True
+    )
+    try:
+        _execute(evolution_sql, uc_helper, logger, dry_run)
+    except Exception as evolution_exc:  # noqa: BLE001 — any failure falls back to a recreate
+        logger.log_table_recreating(target_full_name, evolution_exc)
+        try:
+            replace()
+        except Exception as replace_exc:
+            raise RuntimeError(
+                f"{evolution_exc}; recreating the table also failed: {replace_exc}"
+            ) from replace_exc
 
 
 def _insert_batches(
@@ -141,6 +219,44 @@ def _insert_batches(
             last_logged = now
 
 
+def _load_and_swap(
+    target_full_name: str,
+    staging_full_name: str,
+    spec: TableSpec,
+    batches: list[InsertBatch],
+    replace_tables: bool,
+    *,
+    uc_helper: UnityCatalogHelper,
+    logger: DumpLogger,
+    dry_run: bool,
+    progress_interval_seconds: float,
+) -> None:
+    """Create the staging table, load every batch into it, then swap into the target."""
+    _execute(
+        build_create_table_sql(staging_full_name, spec),
+        uc_helper,
+        logger,
+        dry_run,
+    )
+    _insert_batches(
+        target_full_name,
+        batches,
+        uc_helper=uc_helper,
+        logger=logger,
+        dry_run=dry_run,
+        progress_interval_seconds=progress_interval_seconds,
+    )
+    _swap_into_target(
+        target_full_name,
+        staging_full_name,
+        spec,
+        replace_tables=replace_tables,
+        uc_helper=uc_helper,
+        logger=logger,
+        dry_run=dry_run,
+    )
+
+
 def _write_table(
     spec: TableSpec,
     *,
@@ -151,32 +267,43 @@ def _write_table(
     logger: DumpLogger,
     dry_run: bool,
     progress_interval_seconds: float,
+    replace_tables: bool,
 ) -> tuple[int, int]:
-    """Replace one table and load its rows; returns ``(row_count, batch_count)``.
+    """Load one table via its staging table; returns ``(row_count, batch_count)``.
 
-    Runs on a worker thread. The table's statements run sequentially (CREATE first,
-    then each INSERT batch) so there is never more than one writer per Delta table;
-    parallelism is across tables only. If an INSERT fails after the CREATE succeeded,
-    the table is truncated before the error propagates (see
-    ``_truncate_after_failure``).
+    Runs on a worker thread. Rows are loaded into ``_tmp_<table>`` (see
+    ``staging_table_name``) and only then swapped into the target (see
+    ``_swap_into_target``), so a failed staging load leaves the target's previous
+    snapshot in place. Progress is logged against the target's name. The staging table is dropped whether or not the load succeeded.
     """
     table_full_name = f"{target_schema}.{spec.name}"
+    staging_full_name = staging_table_name(table_full_name)
     rows = spec.rows(state, context)
     logger.log_table_started(table_full_name, len(rows))
-    batches = build_insert_batches(table_full_name, spec, rows)
-    _execute(build_create_table_sql(table_full_name, spec), uc_helper, logger, dry_run)
+    batches = build_insert_batches(staging_full_name, spec, rows)
+    drop = partial(
+        _drop_staging,
+        staging_full_name,
+        uc_helper=uc_helper,
+        logger=logger,
+        dry_run=dry_run,
+    )
     try:
-        _insert_batches(
+        _load_and_swap(
             table_full_name,
+            staging_full_name,
+            spec,
             batches,
+            replace_tables,
             uc_helper=uc_helper,
             logger=logger,
             dry_run=dry_run,
             progress_interval_seconds=progress_interval_seconds,
         )
     except Exception as exc:
-        _truncate_after_failure(table_full_name, exc, uc_helper, logger)
+        drop(exc)
         raise
+    drop(None)
     return (len(rows), len(batches))
 
 
@@ -196,11 +323,15 @@ def dump_state(
     dry_run: bool = False,
     progress_interval_seconds: float = DEFAULT_PROGRESS_INTERVAL_SECONDS,
     timezone: str = "UTC",
+    replace_tables: bool = False,
 ) -> None:
     """Fetch the actual state behind the config and write it to the target schema.
 
-    Each table in ``TABLE_SPECS`` is fully replaced (``CREATE OR REPLACE``) and
-    reloaded, up to ``max_parallel_tables`` at a time. A failed table doesn't stop the
+    Each table in ``TABLE_SPECS`` has its rows fully replaced, up to
+    ``max_parallel_tables`` at a time: rows are loaded into a staging table and then
+    swapped in (see ``_write_table``), so a table whose load fails keeps its previous
+    snapshot. ``replace_tables`` recreates each table from its spec instead of
+    swapping in place (see ``_swap_into_target``). A failed table doesn't stop the
     others; all failures are raised together as ``ExecutionBatchError`` at the end.
     ``dry_run`` builds and logs every statement but executes none.
     A table still loading after ``progress_interval_seconds`` logs its rows written
@@ -248,6 +379,7 @@ def dump_state(
             logger=logger,
             dry_run=dry_run,
             progress_interval_seconds=progress_interval_seconds,
+            replace_tables=replace_tables,
         ),
         max_workers=max_parallel_tables,
         on_complete=_on_complete,

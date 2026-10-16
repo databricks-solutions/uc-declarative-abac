@@ -43,6 +43,13 @@ inputs:
     description: If "true", print the statements that would be executed without executing them.
     required: false
     default: 'false'
+  replace-tables:
+    description: >-
+      If "true", recreate each table (CREATE OR REPLACE) before loading it, so new
+      columns land in order and comments are refreshed, at the cost of a brief window
+      where the table is empty. By default each table's rows are swapped in atomically.
+    required: false
+    default: 'false'
   max-parallel-changes:
     description: >-
       Maximum number of tables written concurrently. Defaults to "8". Set to "1" to
@@ -76,6 +83,7 @@ runs:
         TIMEZONE: ${{ inputs.timezone }}
         PROFILE: ${{ inputs.profile }}
         DRY_RUN: ${{ inputs.dry-run }}
+        REPLACE_TABLES: ${{ inputs.replace-tables }}
         MAX_PARALLEL_CHANGES: ${{ inputs.max-parallel-changes }}
       run: |
         args=(
@@ -87,6 +95,9 @@ runs:
         )
         if [[ "$DRY_RUN" == "true" ]]; then
           args+=(--dry-run)
+        fi
+        if [[ "$REPLACE_TABLES" == "true" ]]; then
+          args+=(--replace-tables)
         fi
         if [[ -n "$TIMEZONE" ]]; then
           args+=(--timezone "$TIMEZONE")

@@ -313,3 +313,42 @@ def test_settings_loads_tag_assignment_scopes_from_env(monkeypatch):
     monkeypatch.setenv("UC_ABAC_TAG_ASSIGNMENT_SCOPES", "main.sales*")
     settings = resolve_settings({}, settings_file=None)
     assert settings.tag_assignment_scopes == "main.sales*"
+
+
+# ---------------------------------------------------------------------------
+# dump subcommand settings: replace_tables
+# ---------------------------------------------------------------------------
+
+
+def test_settings_replace_tables_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_REPLACE_TABLES", "true")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.replace_tables is True
+
+
+def test_settings_replace_tables_from_file(tmp_path: Path):
+    settings_path = tmp_path / "uc_abac.yml"
+    settings_path.write_text(yaml.dump({"replace_tables": True}), encoding="utf-8")
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.replace_tables is True
+
+
+def test_settings_cli_replace_tables_overrides_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_REPLACE_TABLES", "false")
+    settings = resolve_settings({"replace_tables": True}, settings_file=None)
+    assert settings.replace_tables is True
+
+
+def test_settings_env_replace_tables_overrides_file(monkeypatch, tmp_path: Path):
+    settings_path = tmp_path / "uc_abac.yml"
+    settings_path.write_text(yaml.dump({"replace_tables": False}), encoding="utf-8")
+    monkeypatch.setenv("UC_ABAC_REPLACE_TABLES", "true")
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.replace_tables is True
+
+
+def test_settings_replace_tables_defaults_to_false(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_REPLACE_TABLES", raising=False)
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.replace_tables is False
