@@ -633,8 +633,9 @@ def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help=(
             "Recreate each table (CREATE OR REPLACE) before loading it, so new columns "
-            "land in order and comments are refreshed, at the cost of a brief window "
-            "where the table is empty. By default each table's rows are swapped in atomically."
+            "land in spec order rather than at the end, at the cost of a brief window "
+            "where the table is empty. By default each table's rows are swapped in "
+            "atomically."
         ),
     )
 
