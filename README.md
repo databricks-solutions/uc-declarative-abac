@@ -275,7 +275,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/deploy@v0.12.2
+      - uses: liamperritt/uc-declarative-abac/deploy@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
@@ -316,7 +316,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/validate@v0.12.2
+      - uses: liamperritt/uc-declarative-abac/validate@<tag>
         with:
           config-dir: configs/
 ```
@@ -356,7 +356,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/dump@v0.11.6
+      - uses: liamperritt/uc-declarative-abac/dump@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
