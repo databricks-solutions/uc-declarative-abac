@@ -2109,3 +2109,665 @@ def test_dumper_tables_securables_keeps_dotted_column_names_intact():
     table = Table(SecurableType.TABLE, "c.s.t", columns=(column,))
     (row,) = _rows("securables", _state(securables=frozenset([table])))
     assert row["columns"] == ("a.b",)
+
+
+# --- Principal internal ID columns spec tests ---
+
+
+def test_dumper_tables_id_columns_immediately_follow_name_columns():
+    """Every affected table has its id column immediately after the corresponding
+    name column with the right SQL type."""
+    # securables: owner_id right after owner
+    securables_spec = _spec("securables")
+    col_names = [col.name for col in securables_spec.columns]
+    owner_idx = col_names.index("owner")
+    assert owner_idx + 1 < len(col_names)
+    assert col_names[owner_idx + 1] == "owner_id"
+    owner_id_col = securables_spec.columns[owner_idx + 1]
+    assert owner_id_col.sql_type == "STRING"
+
+    # securable_privileges: grantee_id right after grantee
+    priv_spec = _spec("securable_privileges")
+    col_names = [col.name for col in priv_spec.columns]
+    grantee_idx = col_names.index("grantee")
+    assert grantee_idx + 1 < len(col_names)
+    assert col_names[grantee_idx + 1] == "grantee_id"
+    grantee_id_col = priv_spec.columns[grantee_idx + 1]
+    assert grantee_id_col.sql_type == "STRING"
+
+    # abac_policies: to_principal_ids right after to_principals, except_principal_ids right after except_principals
+    abac_spec = _spec("abac_policies")
+    col_names = [col.name for col in abac_spec.columns]
+    to_idx = col_names.index("to_principals")
+    assert to_idx + 1 < len(col_names)
+    assert col_names[to_idx + 1] == "to_principal_ids"
+    to_id_col = abac_spec.columns[to_idx + 1]
+    assert to_id_col.sql_type == "ARRAY<STRING>"
+
+    except_idx = col_names.index("except_principals")
+    assert except_idx + 1 < len(col_names)
+    assert col_names[except_idx + 1] == "except_principal_ids"
+    except_id_col = abac_spec.columns[except_idx + 1]
+    assert except_id_col.sql_type == "ARRAY<STRING>"
+
+    # pseudo_policies: same columns as abac_policies (verified separately)
+    pseudo_spec = _spec("pseudo_policies")
+    assert pseudo_spec.columns == abac_spec.columns
+
+    # domains: business_owner_ids right after business_owners, technical_owner_ids right after technical_owners
+    domain_spec = _spec("domains")
+    col_names = [col.name for col in domain_spec.columns]
+    bus_idx = col_names.index("business_owners")
+    assert bus_idx + 1 < len(col_names)
+    assert col_names[bus_idx + 1] == "business_owner_ids"
+    bus_id_col = domain_spec.columns[bus_idx + 1]
+    assert bus_id_col.sql_type == "ARRAY<STRING>"
+
+    tech_idx = col_names.index("technical_owners")
+    assert tech_idx + 1 < len(col_names)
+    assert col_names[tech_idx + 1] == "technical_owner_ids"
+    tech_id_col = domain_spec.columns[tech_idx + 1]
+    assert tech_id_col.sql_type == "ARRAY<STRING>"
+
+
+# --- securables owner_id tests ---
+
+
+def test_dumper_tables_securables_owner_id_resolved():
+    """securables: owner_id is the internal_id of the resolved owner."""
+    owner = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="user-123",
+    )
+    attr = SecurableAttributes(SecurableType.TABLE, "c.s.t", owner=owner)
+    table = Table(SecurableType.TABLE, "c.s.t")
+    state = _state(
+        securables=frozenset([table]),
+        attributes=frozenset([attr]),
+        principals={"alice": owner},
+    )
+    rows = _rows("securables", state)
+    assert len(rows) == 1
+    assert rows[0]["owner_id"] == "user-123"
+
+
+def test_dumper_tables_securables_owner_id_none_when_owner_none():
+    """securables: owner_id is None when owner is None."""
+    table = Table(SecurableType.TABLE, "c.s.t")
+    state = _state(securables=frozenset([table]))
+    rows = _rows("securables", state)
+    assert len(rows) == 1
+    assert rows[0]["owner_id"] is None
+
+
+def test_dumper_tables_securables_owner_id_none_when_unresolved():
+    """securables: owner_id is None when owner cannot be resolved."""
+    owner = Principal(PrincipalType.UNKNOWN, identifier="unknown-owner")
+    attr = SecurableAttributes(SecurableType.TABLE, "c.s.t", owner=owner)
+    table = Table(SecurableType.TABLE, "c.s.t")
+    state = _state(
+        securables=frozenset([table]),
+        attributes=frozenset([attr]),
+        principals={},
+    )
+    rows = _rows("securables", state)
+    assert len(rows) == 1
+    assert rows[0]["owner_id"] is None
+
+
+def test_dumper_tables_securables_owner_id_none_when_internal_id_none():
+    """securables: owner_id is None when owner resolved but has no internal_id."""
+    owner = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id=None,
+    )
+    attr = SecurableAttributes(SecurableType.TABLE, "c.s.t", owner=owner)
+    table = Table(SecurableType.TABLE, "c.s.t")
+    state = _state(
+        securables=frozenset([table]),
+        attributes=frozenset([attr]),
+        principals={"bob": owner},
+    )
+    rows = _rows("securables", state)
+    assert len(rows) == 1
+    assert rows[0]["owner_id"] is None
+
+
+# --- securable_privileges grantee_id tests ---
+
+
+def test_dumper_tables_securable_privileges_grantee_id_resolved():
+    """securable_privileges: grantee_id is the internal_id of the resolved grantee."""
+    user = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="user-456",
+    )
+    priv = SecurablePrivilege(
+        SecurableType.TABLE,
+        "c.s.t",
+        user,
+        PrivilegeType.SELECT,
+    )
+    state = _state(
+        privileges=frozenset([priv]),
+        principals={"alice": user},
+    )
+    rows = _rows("securable_privileges", state)
+    assert len(rows) == 1
+    assert rows[0]["grantee_id"] == "user-456"
+
+
+def test_dumper_tables_securable_privileges_grantee_id_none_when_unresolved():
+    """securable_privileges: grantee_id is None when grantee cannot be resolved."""
+    unresolved_user = Principal(PrincipalType.UNKNOWN, identifier="unknown-user")
+    priv = SecurablePrivilege(
+        SecurableType.TABLE,
+        "c.s.t",
+        unresolved_user,
+        PrivilegeType.SELECT,
+    )
+    state = _state(privileges=frozenset([priv]), principals={})
+    rows = _rows("securable_privileges", state)
+    assert len(rows) == 1
+    assert rows[0]["grantee_id"] is None
+
+
+def test_dumper_tables_securable_privileges_grantee_id_none_when_internal_id_none():
+    """securable_privileges: grantee_id is None when grantee has no internal_id."""
+    user = Principal(
+        PrincipalType.USER,
+        identifier="charlie",
+        name="charlie",
+        internal_id=None,
+    )
+    priv = SecurablePrivilege(
+        SecurableType.TABLE,
+        "c.s.t",
+        user,
+        PrivilegeType.SELECT,
+    )
+    state = _state(
+        privileges=frozenset([priv]),
+        principals={"charlie": user},
+    )
+    rows = _rows("securable_privileges", state)
+    assert len(rows) == 1
+    assert rows[0]["grantee_id"] is None
+
+
+# --- abac_policies principal id tests ---
+
+
+def test_dumper_tables_abac_policies_to_principal_ids_resolved_aligned():
+    """abac_policies: to_principal_ids are resolved and positionally aligned with
+    to_principals."""
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    p2 = Principal(
+        PrincipalType.GROUP,
+        identifier="data-team",
+        name="data-team",
+        internal_id="id-team",
+    )
+    policy = Policy(
+        SecurableType.TABLE,
+        "c.s.t",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (p1, p2),
+        (),
+        None,
+        (),
+        "email",
+        (),
+    )
+    state = _state(
+        policies=frozenset([policy]),
+        principals={"alice": p1, "data-team": p2},
+    )
+    rows = _rows("abac_policies", state)
+    assert len(rows) == 1
+    assert rows[0]["to_principals"] == ("alice", "data-team")
+    assert rows[0]["to_principal_ids"] == ("id-alice", "id-team")
+
+
+def test_dumper_tables_abac_policies_to_principal_ids_none_for_unresolvable():
+    """abac_policies: to_principal_ids includes None for unresolvable principals."""
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    p2_unresolved = Principal(PrincipalType.UNKNOWN, identifier="unknown-id")
+    policy = Policy(
+        SecurableType.TABLE,
+        "c.s.t",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (p1, p2_unresolved),
+        (),
+        None,
+        (),
+        "email",
+        (),
+    )
+    state = _state(
+        policies=frozenset([policy]),
+        principals={"alice": p1},
+    )
+    rows = _rows("abac_policies", state)
+    assert len(rows) == 1
+    assert rows[0]["to_principals"] == ("alice", "unknown-id")
+    assert rows[0]["to_principal_ids"] == ("id-alice", None)
+
+
+def test_dumper_tables_abac_policies_except_principal_ids_resolved_aligned():
+    """abac_policies: except_principal_ids are resolved and positionally aligned."""
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id="id-bob",
+    )
+    p2 = Principal(
+        PrincipalType.SERVICE_PRINCIPAL,
+        identifier="app-uuid",
+        name="my-sp",
+        internal_id="id-sp",
+    )
+    policy = Policy(
+        SecurableType.TABLE,
+        "c.s.t",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (),
+        (p1, p2),
+        None,
+        (),
+        "email",
+        (),
+    )
+    state = _state(
+        policies=frozenset([policy]),
+        principals={"bob": p1, "my-sp": p2},
+    )
+    rows = _rows("abac_policies", state)
+    assert len(rows) == 1
+    assert rows[0]["except_principals"] == ("bob", "app-uuid")
+    assert rows[0]["except_principal_ids"] == ("id-bob", "id-sp")
+
+
+def test_dumper_tables_abac_policies_except_principal_ids_none_for_unresolvable():
+    """abac_policies: except_principal_ids includes None for unresolvable
+    principals."""
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id="id-bob",
+    )
+    p2_unresolved = Principal(PrincipalType.UNKNOWN, identifier="unknown-id")
+    policy = Policy(
+        SecurableType.TABLE,
+        "c.s.t",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (),
+        (p1, p2_unresolved),
+        None,
+        (),
+        "email",
+        (),
+    )
+    state = _state(
+        policies=frozenset([policy]),
+        principals={"bob": p1},
+    )
+    rows = _rows("abac_policies", state)
+    assert len(rows) == 1
+    assert rows[0]["except_principals"] == ("bob", "unknown-id")
+    assert rows[0]["except_principal_ids"] == ("id-bob", None)
+
+
+def test_dumper_tables_abac_policies_principal_ids_none_for_no_internal_id():
+    """abac_policies: principal_ids includes None for resolved principals without
+    internal_id."""
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    p2 = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id=None,
+    )
+    policy = Policy(
+        SecurableType.TABLE,
+        "c.s.t",
+        "mask_pii",
+        PolicyType.MASK,
+        "c.s.mask_func",
+        (p1, p2),
+        (),
+        None,
+        (),
+        "email",
+        (),
+    )
+    state = _state(
+        policies=frozenset([policy]),
+        principals={"alice": p1, "bob": p2},
+    )
+    rows = _rows("abac_policies", state)
+    assert len(rows) == 1
+    assert rows[0]["to_principal_ids"] == ("id-alice", None)
+
+
+# --- pseudo_policies principal id tests ---
+
+
+def test_dumper_tables_pseudo_policies_to_principal_ids_resolved_from_config_names(
+    tmp_path: Path,
+):
+    """pseudo_policies: to_principal_ids resolved from state.principals keyed by
+    config display name."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [my-sp]
+"""
+    )
+    config = load_config(tmp_path)
+    sp = Principal(
+        PrincipalType.SERVICE_PRINCIPAL,
+        identifier="app-uuid-1",
+        name="my-sp",
+        internal_id="id-sp",
+    )
+    state = _state(principals={"my-sp": sp})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["to_principals"] == ("app-uuid-1",)
+    assert rows[0]["to_principal_ids"] == ("id-sp",)
+
+
+def test_dumper_tables_pseudo_policies_to_principal_ids_none_for_unresolvable(
+    tmp_path: Path,
+):
+    """pseudo_policies: to_principal_ids has None for principals that don't
+    resolve."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [unknown-principal]
+"""
+    )
+    config = load_config(tmp_path)
+    state = _state(principals={})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["to_principals"] == ("unknown-principal",)
+    assert rows[0]["to_principal_ids"] == (None,)
+
+
+def test_dumper_tables_pseudo_policies_to_principal_ids_none_element_for_no_internal_id(
+    tmp_path: Path,
+):
+    """pseudo_policies: to_principal_ids has None element for principals without
+    internal_id."""
+    policy_file = tmp_path / "policies.yaml"
+    policy_file.write_text(
+        """
+resources:
+  catalogs:
+    main:
+      policies:
+        - name: grant_read
+          type: grant
+          privileges: [select]
+          to: [user-alice, user-bob]
+"""
+    )
+    config = load_config(tmp_path)
+    p1 = Principal(
+        PrincipalType.USER,
+        identifier="user-alice",
+        name="user-alice",
+        internal_id="id-alice",
+    )
+    p2 = Principal(
+        PrincipalType.USER,
+        identifier="user-bob",
+        name="user-bob",
+        internal_id=None,
+    )
+    state = _state(principals={"user-alice": p1, "user-bob": p2})
+    rows = _rows("pseudo_policies", state, config=config)
+    assert len(rows) == 1
+    assert rows[0]["to_principal_ids"] == ("id-alice", None)
+
+
+def test_dumper_tables_pseudo_policies_except_principal_ids_always_none():
+    """pseudo_policies: except_principal_ids is None for grant policies."""
+    # Verify the except_principal_ids column exists on the pseudo_policies spec
+    spec = _spec("pseudo_policies")
+    col_names = {col.name for col in spec.columns}
+    assert "except_principal_ids" in col_names
+
+
+# --- domains owner_id tests ---
+
+
+def test_dumper_tables_domains_business_owner_ids_sorted_aligned():
+    """domains: business_owner_ids are sorted and positionally aligned with
+    business_owners."""
+    owner2 = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id="id-bob",
+    )
+    owner1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    domain = Domain(
+        "data_domain",
+        business_owners=frozenset([owner2, owner1]),
+    )
+    state = _state(
+        domains=frozenset([domain]),
+        principals={"alice": owner1, "bob": owner2},
+    )
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["business_owners"] == ("alice", "bob")
+    assert rows[0]["business_owner_ids"] == ("id-alice", "id-bob")
+
+
+def test_dumper_tables_domains_owner_ids_resolved_from_identifier_only_owners():
+    """domains: owner ids are resolved via state principals when the fetched owners
+    carry only an identifier (as the domain fetch produces them)."""
+    alice = Principal(
+        PrincipalType.USER, identifier="alice", name="alice", internal_id="id-alice"
+    )
+    domain = Domain(
+        "data_domain",
+        business_owners=frozenset(
+            [Principal(PrincipalType.UNKNOWN, identifier="alice")]
+        ),
+        technical_owners=frozenset(
+            [Principal(PrincipalType.UNKNOWN, identifier="alice")]
+        ),
+    )
+    state = _state(domains=frozenset([domain]), principals={"alice": alice})
+    rows = _rows("domains", state)
+    assert rows[0]["business_owner_ids"] == ("id-alice",)
+    assert rows[0]["technical_owner_ids"] == ("id-alice",)
+
+
+def test_dumper_tables_domains_business_owner_ids_none_for_unresolvable():
+    """domains: business_owner_ids includes None for unresolvable principals."""
+    owner1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    owner2_unresolved = Principal(PrincipalType.UNKNOWN, identifier="unknown-id")
+    domain = Domain(
+        "data_domain",
+        business_owners=frozenset([owner1, owner2_unresolved]),
+    )
+    state = _state(
+        domains=frozenset([domain]),
+        principals={"alice": owner1},
+    )
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["business_owners"] == ("alice", "unknown-id")
+    assert rows[0]["business_owner_ids"] == ("id-alice", None)
+
+
+def test_dumper_tables_domains_business_owner_ids_none_when_owners_none():
+    """domains: business_owner_ids is None when business_owners is None."""
+    domain = Domain("data_domain", business_owners=None)
+    state = _state(domains=frozenset([domain]))
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["business_owners"] is None
+    assert rows[0]["business_owner_ids"] is None
+
+
+def test_dumper_tables_domains_business_owner_ids_empty_tuple_when_empty():
+    """domains: business_owner_ids is empty tuple when business_owners is empty
+    tuple."""
+    domain = Domain("data_domain", business_owners=frozenset())
+    state = _state(domains=frozenset([domain]))
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["business_owners"] == ()
+    assert rows[0]["business_owner_ids"] == ()
+
+
+def test_dumper_tables_domains_technical_owner_ids_sorted_aligned():
+    """domains: technical_owner_ids are sorted and positionally aligned with
+    technical_owners."""
+    owner2 = Principal(
+        PrincipalType.USER,
+        identifier="charlie",
+        name="charlie",
+        internal_id="id-charlie",
+    )
+    owner1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    domain = Domain(
+        "data_domain",
+        technical_owners=frozenset([owner2, owner1]),
+    )
+    state = _state(
+        domains=frozenset([domain]),
+        principals={"alice": owner1, "charlie": owner2},
+    )
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["technical_owners"] == ("alice", "charlie")
+    assert rows[0]["technical_owner_ids"] == ("id-alice", "id-charlie")
+
+
+def test_dumper_tables_domains_technical_owner_ids_none_for_unresolvable():
+    """domains: technical_owner_ids includes None for unresolvable principals."""
+    owner1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    owner2_unresolved = Principal(PrincipalType.UNKNOWN, identifier="unknown-id")
+    domain = Domain(
+        "data_domain",
+        technical_owners=frozenset([owner1, owner2_unresolved]),
+    )
+    state = _state(
+        domains=frozenset([domain]),
+        principals={"alice": owner1},
+    )
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["technical_owners"] == ("alice", "unknown-id")
+    assert rows[0]["technical_owner_ids"] == ("id-alice", None)
+
+
+def test_dumper_tables_domains_technical_owner_ids_none_when_owners_none():
+    """domains: technical_owner_ids is None when technical_owners is None."""
+    domain = Domain("data_domain", technical_owners=None)
+    state = _state(domains=frozenset([domain]))
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["technical_owners"] is None
+    assert rows[0]["technical_owner_ids"] is None
+
+
+def test_dumper_tables_domains_owner_ids_none_when_internal_id_none():
+    """domains: owner_ids includes None for principals without internal_id."""
+    owner1 = Principal(
+        PrincipalType.USER,
+        identifier="alice",
+        name="alice",
+        internal_id="id-alice",
+    )
+    owner2 = Principal(
+        PrincipalType.USER,
+        identifier="bob",
+        name="bob",
+        internal_id=None,
+    )
+    domain = Domain(
+        "data_domain",
+        business_owners=frozenset([owner1, owner2]),
+    )
+    state = _state(
+        domains=frozenset([domain]),
+        principals={"alice": owner1, "bob": owner2},
+    )
+    rows = _rows("domains", state)
+    assert len(rows) == 1
+    assert rows[0]["business_owner_ids"] == ("id-alice", None)

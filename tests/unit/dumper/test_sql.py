@@ -119,6 +119,19 @@ def test_dumper_sql_render_sql_literal_tuple_single_element() -> None:
     assert "'only'" in result
 
 
+def test_dumper_sql_render_sql_literal_tuple_null_elements_typed() -> None:
+    """render_sql_literal casts an array holding NULL elements to its column type,
+    so an all-NULL array isn't typed ARRAY<VOID>."""
+    result = render_sql_literal((None, None), sql_type="ARRAY<STRING>")
+    assert result == "CAST(array(NULL, NULL) AS ARRAY<STRING>)"
+
+
+def test_dumper_sql_render_sql_literal_tuple_mixed_null_elements() -> None:
+    """render_sql_literal keeps NULL elements in place within an array."""
+    result = render_sql_literal(("1", None), sql_type="ARRAY<STRING>")
+    assert "array('1', NULL)" in result
+
+
 # ---
 # render_sql_literal empty-array typing tests
 # ---

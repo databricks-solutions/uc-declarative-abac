@@ -25,8 +25,9 @@ def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> s
     """Render one row value as a Databricks SQL literal.
 
     ``bool`` is checked before ``int`` (it is an ``int`` subclass). A tuple is an
-    array. An empty array is cast to ``sql_type`` — the column's declared type —
-    because a bare ``array()`` carries no element type.
+    array. An empty array, or one holding NULL elements, is cast to ``sql_type`` — the
+    column's declared type — because a bare ``array()`` or ``array(NULL)`` carries no
+    element type.
     """
     if value is None:
         return "NULL"
@@ -37,9 +38,10 @@ def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> s
     if isinstance(value, str):
         return sql_string_literal(value)
     if isinstance(value, tuple):
-        if not value:
-            return f"CAST(array() AS {sql_type})"
-        return f"array({', '.join(render_sql_literal(v) for v in value)})"
+        rendered = f"array({', '.join(render_sql_literal(v) for v in value)})"
+        if not value or None in value:
+            return f"CAST({rendered} AS {sql_type})"
+        return rendered
     raise TypeError(f"Unsupported row value type: {type(value).__name__}")
 
 
