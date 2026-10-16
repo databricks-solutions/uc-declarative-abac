@@ -1208,18 +1208,25 @@ definitions:
 ```yaml
 definitions:
   tables:
-    base_bronze: { tags: { layer: bronze } }
+    base_bronze:
+      tags:
+        layer: bronze
+
     base_silver:
-      tags: { layer: silver }
+      tags:
+        layer: silver
       columns:
-        - { name: region, type: string }   # silver base adds a column
+        - name: region   # silver base adds a column
+          type: string
+
     payments:
       $ref: $defs/tables/base_${layer}   # base chosen by the `layer` variable
       $vars:
         layer: ~
       name: payments
       columns:
-        - { name: payment_id, type: long }
+        - name: payment_id
+          type: long
 ```
 
 **User-data map keys.** Most dict keys are structural (field names, resource identities) and stay literal, but a **tag or identity-attribute name is user data** — so `${placeholder}` is allowed in the *keys* of the user-data maps `tags`, `has_tags`, `has_any_of_tags`, and `has_none_of_tags` (on securables, columns, and policies), the FGAC-policy context-attribute maps (`has_context_attributes`, `has_any_of_context_attributes`, `has_none_of_context_attributes`), and the mask-policy identity-attribute maps (`has_identity_attributes`, `has_any_of_identity_attributes`, `has_none_of_identity_attributes`, `has_identity_attribute_tag_matches`, `has_any_of_identity_attribute_tag_matches`, `has_none_of_identity_attribute_tag_matches`), bound by the enclosing definition's `$vars` just like a value. A placeholder in any other key is still an error.
@@ -1233,6 +1240,7 @@ definitions:
       name: salesforce
       tags:
         uc_gov_${env}_owner: platform    # tag NAME is templated
+
   policies:
     domain|grant_read:
       $vars:
