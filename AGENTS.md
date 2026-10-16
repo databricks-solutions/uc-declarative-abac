@@ -230,7 +230,10 @@ This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Developme
   - The test output showing the failure
   - It must NOT modify tests or refactor
 
-- **Isaac Review agent** (sub-agent) — reviews the completed feature, suggesting improvements
+- **Isaac Review** (CLI, run by the manager) — reviews the completed feature, suggesting improvements:
+  - Run `isaac review --uncommitted -f markdown -o <file>`. With no arguments it diffs against `master`, so on this repo pass `--base origin/main` to review the whole branch
+  - It takes several minutes; run it in the background and read the output file when it finishes
+  - Validate each finding before acting on it; don't apply suggestions that contradict a design decision the user made
 
 ### TDD/BDD cycle per module
 
@@ -245,7 +248,7 @@ For each behaviour in the module:
 
 Once all tests for the module are green:
   7. Review implementation and REFACTOR if needed
-  8. Run Isaac '/review high' and action any important feedback
+  8. Run Isaac Review (`isaac review --uncommitted`) and action any important feedback
   9. Run pytest → confirm all tests still green after refactor
 ```
 
