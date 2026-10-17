@@ -2,7 +2,7 @@
 
 [![Documentation](https://readthedocs.org/projects/uc-declarative-abac/badge/?version=latest)](https://uc-declarative-abac.readthedocs.io/en/latest/)
 [![CI](https://github.com/liamperritt/uc-declarative-abac/actions/workflows/ci.yml/badge.svg)](https://github.com/liamperritt/uc-declarative-abac/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/liamperritt/uc-declarative-abac)](LICENSE)
+[![License](https://img.shields.io/github/license/liamperritt/uc-declarative-abac)](LICENSE.md)
 
 **Declare governance in YAML. Version it. Deploy it.**
 
