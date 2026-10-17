@@ -202,7 +202,7 @@ page that links to it; document features in the relevant `docs/` page, not the R
   of repeating it.
 - **No en or em dashes** (U+2013, U+2014) anywhere in `README.md`, `CONTRIBUTING.md`, `docs/`, or
   the `examples/` READMEs — rewrite with a semicolon, comma, colon, or period. Enforced by
-  `tests/unit/test_docs.py`.
+  `tests/unit/uc_abac/test_docs.py`.
 - **Cross-references** use `(label)=` targets and `{ref}` roles, not raw URLs or `#anchors`.
 - **The build must be warning-free**: `.venv/bin/sphinx-build -W --keep-going -n -b html docs docs/_build/html`
   (CI and Read the Docs both fail on warnings). Install the tooling with `uv sync --extra docs`.
