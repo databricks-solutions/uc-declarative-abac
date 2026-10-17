@@ -6,9 +6,9 @@ Thank you for considering contributing to UC Declarative ABAC. Contributions are
 
 ## How to contribute
 
-- **Bugs and feature requests**: open a [GitHub Issue](https://github.com/liamperritt/uc-declarative-abac/issues) with what you expected, what happened, and a minimal repro where relevant
-- **Questions, ideas, and design discussion**: start a [GitHub Discussion](https://github.com/liamperritt/uc-declarative-abac/discussions)
-- **Code changes**: fork the repo, create a branch, and open a Pull Request against `main`. Keep PRs focused and smaller PRs get reviewed faster. All PRs are reviewed by code owners listed in [`.github/CODEOWNERS`](https://github.com/liamperritt/uc-declarative-abac/blob/main/.github/CODEOWNERS)
+- **Bugs and feature requests**: open a [GitHub Issue](https://github.com/databricks-solutions/uc-declarative-abac/issues) with what you expected, what happened, and a minimal repro where relevant
+- **Questions, ideas, and design discussion**: start a [GitHub Discussion](https://github.com/databricks-solutions/uc-declarative-abac/discussions)
+- **Code changes**: fork the repo, create a branch, and open a Pull Request against `main`. Keep PRs focused and smaller PRs get reviewed faster. All PRs are reviewed by code owners listed in [`.github/CODEOWNERS`](https://github.com/databricks-solutions/uc-declarative-abac/blob/main/.github/CODEOWNERS)
 
 ## Getting started with development
 
@@ -49,6 +49,6 @@ Open `docs/_build/html/index.html` in your browser to preview.
 
 ## Full contributor guide
 
-See the full [CONTRIBUTING.md](https://github.com/liamperritt/uc-declarative-abac/blob/main/CONTRIBUTING.md) for coding conventions, the development workflow, and our code of conduct.
+See the full [CONTRIBUTING.md](https://github.com/databricks-solutions/uc-declarative-abac/blob/main/CONTRIBUTING.md) for coding conventions, the development workflow, and our code of conduct.
 
-See [AGENTS.md](https://github.com/liamperritt/uc-declarative-abac/blob/main/AGENTS.md) for the test and design practices used in this repository.
+See [AGENTS.md](https://github.com/databricks-solutions/uc-declarative-abac/blob/main/AGENTS.md) for the test and design practices used in this repository.

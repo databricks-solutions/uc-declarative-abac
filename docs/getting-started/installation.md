@@ -5,7 +5,7 @@
 Clone the repository and install in editable mode using `uv`:
 
 ```bash
-git clone https://github.com/liamperritt/uc-declarative-abac.git
+git clone https://github.com/databricks-solutions/uc-declarative-abac.git
 cd uc-declarative-abac
 uv venv
 uv sync --extra dev

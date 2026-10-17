@@ -8,8 +8,8 @@ First of all: thank you. The fact that you're reading this means you're consider
 
 Contributions are managed through GitHub. The best place to start is by opening an issue or a discussion before writing code, so we can agree on the approach together and avoid wasted effort:
 
-- **Bugs and feature requests**: open a [GitHub Issue](https://github.com/liamperritt/uc-declarative-abac/issues). Include what you expected, what happened, and a minimal config or repro where relevant.
-- **Questions, ideas, and design discussion**: start a [GitHub Discussion](https://github.com/liamperritt/uc-declarative-abac/discussions) (or an issue if Discussions aren't enabled). This is the right venue to float a change, ask how something works, or propose where you could help.
+- **Bugs and feature requests**: open a [GitHub Issue](https://github.com/databricks-solutions/uc-declarative-abac/issues). Include what you expected, what happened, and a minimal config or repro where relevant.
+- **Questions, ideas, and design discussion**: start a [GitHub Discussion](https://github.com/databricks-solutions/uc-declarative-abac/discussions) (or an issue if Discussions aren't enabled). This is the right venue to float a change, ask how something works, or propose where you could help.
 - **Code changes**: fork the repo, create a branch, and open a Pull Request against `main`. Keep PRs focused on a single concern; smaller PRs get reviewed faster. All PRs are reviewed by the code owners listed in [`.github/CODEOWNERS`](.github/CODEOWNERS).
 
 **ProTip:** Be kind and be patient. Maintainers and fellow contributors are volunteering their time. Assume good faith, keep feedback constructive, and remember there's a real person on the other side of the thread.
@@ -65,4 +65,4 @@ Examples of behaviour that contributes to a positive environment include using w
 
 Project maintainers are responsible for clarifying these standards and may take appropriate and fair corrective action, including editing or removing comments, commits, code, issues, and pull requests, or temporarily or permanently banning any contributor, in response to behaviour they deem inappropriate, threatening, offensive, or harmful.
 
-This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 1.4, available at <https://www.contributor-covenant.org/version/1/4/code-of-conduct/>. To report unacceptable behaviour, please contact the maintainers via a [GitHub Issue](https://github.com/liamperritt/uc-declarative-abac/issues) or by reaching out to the code owners listed in [`.github/CODEOWNERS`](.github/CODEOWNERS).
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 1.4, available at <https://www.contributor-covenant.org/version/1/4/code-of-conduct/>. To report unacceptable behaviour, please contact the maintainers via a [GitHub Issue](https://github.com/databricks-solutions/uc-declarative-abac/issues) or by reaching out to the code owners listed in [`.github/CODEOWNERS`](.github/CODEOWNERS).

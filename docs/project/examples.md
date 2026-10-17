@@ -4,7 +4,7 @@
 
 ## Finance Demo
 
-The [finance_demo](https://github.com/liamperritt/uc-declarative-abac/tree/main/examples/finance_demo) is a complete, deployable-from-scratch governance model for a fictional financial-services organisation. Every principal (owner, grant target, tag assigner, group member) is either a group this project creates or a built-in system group. Nothing depends on pre-existing users or service principals.
+The [finance_demo](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/finance_demo) is a complete, deployable-from-scratch governance model for a fictional financial-services organisation. Every principal (owner, grant target, tag assigner, group member) is either a group this project creates or a built-in system group. Nothing depends on pre-existing users or service principals.
 
 ### What it demonstrates
 
@@ -29,8 +29,8 @@ uc-abac validate --config-dir configs
 
 ### Deploy it
 
-See the [finance_demo README](https://github.com/liamperritt/uc-declarative-abac/tree/main/examples/finance_demo#deploy-it) for step-by-step deployment instructions and prerequisites.
+See the [finance_demo README](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/finance_demo#deploy-it) for step-by-step deployment instructions and prerequisites.
 
 ### Adapt it for your use case
 
-The README also explains [how to use it as a starting point](https://github.com/liamperritt/uc-declarative-abac/tree/main/examples/finance_demo#use-it-as-a-starting-point): copy the entire `finance_demo/` folder into a new repository, delete what you don't need, rename the `uc_abac_finance` catalog and prefixes to yours, configure your warehouse, and iterate locally with `validate`.
+The README also explains [how to use it as a starting point](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/finance_demo#use-it-as-a-starting-point): copy the entire `finance_demo/` folder into a new repository, delete what you don't need, rename the `uc_abac_finance` catalog and prefixes to yours, configure your warehouse, and iterate locally with `validate`.

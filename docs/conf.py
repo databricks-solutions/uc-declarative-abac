@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
-_GITHUB_URL = "https://github.com/liamperritt/uc-declarative-abac"
+_GITHUB_URL = "https://github.com/databricks-solutions/uc-declarative-abac"
 
 project = "UC Declarative ABAC"
 author = "Liam Perritt"

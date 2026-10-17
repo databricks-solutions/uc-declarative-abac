@@ -4,7 +4,7 @@
 
 ## Deploy action
 
-The repo ships a composite GitHub Action at `deploy/action.yml` so any repository that stores its governance YAML in Git can reconcile Unity Catalog on every push, pull request, or schedule without installing the package or scripting a Python run. Reference it as `liamperritt/uc-declarative-abac/deploy@<ref>` (where `<ref>` is a tag, branch, or commit SHA).
+The repo ships a composite GitHub Action at `deploy/action.yml` so any repository that stores its governance YAML in Git can reconcile Unity Catalog on every push, pull request, or schedule without installing the package or scripting a Python run. Reference it as `databricks-solutions/uc-declarative-abac/deploy@<ref>` (where `<ref>` is a tag, branch, or commit SHA).
 
 Pinning to an immutable ref (for example, a commit SHA or a signed tag) is recommended over `@main`.
 
@@ -226,7 +226,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/deploy@<tag>
+      - uses: databricks-solutions/uc-declarative-abac/deploy@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
@@ -243,7 +243,7 @@ Swap `DATABRICKS_TOKEN` for `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` 
 
 ## Offline validation action
 
-The repo ships a lightweight companion action at `validate/action.yml` that runs `uc-abac validate` to parse, resolve, and validate the YAML without contacting Databricks (no warehouse ID, credentials, or secrets required). It is ideal as a feature-branch CI step before a pull request is raised. Reference it as `liamperritt/uc-declarative-abac/validate@<ref>`.
+The repo ships a lightweight companion action at `validate/action.yml` that runs `uc-abac validate` to parse, resolve, and validate the YAML without contacting Databricks (no warehouse ID, credentials, or secrets required). It is ideal as a feature-branch CI step before a pull request is raised. Reference it as `databricks-solutions/uc-declarative-abac/validate@<ref>`.
 
 ### Validation inputs
 
@@ -282,14 +282,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/validate@<tag>
+      - uses: databricks-solutions/uc-declarative-abac/validate@<tag>
         with:
           config-dir: configs/
 ```
 
 ## Dump action
 
-A third companion action at `dump/action.yml` runs `uc-abac dump` to snapshot your deployed governance into tables for reporting and audits (see {ref}`dumping-state`). Reference it as `liamperritt/uc-declarative-abac/dump@<ref>`.
+A third companion action at `dump/action.yml` runs `uc-abac dump` to snapshot your deployed governance into tables for reporting and audits (see {ref}`dumping-state`). Reference it as `databricks-solutions/uc-declarative-abac/dump@<ref>`.
 
 ### Dump inputs
 
@@ -358,7 +358,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/dump@<tag>
+      - uses: databricks-solutions/uc-declarative-abac/dump@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}

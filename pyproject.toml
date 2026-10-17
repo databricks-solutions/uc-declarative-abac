@@ -15,8 +15,8 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://uc-declarative-abac.readthedocs.io/"
-Source = "https://github.com/liamperritt/uc-declarative-abac"
-Issues = "https://github.com/liamperritt/uc-declarative-abac/issues"
+Source = "https://github.com/databricks-solutions/uc-declarative-abac"
+Issues = "https://github.com/databricks-solutions/uc-declarative-abac/issues"
 
 [project.scripts]
 uc-abac = "uc_abac.cli:main"
