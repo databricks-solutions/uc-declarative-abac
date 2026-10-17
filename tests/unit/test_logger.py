@@ -3,23 +3,23 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.domains import Domain, DomainIcon
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.policies import Policy
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.privileges import SecurablePrivilege
-from uc_declarative_abac.securables import (
+from uc_abac.domains import Domain, DomainIcon
+from uc_abac.logger import ChangeLogger
+from uc_abac.policies import Policy
+from uc_abac.principals import Principal
+from uc_abac.privileges import SecurablePrivilege
+from uc_abac.securables import (
     AttributeUpdate,
     Function,
 )
-from uc_declarative_abac.tags import SecurableTag
-from uc_declarative_abac.types import (
+from uc_abac.tags import SecurableTag
+from uc_abac.types import (
     PolicyType,
     PrincipalType,
     PrivilegeType,
     SecurableType,
 )
-from uc_declarative_abac.utils import ExecutionError
+from uc_abac.utils import ExecutionError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -368,8 +368,8 @@ def test_logger_domain_update_reports_changed_metadata_attributes() -> None:
 def test_logger_domain_update_reports_owner_changes_by_name() -> None:
     """domain UPDATE log line reports business/technical owner changes by principal
     name (not numeric id), as an add/remove delta."""
-    from uc_declarative_abac.principals import Principal
-    from uc_declarative_abac.types import PrincipalType
+    from uc_abac.principals import Principal
+    from uc_abac.types import PrincipalType
 
     cl, mock_logger = _make_change_logger(dry_run=True)
     new = Domain(
@@ -1016,7 +1016,7 @@ def _gt(
     values: set[str] | None = None,
     assigners: set[Principal] | None = None,
 ):
-    from uc_declarative_abac.governed_tags import GovernedTag
+    from uc_abac.governed_tags import GovernedTag
 
     return GovernedTag(
         name=name,

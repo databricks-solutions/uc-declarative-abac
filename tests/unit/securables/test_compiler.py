@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.securables import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.principals import Principal
+from uc_abac.securables import (
     Column,
     Function,
     Securable,
@@ -11,7 +11,7 @@ from uc_declarative_abac.securables import (
     compile_desired_attributes,
     compile_desired_securables,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PrincipalType,
     SecurableType,
 )

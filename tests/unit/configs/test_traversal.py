@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import (
+from uc_abac.configs import (
     ResourcesConfig,
     iter_policy_configs,
     iter_securable_configs,

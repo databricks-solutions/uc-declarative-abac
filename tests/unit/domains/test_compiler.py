@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.domains import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.domains import (
     Domain,
     DomainIcon,
     compile_desired_domains,
 )
-from uc_declarative_abac.governed_tags import GovernedTag
-from uc_declarative_abac.utils import OrchestratorError
+from uc_abac.governed_tags import GovernedTag
+from uc_abac.utils import OrchestratorError
 
 
 def test_domain_compiler_builds_only_declared_domain_resources():
@@ -172,8 +172,8 @@ def test_domain_compiler_leaves_metadata_none_when_omitted():
 
 def test_domain_compiler_compiles_owners_to_unresolved_principals():
     """business_owners/technical_owners names compile to unresolved principals."""
-    from uc_declarative_abac.principals import Principal
-    from uc_declarative_abac.types import PrincipalType
+    from uc_abac.principals import Principal
+    from uc_abac.types import PrincipalType
 
     config = ResourcesConfig.model_validate(
         {

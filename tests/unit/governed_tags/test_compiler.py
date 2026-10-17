@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.governed_tags import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.governed_tags import (
     GovernedTag,
     compile_desired_governed_tags,
 )
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.principals import Principal
+from uc_abac.types import PrincipalType
 
 
 def test_governed_tag_compiler_emits_empty_set_when_no_governed_tags():

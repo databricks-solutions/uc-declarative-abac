@@ -15,10 +15,10 @@ from databricks.sdk.service.domains import (
     FieldMask,
 )
 
-from uc_declarative_abac.domains import Domain, DomainIcon
-from uc_declarative_abac.helpers import WorkspaceHelper
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.domains import Domain, DomainIcon
+from uc_abac.helpers import WorkspaceHelper
+from uc_abac.principals import Principal
+from uc_abac.types import PrincipalType
 
 
 def _make_user(user_name: str, user_id: str) -> SimpleNamespace:

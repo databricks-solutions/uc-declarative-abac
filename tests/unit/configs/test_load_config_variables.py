@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from uc_declarative_abac.orchestrator import load_config
-from uc_declarative_abac.utils import TemplateVariableError
+from uc_abac.orchestrator import load_config
+from uc_abac.utils import TemplateVariableError
 
 # ---------------------------------------------------------------------------
 # Template variables through the full offline load_config pipeline

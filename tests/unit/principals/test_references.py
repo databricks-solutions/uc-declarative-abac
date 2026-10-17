@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.principals import collect_referenced_principal_names
+from uc_abac.configs import ResourcesConfig
+from uc_abac.principals import collect_referenced_principal_names
 
 
 def test_references_collects_securable_owners_across_the_catalog_hierarchy():

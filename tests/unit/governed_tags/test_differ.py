@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.governed_tags import (
+from uc_abac.governed_tags import (
     GovernedTag,
     compute_governed_tag_diff,
 )
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import (
     Principal,
     PrincipalResolver,
 )
-from uc_declarative_abac.types import PrincipalType
-from uc_declarative_abac.utils import PrincipalValidationError
+from uc_abac.types import PrincipalType
+from uc_abac.utils import PrincipalValidationError
 
 
 def _gt(
@@ -463,7 +463,7 @@ def test_governed_tag_differ_ignores_system_tag_definition_differences():
 
 def test_governed_tag_differ_deletion_scope_filters_candidates():
     """With a deletion scope, only actual-only tags matching the scope are deleted."""
-    from uc_declarative_abac.utils import parse_flat_scope
+    from uc_abac.utils import parse_flat_scope
 
     legacy = _gt("legacy_tag", "legacy", {"a"})
     temp = _gt("temp_tag", "temp", {"b"})

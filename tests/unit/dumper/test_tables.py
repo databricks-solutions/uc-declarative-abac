@@ -5,22 +5,22 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from uc_declarative_abac import ActualState
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.domains import Domain, DomainIcon
-from uc_declarative_abac.dumper import (
+from uc_abac import ActualState
+from uc_abac.configs import ResourcesConfig
+from uc_abac.domains import Domain, DomainIcon
+from uc_abac.dumper import (
     TABLE_SPECS,
     build_dump_context,
     split_securable_name,
 )
-from uc_declarative_abac.governed_tags import GovernedTag
-from uc_declarative_abac.orchestrator import load_config
-from uc_declarative_abac.policies import Policy
-from uc_declarative_abac.principals import Group, Principal
-from uc_declarative_abac.privileges import SecurablePrivilege
-from uc_declarative_abac.securables import Column, Function, SecurableAttributes, Table
-from uc_declarative_abac.tags import SecurableTag
-from uc_declarative_abac.types import (
+from uc_abac.governed_tags import GovernedTag
+from uc_abac.orchestrator import load_config
+from uc_abac.policies import Policy
+from uc_abac.principals import Group, Principal
+from uc_abac.privileges import SecurablePrivilege
+from uc_abac.securables import Column, Function, SecurableAttributes, Table
+from uc_abac.tags import SecurableTag
+from uc_abac.types import (
     PolicyType,
     PrincipalType,
     PrivilegeType,

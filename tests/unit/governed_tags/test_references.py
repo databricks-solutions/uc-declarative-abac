@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.governed_tags import collect_referenced_tag_keys
+from uc_abac.configs import ResourcesConfig
+from uc_abac.governed_tags import collect_referenced_tag_keys
 
 
 def test_references_collects_governed_tag_names():

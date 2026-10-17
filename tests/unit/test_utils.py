@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
-from uc_declarative_abac.utils import (
+from uc_abac.utils import (
     Scope,
     catalog_of,
     classify_rfa_destination,

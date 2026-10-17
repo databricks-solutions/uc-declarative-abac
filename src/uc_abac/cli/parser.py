@@ -1,0 +1,788 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from uc_abac.cli import __version__
+from uc_abac.cli.presentation import CliArgumentParser, HelpExample
+
+_SUBCOMMANDS = frozenset({"validate", "deploy", "dump"})
+_DESCRIPTION = "UC Declarative ABAC — declarative ABAC governance for Unity Catalog"
+_VALIDATE_EXAMPLE = "uc-abac validate --config-dir ./configs"
+_VALIDATE_PROFILE_EXAMPLE = "uc-abac validate --config-dir ./configs --profile staging"
+_DEPLOY_DRY_RUN_EXAMPLE = (
+    "uc-abac deploy --config-dir ./configs --warehouse-id <id> --dry-run"
+)
+_DEPLOY_EXAMPLE = "uc-abac deploy --config-dir ./configs --warehouse-id <id>"
+_DUMP_EXAMPLE = (
+    "uc-abac dump --config-dir ./configs --warehouse-id <id> "
+    "--target-schema main.uc_abac_state"
+)
+
+
+def _add_profile(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default=argparse.SUPPRESS,
+        help="Databricks CLI profile name (from ~/.databrickscfg)",
+    )
+
+
+def _add_system_catalog(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--system-catalog",
+        type=str,
+        default=argparse.SUPPRESS,
+        help="Catalog containing Unity Catalog system tables [default: system].",
+    )
+
+
+def _add_timezone(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--timezone",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=(
+            "IANA timezone used to compute the run date for evaluating expiry_date "
+            "on groups and grant policies [default: UTC]. e.g. Australia/Melbourne."
+        ),
+    )
+
+
+def _add_max_parallel_changes(parser: argparse.ArgumentParser, help_text: str) -> None:
+    parser.add_argument(
+        "--max-parallel-changes",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=help_text,
+    )
+
+
+def _add_warehouse_id(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--warehouse-id",
+        type=str,
+        default=argparse.SUPPRESS,
+        help="SQL warehouse ID for executing queries",
+    )
+
+
+def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register optional run flags shared by validate, deploy, and legacy mode."""
+    _add_profile(parser)
+    _add_system_catalog(parser)
+    _add_timezone(parser)
+    parser.add_argument(
+        "--use-workspace-scim",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "(Deprecated — omit it; will be removed in a future release.) Fetch principals "
+            "from the workspace SCIM API instead of the account path (default: account). The "
+            "default account path now lists all account principals, so this mode is no longer "
+            "needed. Incompatible with configuring groups under resources.groups (group "
+            "management requires the account-level path)."
+        ),
+    )
+    parser.add_argument(
+        "--skip-users-fetch",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "(Deprecated — omit it; will be removed in a future release.) Skip listing "
+            "account/workspace users and treat the user set as empty. For organisations that "
+            "govern access only via groups and service principals, this avoids the slowest "
+            "list call and speeds up the initial fetch in accounts with many users. Not "
+            "intended for production use."
+        ),
+    )
+    parser.add_argument(
+        "--enable-tag-management",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to create/update/remove tag assignments on securables. "
+            "Off by default. (Deprecated: use --tag-management-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-privilege-management",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to GRANT/REVOKE privileges via SQL. Off by default. "
+            "(Deprecated: use --privilege-management-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-taggable-management",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to update attributes (e.g. owner) on existing catalogs, schemas, "
+            "tables, and volumes. Off by default. "
+            "(Deprecated: use --securable-modification-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-taggable-creation",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to create catalogs, schemas, tables, and volumes declared in "
+            "config but absent from UC. Off by default. "
+            "(Deprecated: use --securable-creation-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--manage-tags-for-namespaces",
+        type=str,
+        metavar="NAMESPACES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
+            "scope tag management to (default = all configured catalogs). No effect unless "
+            "--enable-tag-management is set. (Deprecated: use --tag-management-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--manage-privileges-for-namespaces",
+        type=str,
+        metavar="NAMESPACES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
+            "scope privilege management to (default = all configured catalogs). No effect "
+            "unless --enable-privilege-management is set. "
+            "(Deprecated: use --privilege-management-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--manage-taggables-for-namespaces",
+        type=str,
+        metavar="NAMESPACES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
+            "scope attribute updates (e.g. owner) to (default = all configured "
+            "catalogs). Function attributes always flow through. No effect unless "
+            "--enable-taggable-management is set. "
+            "(Deprecated: use --securable-modification-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--create-taggables-for-namespaces",
+        type=str,
+        metavar="NAMESPACES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
+            "scope creation of missing catalogs/schemas/tables/volumes to (default = all "
+            "configured catalogs). Function creation always flows through. No effect unless "
+            "--enable-taggable-creation is set. "
+            "(Deprecated: use --securable-creation-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--delete-policies-for-namespaces",
+        type=str,
+        metavar="NAMESPACES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated catalog names or qualified schema names (<catalog>.<schema>) to "
+            "scope policy deletion to (default = all configured catalogs). No effect unless "
+            "--enable-policy-deletion is set. (Deprecated: use --policy-deletion-scopes.)"
+        ),
+    )
+    _HIER_SCOPE_GRAMMAR = (
+        "Comma-separated dotted namespace prefixes. Empty (default) disables the "
+        "feature; '*' covers all resources; a trailing '*' is a raw name prefix "
+        "('main.*' = everything under main excluding the catalog node, "
+        "'main.sales*' = matching schemas and their subtrees); an entry without "
+        "'*' covers that node and its whole subtree ('main' = the catalog and "
+        "everything under it, but not 'maintenance')."
+    )
+    _FLAT_SCOPE_GRAMMAR = (
+        "Comma-separated names. Empty (default) disables the feature; '*' covers "
+        "all; a trailing '*' is a raw name prefix ('team_*'); any other entry is "
+        "an exact name."
+    )
+    parser.add_argument(
+        "--tag-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope full tag management (add, update, and remove tag assignments) to "
+            "matching securables; subsumes --tag-assignment-scopes. "
+            f"{_HIER_SCOPE_GRAMMAR} Supersedes --enable-tag-management and "
+            "--manage-tags-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--tag-assignment-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope tag assignment (add missing tags, update tag values) to matching "
+            "securables. Never removes tags — use --tag-management-scopes for full "
+            f"management, which subsumes this. {_HIER_SCOPE_GRAMMAR}"
+        ),
+    )
+    parser.add_argument(
+        "--privilege-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope GRANT/REVOKE privilege management to matching securables. "
+            f"{_HIER_SCOPE_GRAMMAR} Supersedes --enable-privilege-management and "
+            "--manage-privileges-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--securable-modification-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope attribute updates (owner, comment, rfa_destinations) on existing "
+            "catalogs, schemas, tables, volumes, and columns to matching securables. "
+            "Updates only — never creates or deletes securables. "
+            "Does not gate function management — functions are always managed by the "
+            f"engine as a core capability. {_HIER_SCOPE_GRAMMAR} "
+            "Supersedes --enable-taggable-management and "
+            "--manage-taggables-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--securable-creation-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope creation of missing catalogs, schemas, tables, volumes, and columns "
+            "to matching securables. Does not gate function creation — functions are "
+            "always created by the engine as a core capability. "
+            f"{_HIER_SCOPE_GRAMMAR} Supersedes --enable-taggable-creation and "
+            "--create-taggables-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--taggable-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --securable-modification-scopes.)",
+    )
+    parser.add_argument(
+        "--securable-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --securable-modification-scopes.)",
+    )
+    parser.add_argument(
+        "--taggable-creation-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --securable-creation-scopes.)",
+    )
+    parser.add_argument(
+        "--policy-deletion-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope mask/filter policy deletion to matching securables. "
+            f"{_HIER_SCOPE_GRAMMAR} Requires interactive confirmation unless --force "
+            "is set. Supersedes --enable-policy-deletion and "
+            "--delete-policies-for-namespaces."
+        ),
+    )
+    parser.add_argument(
+        "--group-creation-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope account-group creation to matching groups (by display name). "
+            f"{_FLAT_SCOPE_GRAMMAR} Supersedes --enable-group-creation."
+        ),
+    )
+    parser.add_argument(
+        "--group-modification-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope updates (member/assumer reconciliation, renames, expiry) of "
+            "matching account groups (by display name). Updates only — never creates "
+            "or deletes groups (see --group-creation-scopes / --group-deletion-scopes). "
+            f"{_FLAT_SCOPE_GRAMMAR} Supersedes --enable-group-management."
+        ),
+    )
+    parser.add_argument(
+        "--group-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --group-modification-scopes.)",
+    )
+    parser.add_argument(
+        "--group-deletion-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope account-group deletion to matching groups (by display name). "
+            f"{_FLAT_SCOPE_GRAMMAR} Requires --group-creation-scopes to be active and "
+            "interactive confirmation unless --force is set. Supersedes "
+            "--enable-group-deletion."
+        ),
+    )
+    parser.add_argument(
+        "--governed-tag-deletion-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope governed-tag deletion to matching tags (by name). "
+            f"{_FLAT_SCOPE_GRAMMAR} System-managed tags are never deleted. Requires "
+            "interactive confirmation unless --force is set. Supersedes "
+            "--enable-governed-tag-deletion."
+        ),
+    )
+    parser.add_argument(
+        "--domain-deletion-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope domain deletion to matching domains (by governed-tag key). "
+            f"{_FLAT_SCOPE_GRAMMAR} Only matching domains absent from "
+            "resources.domains are deleted. Requires interactive confirmation unless "
+            "--force is set."
+        ),
+    )
+    parser.add_argument(
+        "--domain-creation-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope creation of explicitly declared resources.domains that are "
+            "missing from the workspace, by governed-tag key. "
+            f"{_FLAT_SCOPE_GRAMMAR}"
+        ),
+    )
+    parser.add_argument(
+        "--domain-modification-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help=(
+            "Scope metadata updates of explicitly declared resources.domains "
+            "that already exist, by governed-tag key. Updates only — never creates "
+            "or deletes domains (see --domain-creation-scopes / "
+            f"--domain-deletion-scopes). {_FLAT_SCOPE_GRAMMAR}"
+        ),
+    )
+    parser.add_argument(
+        "--domain-management-scopes",
+        type=str,
+        metavar="SCOPES",
+        default=argparse.SUPPRESS,
+        help="(Deprecated: use --domain-modification-scopes.)",
+    )
+    parser.add_argument(
+        "--manage-tags-for-catalogs",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--manage-privileges-for-catalogs",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--manage-taggables-for-catalogs",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--create-taggables-for-catalogs",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--retain-tag-prefixes",
+        type=str,
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated tag-key prefixes that must never be removed from securables, "
+            "even when absent from config (the engine may still add/update them). Defaults "
+            "to 'class.' to protect UC auto data classification tags. Pass an empty string "
+            "to allow removing any unconfigured tag."
+        ),
+    )
+    parser.add_argument(
+        "--ignore-unresolvable-principals",
+        type=str,
+        metavar="IDENTIFIERS",
+        default=argparse.SUPPRESS,
+        help=(
+            "Comma-separated list of actual-state principal identifiers — usernames for users, "
+            "application_ids for service principals, display names for groups — whose "
+            "resolution-failure warning should be suppressed. Primarily for "
+            "Databricks-managed system service principals that appear in system tables but aren't "
+            "resolvable via SCIM, which otherwise log a warning every run. Empty by default."
+        ),
+    )
+    parser.add_argument(
+        "--enable-group-creation",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to create account groups declared under resources.groups that "
+            "don't yet exist, with their configured members (the engine automatically gets the "
+            "MANAGER role on groups it creates). Off by default. Independent of "
+            "--enable-group-management: this flag only creates missing groups; managing the "
+            "membership of existing groups requires --enable-group-management. "
+            "(Deprecated: use --group-creation-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-group-management",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to reconcile the membership of existing account groups declared "
+            "under resources.groups — adding configured members and removing members absent "
+            "from config (an empty members list removes all). Off by default. Requires the "
+            "engine principal to hold the MANAGER role on each managed group. Does not create "
+            "missing groups (use --enable-group-creation for that). "
+            "(Deprecated: use --group-modification-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-group-deletion",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Make config authoritative over account group existence: delete any "
+            "Databricks-managed account group absent from resources.groups. Off by "
+            "default. Only operates on Databricks-managed groups — external "
+            "(IdP-provisioned) groups and account system groups (account users, account "
+            "admins) are never deleted. Requires --enable-group-creation and at least one "
+            "group declared under resources.groups. Requires interactive confirmation at "
+            "the terminal unless --force is set. (Deprecated: use --group-deletion-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-governed-tag-deletion",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Permit the engine to delete governed tags (account-level tag policies) that exist "
+            "in the account but are absent from config. Off by default. Requires interactive "
+            "confirmation at the terminal unless --force is set. "
+            "(Deprecated: use --governed-tag-deletion-scopes.)"
+        ),
+    )
+    parser.add_argument(
+        "--enable-policy-deletion",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Make config authoritative over mask/filter policies within the in-scope catalogs: "
+            "any actual policy discovered on an in-scope securable but not declared in config is "
+            "deleted, regardless of whether that securable declares a 'policies' list. Actual "
+            "policies are discovered via the abac_policy_definitions system table and scoped by "
+            "--delete-policies-for-namespaces. Off by default. Requires interactive confirmation "
+            "at the terminal unless --force is set."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Skip every interactive confirmation prompt and auto-confirm destructive actions. "
+            "Required in non-interactive CI contexts if any destructive gate "
+            "(e.g. --enable-governed-tag-deletion) is set."
+        ),
+    )
+    parser.add_argument(
+        "--ref-override-strategy",
+        type=str,
+        choices=["merge", "replace"],
+        default=argparse.SUPPRESS,
+        help=(
+            "(Deprecated — omit it; will be removed in a future release.) How sibling "
+            "fields on a $ref entry combine with the referenced definition. 'merge' (the "
+            "default, go-forward behaviour) recursively deep-merges maps and lists; "
+            "'replace' shallowly replaces top-level keys (legacy, going away) "
+            "[default: merge]."
+        ),
+    )
+    _add_max_parallel_changes(
+        parser,
+        "Worker threads per execution batch [default: 8]. Set to 1 to disable "
+        "parallelism and force sequential execution.",
+    )
+
+
+def _build_common_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    _add_common_run_arguments(parser)
+    return parser
+
+
+def _add_global_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--settings-file",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="Path to a YAML settings file (default: ./uc_abac.yml when present).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Print full tracebacks on failure.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Suppress non-error log output.",
+    )
+
+
+def _add_config_dir(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="Path to the YAML config directory",
+    )
+
+
+def _add_version(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+
+
+def _cli_parser(**kwargs) -> CliArgumentParser:
+    return CliArgumentParser(
+        prog="uc-abac",
+        description=_DESCRIPTION,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        **kwargs,
+    )
+
+
+def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the dump subcommand's flags.
+
+    Dump only reads state and writes snapshot tables, so it takes the connection and
+    fetch flags rather than inheriting every deploy-only flag from the common parser.
+    Deprecated flags are deliberately not offered on this new command."""
+    _add_config_dir(parser)
+    _add_warehouse_id(parser)
+    parser.add_argument(
+        "--target-schema",
+        type=str,
+        metavar="CATALOG.SCHEMA",
+        default=argparse.SUPPRESS,
+        help=(
+            "Schema to write the snapshot tables into, as <catalog>.<schema>. Created "
+            "when it does not exist."
+        ),
+    )
+    _add_profile(parser)
+    _add_system_catalog(parser)
+    _add_timezone(parser)
+    _add_max_parallel_changes(
+        parser,
+        "Maximum number of SQL statements run concurrently while writing tables, "
+        "across all tables and their insert batches [default: 8]. Set to 1 to write "
+        "sequentially.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Print the statements that would be executed without executing them.",
+    )
+    parser.add_argument(
+        "--replace-tables",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Recreate each table (CREATE OR REPLACE) before loading it, so new columns "
+            "land in spec order rather than at the end, at the cost of a brief window "
+            "where the table is empty. By default each table's rows are swapped in "
+            "atomically."
+        ),
+    )
+
+
+def _build_modern_parser() -> argparse.ArgumentParser:
+    common = _build_common_parser()
+    parser = _cli_parser(
+        product_name="UC Declarative ABAC",
+        version=__version__,
+        examples=(
+            HelpExample(_VALIDATE_EXAMPLE, "Validate local YAML configuration."),
+            HelpExample(
+                _DEPLOY_DRY_RUN_EXAMPLE,
+                "Preview changes before deploying to Unity Catalog.",
+            ),
+        ),
+    )
+    _add_version(parser)
+    _add_global_arguments(parser)
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    validate_parser = subparsers.add_parser(
+        "validate",
+        parents=[common],
+        help="Parse, resolve, and validate YAML configs without contacting Databricks.",
+        description="Validate YAML configs locally (no warehouse or credentials required).",
+        options_title="FLAGS:",
+        examples=(
+            HelpExample(_VALIDATE_EXAMPLE, "Validate the default local configuration."),
+            HelpExample(
+                _VALIDATE_PROFILE_EXAMPLE,
+                "Validate using settings for the staging profile.",
+            ),
+        ),
+    )
+    _add_config_dir(validate_parser)
+    validate_parser.set_defaults(command="validate")
+
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        parents=[common],
+        help="Deploy governance changes (use --dry-run to preview).",
+        description="Deploy declarative governance to Unity Catalog.",
+        options_title="FLAGS:",
+        examples=(
+            HelpExample(
+                _DEPLOY_DRY_RUN_EXAMPLE,
+                "Preview the changes without applying them.",
+            ),
+            HelpExample(_DEPLOY_EXAMPLE, "Apply the configured governance changes."),
+        ),
+    )
+    _add_config_dir(deploy_parser)
+    _add_warehouse_id(deploy_parser)
+    deploy_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Print the planned changes without executing them.",
+    )
+    deploy_parser.set_defaults(command="deploy")
+
+    dump_parser = subparsers.add_parser(
+        "dump",
+        help="Write the current governance state behind a config to tables.",
+        description=(
+            "Snapshot the current Unity Catalog governance state behind a config "
+            "into tables in a target schema."
+        ),
+        options_title="FLAGS:",
+        examples=(
+            HelpExample(_DUMP_EXAMPLE, "Write the current state to snapshot tables."),
+        ),
+    )
+    _add_dump_arguments(dump_parser)
+    dump_parser.set_defaults(command="dump")
+
+    return parser
+
+
+def _build_legacy_parser() -> argparse.ArgumentParser:
+    parser = _cli_parser()
+    _add_version(parser)
+    _add_global_arguments(parser)
+    _add_common_run_arguments(parser)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Print planned changes without executing (deprecated: use 'deploy --dry-run').",
+    )
+    # Not required at the argparse layer: like the modern subcommands, these may
+    # be supplied via env vars or the settings file. A genuinely missing value is
+    # caught after settings resolution (_require_config_dir / _require_warehouse_id
+    # -> OrchestratorError -> exit 3), matching the deploy subcommand's behaviour.
+    _add_config_dir(parser)
+    _add_warehouse_id(parser)
+    return parser
+
+
+# Global flags that may legitimately precede a subcommand in modern mode.
+# Store-true globals consume no value; --settings-file consumes one value token
+# in its split form ("--settings-file path"). The "=" form ("--settings-file=x")
+# is a single token. Any *other* leading option means this is not a modern
+# "[globals] <subcommand> ..." invocation, so it is treated as the legacy flat form.
+_STORE_TRUE_GLOBAL_FLAGS = frozenset(
+    {"--verbose", "--quiet", "--version", "-h", "--help"}
+)
+_VALUE_TAKING_GLOBAL_FLAGS = frozenset({"--settings-file"})
+
+
+def _is_legacy_invocation(argv: list[str]) -> bool:
+    """A modern invocation is ``[global-flags] <subcommand> [...]``. Scan past any
+    leading global flags; if the next token is a known subcommand it is modern,
+    otherwise (a non-global option, or a non-subcommand positional) it is legacy.
+    An argv of only global flags (e.g. ``--version``) is modern."""
+    if not argv:
+        return False
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in _STORE_TRUE_GLOBAL_FLAGS:
+            index += 1
+            continue
+        if token in _VALUE_TAKING_GLOBAL_FLAGS:
+            index += 2
+            continue
+        if token.startswith(tuple(f"{flag}=" for flag in _VALUE_TAKING_GLOBAL_FLAGS)):
+            index += 1
+            continue
+        # Positional tokens use the modern command parser so unknown commands get
+        # the same actionable diagnostic as misspelled known commands. Legacy
+        # invocations are distinguished by their leading flat option flags.
+        return token.startswith("-") and token not in _SUBCOMMANDS
+    return False
+
+
+def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse argv into a namespace with ``command`` set to validate/deploy/dump."""
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if _is_legacy_invocation(raw_argv):
+        namespace = _build_legacy_parser().parse_args(raw_argv)
+        namespace.command = "deploy"
+        namespace.legacy = True
+        return namespace
+
+    namespace = _build_modern_parser().parse_args(raw_argv)
+    namespace.legacy = False
+    return namespace

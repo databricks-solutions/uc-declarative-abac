@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 import pytest
 from databricks.sdk.service.iam import GrantRule, RuleSetResponse, RuleSetUpdateRequest
 
-from uc_declarative_abac.helpers import WorkspaceHelper
-from uc_declarative_abac.principals import GroupRename, Principal
-from uc_declarative_abac.types import PrincipalType
-from uc_declarative_abac.utils import PrincipalValidationError
+from uc_abac.helpers import WorkspaceHelper
+from uc_abac.principals import GroupRename, Principal
+from uc_abac.types import PrincipalType
+from uc_abac.utils import PrincipalValidationError
 
 # ---------------------------------------------------------------------------
 # Mock helpers

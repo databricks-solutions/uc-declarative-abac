@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from uc_declarative_abac import ActualState
-from uc_declarative_abac.dumper import DumpLogger
-from uc_declarative_abac.principals.state import Principal, PrincipalType
-from uc_declarative_abac.securables import Securable
-from uc_declarative_abac.tags.state import SecurableTag
-from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import ExecutionError
+from uc_abac import ActualState
+from uc_abac.dumper import DumpLogger
+from uc_abac.principals.state import Principal, PrincipalType
+from uc_abac.securables import Securable
+from uc_abac.tags.state import SecurableTag
+from uc_abac.types import SecurableType
+from uc_abac.utils import ExecutionError
 
 # ---
 # Banner
@@ -19,7 +19,7 @@ from uc_declarative_abac.utils import ExecutionError
 
 def test_dump_logger_log_banner(caplog):
     """Banner reads 'UC Declarative ABAC (dump)'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_banner()
     assert "UC Declarative ABAC (dump)" in caplog.text
@@ -27,7 +27,7 @@ def test_dump_logger_log_banner(caplog):
 
 def test_dump_logger_log_banner_when_dry_run(caplog):
     """Dry-run banner reads 'UC Declarative ABAC (dump, dry run)'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_banner()
     assert "UC Declarative ABAC (dump, dry run)" in caplog.text
@@ -40,7 +40,7 @@ def test_dump_logger_log_banner_when_dry_run(caplog):
 
 def test_dump_logger_log_section_header(caplog):
     """Section header contains the given name."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_section_header("Test Section")
     assert "Test Section" in caplog.text
@@ -48,7 +48,7 @@ def test_dump_logger_log_section_header(caplog):
 
 def test_dump_logger_log_section_header_when_dry_run(caplog):
     """Section header contains '(dry run)' suffix when dry_run=True."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_section_header("Test Section")
     assert "(dry run)" in caplog.text
@@ -61,7 +61,7 @@ def test_dump_logger_log_section_header_when_dry_run(caplog):
 
 def test_dump_logger_log_fetching_state(caplog):
     """Fetching state message contains 'fetching' and 'state'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_fetching_state()
     assert "fetching" in caplog.text.lower()
@@ -75,7 +75,7 @@ def test_dump_logger_log_fetching_state(caplog):
 
 def test_dump_logger_log_fetched_state(caplog):
     """Fetched state message contains securables count and principals count."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     # Create a simple ActualState with some test data
@@ -113,7 +113,7 @@ def test_dump_logger_log_fetched_state(caplog):
 
 def test_dump_logger_log_target_schema_exists(caplog):
     """An existing target schema logs 'Using schema <name>'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_target_schema_exists("main.state")
     assert "Using schema main.state" in caplog.text
@@ -121,7 +121,7 @@ def test_dump_logger_log_target_schema_exists(caplog):
 
 def test_dump_logger_log_target_schema_created(caplog):
     """Schema created message contains the schema name and 'Created'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_target_schema_created("main.state")
     assert "main.state" in caplog.text
@@ -130,7 +130,7 @@ def test_dump_logger_log_target_schema_created(caplog):
 
 def test_dump_logger_log_target_schema_created_when_dry_run(caplog):
     """Dry-run schema created message contains 'Would create'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_target_schema_created("main.state")
     assert "main.state" in caplog.text
@@ -144,7 +144,7 @@ def test_dump_logger_log_target_schema_created_when_dry_run(caplog):
 
 def test_dump_logger_log_error(caplog):
     """Error message is logged at ERROR level with context and exception."""
-    caplog.set_level(logging.DEBUG, logger="uc_declarative_abac")
+    caplog.set_level(logging.DEBUG, logger="uc_abac")
     logger_instance = DumpLogger()
     error = ExecutionError(context="test_context", exception=ValueError("test error"))
     logger_instance.log_error(error)
@@ -161,7 +161,7 @@ def test_dump_logger_log_error(caplog):
 def test_dump_logger_log_table_started(caplog):
     """Table started message reads 'Writing to <name> (0 of <n> rows)', aligned with
     the progress lines."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_table_started("main.state.securables", 12)
     assert "> Writing to main.state.securables (0 of 12 rows)" in caplog.text
@@ -170,14 +170,14 @@ def test_dump_logger_log_table_started(caplog):
 def test_dump_logger_log_batch_appears_only_at_debug(caplog):
     """Batch messages appear only at DEBUG level, not at INFO level."""
     # Test at INFO level - should not appear
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_batch("main.state.securables", 1, 3, 100, 50000)
     info_text = caplog.text
     caplog.clear()
 
     # Test at DEBUG level - should appear
-    caplog.set_level(logging.DEBUG, logger="uc_declarative_abac")
+    caplog.set_level(logging.DEBUG, logger="uc_abac")
     logger_instance2 = DumpLogger()
     logger_instance2.log_batch("main.state.securables", 1, 3, 100, 50000)
     debug_text = caplog.text
@@ -193,7 +193,7 @@ def test_dump_logger_log_batch_appears_only_at_debug(caplog):
 def test_dump_logger_log_statement_only_at_debug(caplog):
     """Statement SQL appears only at DEBUG level."""
     # Test at INFO level
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     sql_statement = "INSERT INTO main.state.securables VALUES (...)"
     logger_instance.log_statement(sql_statement)
@@ -201,7 +201,7 @@ def test_dump_logger_log_statement_only_at_debug(caplog):
     caplog.clear()
 
     # Test at DEBUG level
-    caplog.set_level(logging.DEBUG, logger="uc_declarative_abac")
+    caplog.set_level(logging.DEBUG, logger="uc_abac")
     logger_instance2 = DumpLogger()
     logger_instance2.log_statement(sql_statement)
     debug_text = caplog.text
@@ -215,7 +215,7 @@ def test_dump_logger_log_statement_only_at_debug(caplog):
 
 def test_dump_logger_log_table_written(caplog):
     """Table written message reads 'Wrote to <name> (<n> rows in <b> batches)'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     logger_instance.log_table_written("main.state.securables", 12, 1)
     assert "Wrote to main.state.securables (12 rows in 1 batches)" in caplog.text
@@ -223,7 +223,7 @@ def test_dump_logger_log_table_written(caplog):
 
 def test_dump_logger_log_table_written_when_dry_run(caplog):
     """Dry-run table written message contains 'Would write'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_table_written("main.state.securables", 12, 1)
     assert "Would write to main.state.securables (12 rows in 1 batches)" in caplog.text
@@ -231,7 +231,7 @@ def test_dump_logger_log_table_written_when_dry_run(caplog):
 
 def test_dump_logger_log_table_failed(caplog):
     """Table failed message logs error naming the table and adds to errors."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
     exception = ValueError("Connection failed")
     logger_instance.log_table_failed("main.state.securables", exception)
@@ -248,7 +248,7 @@ def test_dump_logger_log_table_failed(caplog):
 
 def test_dump_logger_log_summary_respects_table_order(caplog):
     """Summary lists tables in the given order even when written in different order."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     # Write tables in order: b, a
@@ -276,7 +276,7 @@ def test_dump_logger_log_summary_respects_table_order(caplog):
 
 def test_dump_logger_log_summary_with_failures(caplog):
     """Summary marks failed tables 'FAILED' and totals report written and failed counts."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     # Write one table, fail another
@@ -293,7 +293,7 @@ def test_dump_logger_log_summary_with_failures(caplog):
 
 def test_dump_logger_log_summary_totals_with_thousands_separator(caplog):
     """Summary totals use thousands separators for large row counts."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     # Write multiple tables with large row counts
@@ -312,7 +312,7 @@ def test_dump_logger_log_summary_totals_with_thousands_separator(caplog):
 
 def test_dump_logger_log_summary_when_dry_run(caplog):
     """Dry-run summary totals say 'would be written'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
 
     logger_instance.log_table_written("main.state.a", 50, 1)
@@ -328,7 +328,7 @@ def test_dump_logger_log_summary_when_dry_run(caplog):
 
 def test_dump_logger_errors_property_returns_copy(caplog):
     """Errors property returns a copy of collected errors."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     error1 = ExecutionError(context="ctx1", exception=ValueError("err1"))
@@ -350,7 +350,7 @@ def test_dump_logger_errors_property_returns_copy(caplog):
 
 def test_dump_logger_multiple_tables_sequence(caplog):
     """Multiple table operations maintain correct sequence."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     logger_instance.log_table_started("main.state.a", 10)
@@ -373,7 +373,7 @@ def test_dump_logger_multiple_tables_sequence(caplog):
 
 def test_dump_logger_log_fetched_state_with_multiple_counts(caplog):
     """Fetched state with multiple entity types shows all non-zero counts."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger()
 
     # Build state with multiple entity types
@@ -411,7 +411,7 @@ def test_dump_logger_log_fetched_state_with_multiple_counts(caplog):
 
 def test_dump_logger_log_table_progress(caplog):
     """Progress reads 'Writing to <name> (<written> of <total> rows)'."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     DumpLogger().log_table_progress("main.state.principals", 1234, 22836)
     assert "> Writing to main.state.principals (1234 of 22836 rows)" in caplog.text
 
@@ -423,7 +423,7 @@ def test_dump_logger_log_table_progress(caplog):
 
 def test_dump_logger_log_table_started_not_logged_when_dry_run(caplog):
     """log_table_started logs nothing when dry_run=True."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_table_started("main.state.securables", 12)
     # Should not contain "Writing to" when dry_run=True
@@ -432,7 +432,7 @@ def test_dump_logger_log_table_started_not_logged_when_dry_run(caplog):
 
 def test_dump_logger_log_table_progress_not_logged_when_dry_run(caplog):
     """log_table_progress logs nothing when dry_run=True."""
-    caplog.set_level(logging.INFO, logger="uc_declarative_abac")
+    caplog.set_level(logging.INFO, logger="uc_abac")
     logger_instance = DumpLogger(dry_run=True)
     logger_instance.log_table_progress("main.state.principals", 1234, 22836)
     # Should not contain "Writing to" when dry_run=True

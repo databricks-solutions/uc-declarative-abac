@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from uc_declarative_abac import ActualState
-from uc_declarative_abac.dumper import build_config_paths
-from uc_declarative_abac.orchestrator import load_config
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.privileges import SecurablePrivilege
-from uc_declarative_abac.tags import SecurableTag
-from uc_declarative_abac.types import PrincipalType, PrivilegeType, SecurableType
+from uc_abac import ActualState
+from uc_abac.dumper import build_config_paths
+from uc_abac.orchestrator import load_config
+from uc_abac.principals import Principal
+from uc_abac.privileges import SecurablePrivilege
+from uc_abac.tags import SecurableTag
+from uc_abac.types import PrincipalType, PrivilegeType, SecurableType
 
 _RUN_DATE = date(2026, 6, 1)
 

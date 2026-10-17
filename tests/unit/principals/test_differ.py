@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import (
     Group,
     GroupRename,
     Principal,
@@ -11,8 +11,8 @@ from uc_declarative_abac.principals import (
     compute_group_diff,
     groups_pending_creation,
 )
-from uc_declarative_abac.types import PrincipalType
-from uc_declarative_abac.utils import PrincipalValidationError, parse_flat_scope
+from uc_abac.types import PrincipalType
+from uc_abac.utils import PrincipalValidationError, parse_flat_scope
 
 # Sentinel for distinguishing "not provided" from "explicitly None" in _group().
 _NOT_PROVIDED = object()

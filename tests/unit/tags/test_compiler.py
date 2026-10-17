@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.governed_tags import GovernedTag
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.tags import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.governed_tags import GovernedTag
+from uc_abac.logger import ChangeLogger
+from uc_abac.tags import (
     SecurableTag,
     compile_desired_tags,
 )
-from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import DisallowedTagValueError
+from uc_abac.types import SecurableType
+from uc_abac.utils import DisallowedTagValueError
 
 
 def _change_logger() -> ChangeLogger:

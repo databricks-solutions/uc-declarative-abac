@@ -1,4 +1,4 @@
-"""Tests for uc_declarative_abac.dumper.writer (dump_state function)."""
+"""Tests for uc_abac.dumper.writer (dump_state function)."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ import pytest
 import yaml
 from databricks.sdk.errors import NotFound, PermissionDenied
 
-from uc_declarative_abac import ActualState
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.dumper import (
+from uc_abac import ActualState
+from uc_abac.configs import ResourcesConfig
+from uc_abac.dumper import (
     INSERT_MAX_ROWS,
     TABLE_SPECS,
     TARGET_SCHEMA_COMMENT,
@@ -24,9 +24,9 @@ from uc_declarative_abac.dumper import (
     build_overwrite_from_sql,
     dump_state,
 )
-from uc_declarative_abac.securables import Securable
-from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import ExecutionBatchError, sql_string_literal
+from uc_abac.securables import Securable
+from uc_abac.types import SecurableType
+from uc_abac.utils import ExecutionBatchError, sql_string_literal
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -91,7 +91,7 @@ def test_dumper_writer_creates_one_table_per_spec(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -127,7 +127,7 @@ def test_dumper_writer_writes_pseudo_policies_table(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -158,7 +158,7 @@ def test_dumper_writer_create_precedes_inserts(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -200,7 +200,7 @@ def test_dumper_writer_empty_domain_creates_table_without_insert(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         # All tables have empty row sets
         mock_fetch.return_value = _build_minimal_actual_state()
 
@@ -239,7 +239,7 @@ def test_dumper_writer_multiple_inserts_when_exceeding_max_rows(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         # Build a state with many securables (>INSERT_MAX_ROWS)
         num_securables = INSERT_MAX_ROWS * 2 + 500  # 2500 with default 1000
         securables = frozenset(
@@ -296,7 +296,7 @@ def test_dumper_writer_schema_exists_no_create_schema(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -324,7 +324,7 @@ def test_dumper_writer_schema_missing_creates_schema(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -359,7 +359,7 @@ def test_dumper_writer_create_schema_before_create_tables(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -404,7 +404,7 @@ def test_dumper_writer_schemas_get_before_fetch_actual_state(
 
     mock_workspace_client.schemas.get.side_effect = track_schemas_get
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
 
         def track_fetch(*args, **kwargs):
             call_order.append("fetch_actual_state")
@@ -431,7 +431,7 @@ def test_dumper_writer_non_notfound_error_from_schemas_get_propagates(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = PermissionDenied("no access")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with pytest.raises(PermissionDenied):
@@ -458,7 +458,7 @@ def test_dumper_writer_dry_run_executes_no_sql(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -481,7 +481,7 @@ def test_dumper_writer_dry_run_logs_would_create_schema(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with caplog.at_level(logging.INFO):
@@ -531,7 +531,7 @@ def test_dumper_writer_failing_table_continues_other_tables(
         fail_on_securable_tags
     )
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with pytest.raises(ExecutionBatchError) as exc_info:
@@ -591,7 +591,7 @@ def test_dumper_writer_failing_table_raises_execution_batch_error(
         fail_on_securables
     )
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with pytest.raises(ExecutionBatchError) as exc_info:
@@ -628,7 +628,7 @@ def test_dumper_writer_logs_writing_and_wrote_per_table(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with caplog.at_level(logging.INFO):
@@ -668,7 +668,7 @@ def test_dumper_writer_passes_config_and_helpers_to_fetch(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -723,7 +723,7 @@ def test_dumper_writer_with_default_parallelism(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         # Call without max_parallel_tables parameter
@@ -876,9 +876,7 @@ def _dump(
     state: ActualState,
     max_parallel_tables: int = 1,
 ):
-    with patch(
-        "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
-    ):
+    with patch("uc_abac.dumper.writer.fetch_actual_state", return_value=state):
         dump_state(
             mock_workspace_client,
             config_dir=_build_minimal_config_dir(tmp_path),
@@ -895,7 +893,7 @@ def test_dumper_writer_creates_staging_table(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -1332,9 +1330,7 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
     _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
     state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
     with (
-        patch(
-            "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
-        ),
+        patch("uc_abac.dumper.writer.fetch_actual_state", return_value=state),
         caplog.at_level(logging.INFO),
     ):
         dump_state(
@@ -1376,9 +1372,7 @@ def test_dumper_writer_logs_progress_while_later_batches_are_still_running(
         _side_effect
     )
     with (
-        patch(
-            "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
-        ),
+        patch("uc_abac.dumper.writer.fetch_actual_state", return_value=state),
         caplog.at_level(logging.INFO),
     ):
         dump_state(
@@ -1401,9 +1395,7 @@ def test_dumper_writer_logs_no_progress_for_a_table_written_within_the_interval(
     _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
     state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
     with (
-        patch(
-            "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
-        ),
+        patch("uc_abac.dumper.writer.fetch_actual_state", return_value=state),
         caplog.at_level(logging.INFO),
     ):
         dump_state(
@@ -1428,7 +1420,7 @@ def test_dumper_writer_dry_run_logs_no_writing_to_lines(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         with caplog.at_level(logging.INFO):
@@ -1466,7 +1458,7 @@ def test_dumper_writer_schema_missing_creates_schema_with_comment(
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _build_minimal_actual_state()
 
         dump_state(
@@ -1513,7 +1505,7 @@ def test_dumper_writer_builds_context_with_run_date_for_timezone(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
     """dump_state computes run_date using run_date_for_timezone(timezone) and passes it to build_dump_context."""
-    from uc_declarative_abac.utils import run_date_for_timezone
+    from uc_abac.utils import run_date_for_timezone
 
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
@@ -1527,10 +1519,8 @@ def test_dumper_writer_builds_context_with_run_date_for_timezone(
         return MagicMock()
 
     with (
-        patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch,
-        patch(
-            "uc_declarative_abac.dumper.writer.build_dump_context"
-        ) as mock_build_context,
+        patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch,
+        patch("uc_abac.dumper.writer.build_dump_context") as mock_build_context,
     ):
         mock_fetch.return_value = _build_minimal_actual_state()
         mock_build_context.side_effect = mock_build_dump_context
@@ -1588,7 +1578,7 @@ def test_dumper_writer_replace_tables_flag_skips_schema_evolution(
         mock_workspace_client
     )  # Tables exist but should be ignored
     with patch(
-        "uc_declarative_abac.dumper.writer.fetch_actual_state",
+        "uc_abac.dumper.writer.fetch_actual_state",
         return_value=_state_with_securables(10),
     ):
         dump_state(
@@ -1635,7 +1625,7 @@ def test_dumper_writer_replace_tables_uses_create_replace_for_swap(
         mock_workspace_client
     )  # Tables exist but should be ignored
     with patch(
-        "uc_declarative_abac.dumper.writer.fetch_actual_state",
+        "uc_abac.dumper.writer.fetch_actual_state",
         return_value=_state_with_securables(10),
     ):
         dump_state(
@@ -1675,7 +1665,7 @@ def test_dumper_writer_dry_run_logs_staging_create(
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
     mock_workspace_client.tables.list.return_value = []  # No tables exist
 
-    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+    with patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch:
         mock_fetch.return_value = _state_with_securables(10)
 
         with caplog.at_level(logging.DEBUG):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uc_declarative_abac.tags import (
+from uc_abac.tags import (
     SecurableTag,
     TagDiff,
     compute_tag_diff,
@@ -8,8 +8,8 @@ from uc_declarative_abac.tags import (
     filter_unmanaged_removals,
     project_tag_state,
 )
-from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import parse_hierarchical_scope
+from uc_abac.types import SecurableType
+from uc_abac.utils import parse_hierarchical_scope
 
 # ---------------------------------------------------------------------------
 # Tags to add, update and remove

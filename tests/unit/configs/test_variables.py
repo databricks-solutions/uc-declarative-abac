@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from uc_declarative_abac.configs.variables import (
+from uc_abac.configs.variables import (
     TEMPLATABLE_KEY_FIELDS,
     accepted_vars,
     check_no_placeholders_in_resources,
@@ -21,7 +21,7 @@ from uc_declarative_abac.configs.variables import (
     substitute_in_body,
     unescape,
 )
-from uc_declarative_abac.utils import TemplateVariableError
+from uc_abac.utils import TemplateVariableError
 
 # ---------------------------------------------------------------------------
 # find_placeholders
@@ -633,7 +633,7 @@ def test_check_no_placeholders_in_resources_raises_on_tag_key():
 
 def test_templatable_key_fields_are_real_model_fields():
     """Every templatable-key field name must be an actual model field, so a rename fails loudly."""
-    from uc_declarative_abac.configs.models import (
+    from uc_abac.configs.models import (
         BaseFgacPolicyConfig,
         BasePolicyConfig,
         BaseTaggableConfig,

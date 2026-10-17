@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import (
     Principal,
     PrincipalResolver,
 )
-from uc_declarative_abac.securables import (
+from uc_abac.securables import (
     AttributeUpdate,
     Column,
     Function,
@@ -16,11 +16,11 @@ from uc_declarative_abac.securables import (
     Table,
     compute_securable_diff,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PrincipalType,
     SecurableType,
 )
-from uc_declarative_abac.utils import (
+from uc_abac.utils import (
     NonexistentSecurableError,
     scope_from_namespace_tokens,
 )
@@ -112,7 +112,7 @@ def test_securable_differ_actual_side_unresolvable_owner_is_warning():
     """An actual-state owner (identifier-only, e.g. a Databricks system service
     principal) that can't be resolved is cleared and logged as a non-fatal warning,
     not a fatal error — so it doesn't fail the run."""
-    from uc_declarative_abac.utils import PrincipalValidationError
+    from uc_abac.utils import PrincipalValidationError
 
     ws_helper = MagicMock()
     ws_helper.resolve_by_identifier.side_effect = lambda i: (_ for _ in ()).throw(
@@ -141,7 +141,7 @@ def test_securable_differ_suppresses_warning_for_ignored_unresolvable_owner():
     """An unresolvable actual-state owner whose identifier is in ignore_unresolvable
     has its owner cleared (as for any unresolvable owner) but its resolution-failure
     warning is suppressed."""
-    from uc_declarative_abac.utils import PrincipalValidationError
+    from uc_abac.utils import PrincipalValidationError
 
     ignored_id = "dd4ded68-9a65-4df9-ad70-832718d36e10"
     ws_helper = MagicMock()
