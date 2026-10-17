@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.securables import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import Principal
+from uc_abac.securables import (
     AttributeUpdate,
     Column,
     Function,
@@ -13,7 +13,7 @@ from uc_declarative_abac.securables import (
     Table,
     execute_securable_diff,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PrincipalType,
     SecurableType,
 )

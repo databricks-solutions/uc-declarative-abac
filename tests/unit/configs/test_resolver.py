@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from uc_declarative_abac.configs import resolve_refs
-from uc_declarative_abac.utils import (
+from uc_abac.configs import resolve_refs
+from uc_abac.utils import (
     ResolutionError,
     TemplateVariableError,
     UnreferencedDefinitionError,
@@ -1569,7 +1569,7 @@ def test_resolver_supports_inline_ref_with_placeholder_override_in_definition():
     definitions = {
         "tags": {
             "base_tags": {
-                "governed_by": "uc_declarative_abac",
+                "governed_by": "uc_abac",
                 "classification": "in_confidence",
             },
         },
@@ -1598,7 +1598,7 @@ def test_resolver_supports_inline_ref_with_placeholder_override_in_definition():
     catalog = result["catalogs"]["ingestion_prod"]
     assert catalog["name"] == "ingestion_prod"
     assert catalog["tags"] == {
-        "governed_by": "uc_declarative_abac",
+        "governed_by": "uc_abac",
         "classification": "in_confidence",
         "environment": "prod",
     }

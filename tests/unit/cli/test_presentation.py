@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from uc_declarative_abac.cli.presentation import format_error, format_status
+from uc_abac.cli.presentation import format_error, format_status
 
 
 @dataclass

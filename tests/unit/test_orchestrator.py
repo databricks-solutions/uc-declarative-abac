@@ -9,21 +9,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from uc_declarative_abac import orchestrator
-from uc_declarative_abac.domains import Domain
-from uc_declarative_abac.governed_tags import GovernedTag
-from uc_declarative_abac.helpers import WorkspaceHelper
-from uc_declarative_abac.orchestrator import run
-from uc_declarative_abac.policies import (
+from uc_abac import orchestrator
+from uc_abac.domains import Domain
+from uc_abac.governed_tags import GovernedTag
+from uc_abac.helpers import WorkspaceHelper
+from uc_abac.orchestrator import run
+from uc_abac.policies import (
     PolicyDiff,
 )
-from uc_declarative_abac.privileges import PrivilegeDiff
-from uc_declarative_abac.tags import TagDiff
-from uc_declarative_abac.types import (
+from uc_abac.privileges import PrivilegeDiff
+from uc_abac.tags import TagDiff
+from uc_abac.types import (
     PrincipalType,
     SecurableType,
 )
-from uc_declarative_abac.utils import (
+from uc_abac.utils import (
     DisallowedTagValueError,
     ExecutionBatchError,
     OrchestratorError,
@@ -233,7 +233,7 @@ def _securable_existence_rows(config_dict: dict) -> list[list]:
     """
     import copy
 
-    from uc_declarative_abac.configs import consolidate_resources
+    from uc_abac.configs import consolidate_resources
 
     resources = copy.deepcopy(config_dict.get("resources") or {})
     consolidated = consolidate_resources(resources)
@@ -326,7 +326,7 @@ def _install_fetch_router(
         return []
 
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         _route,
     )
 
@@ -1014,7 +1014,7 @@ def test_orchestrator_runs_both_domains_independently(
 # ---------------------------------------------------------------------------
 
 
-@patch("uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows")
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
 def test_orchestrator_produces_empty_diffs_when_in_sync(
     mock_fetch, tmp_yaml_dir, mock_workspace_client
 ):
@@ -1155,14 +1155,14 @@ def test_orchestrator_constructs_unity_catalog_helper_with_system_catalog(
     mock_workspace_client,
 ):
     """run() forwards the configured system catalog to UnityCatalogHelper."""
-    from uc_declarative_abac.helpers import UnityCatalogHelper
+    from uc_abac.helpers import UnityCatalogHelper
 
     root = tmp_yaml_dir({"resources/catalog.yaml": {"resources": {}}})
     _setup_mock_workspace_empty_state(mock_workspace_client)
     _setup_mock_empty_principals(mock_workspace_client)
 
     with patch(
-        "uc_declarative_abac.orchestrator.UnityCatalogHelper",
+        "uc_abac.orchestrator.UnityCatalogHelper",
         wraps=UnityCatalogHelper,
     ) as mock_uc_helper:
         run(
@@ -1191,11 +1191,11 @@ def test_orchestrator_threads_max_parallel_changes_to_each_executor(
     _setup_mock_principals(mock_workspace_client, "data_engineers")
 
     with (
-        patch("uc_declarative_abac.orchestrator.execute_tag_diff") as m_tag,
-        patch("uc_declarative_abac.orchestrator.execute_privilege_diff") as m_priv,
-        patch("uc_declarative_abac.orchestrator.execute_securable_diff") as m_sec,
-        patch("uc_declarative_abac.orchestrator.execute_policy_diff") as m_pol,
-        patch("uc_declarative_abac.orchestrator.execute_governed_tag_diff"),
+        patch("uc_abac.orchestrator.execute_tag_diff") as m_tag,
+        patch("uc_abac.orchestrator.execute_privilege_diff") as m_priv,
+        patch("uc_abac.orchestrator.execute_securable_diff") as m_sec,
+        patch("uc_abac.orchestrator.execute_policy_diff") as m_pol,
+        patch("uc_abac.orchestrator.execute_governed_tag_diff"),
     ):
         _run_all_enabled(
             config_dir=root,
@@ -1274,7 +1274,7 @@ def test_orchestrator_raises_execution_batch_error_when_sql_fails(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """When mutation SQL fails, orchestrator.run() raises ExecutionBatchError with collected errors."""
-    from uc_declarative_abac.utils import ExecutionBatchError
+    from uc_abac.utils import ExecutionBatchError
 
     config = _catalog_with_tags_and_grants_config()
     root = tmp_yaml_dir({"resources/catalog.yaml": config})
@@ -1750,7 +1750,7 @@ def _seed_actual_state_for_sp_idempotency(
     import unittest.mock as _mock
 
     patcher = _mock.patch(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         side_effect=lambda response: _rows_for_sql(getattr(response, "_sql", "") or ""),
     )
     patcher.start()
@@ -1780,7 +1780,7 @@ def test_orchestrator_collects_unknown_principal_errors(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Unknown principals are collected as errors in ExecutionBatchError, not raised as PrincipalValidationError."""
-    from uc_declarative_abac.utils import (
+    from uc_abac.utils import (
         ExecutionBatchError,
     )
 
@@ -1812,7 +1812,7 @@ def test_orchestrator_continues_with_valid_principals_when_some_are_unknown(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
     """Valid principals get GRANT SQL executed; unknown ones become errors in ExecutionBatchError."""
-    from uc_declarative_abac.utils import ExecutionBatchError
+    from uc_abac.utils import ExecutionBatchError
 
     config = _catalog_with_two_grant_policies_config()
     root = tmp_yaml_dir({"resources/catalog.yaml": config})
@@ -2115,7 +2115,7 @@ def test_orchestrator_creates_missing_taggables_when_taggable_creation_enabled(
     _setup_mock_workspace_empty_state(mock_workspace_client)
     # Route every fetch to empty rows — the catalog doesn't exist in UC.
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: [],
     )
     _setup_mock_principals(mock_workspace_client, "data_engineers")
@@ -2139,7 +2139,7 @@ def test_orchestrator_does_not_create_missing_taggables_when_taggable_creation_d
 ):
     """Without --enable-taggable-creation, a missing catalog raises ExecutionBatchError
     with a NonexistentSecurableError (the pre-flag behaviour)."""
-    from uc_declarative_abac.utils import (
+    from uc_abac.utils import (
         ExecutionBatchError,
         NonexistentSecurableError,
     )
@@ -2154,7 +2154,7 @@ def test_orchestrator_does_not_create_missing_taggables_when_taggable_creation_d
     root = tmp_yaml_dir({"resources/catalog.yaml": config})
     _setup_mock_workspace_empty_state(mock_workspace_client)
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: [],
     )
     _setup_mock_empty_principals(mock_workspace_client)
@@ -2185,7 +2185,7 @@ def test_orchestrator_still_checks_nonexistent_securables_when_taggable_manageme
     """A catalog declared in config but absent from UC still produces a
     NonexistentSecurableError even when taggable management is off — the validation
     is independent of the attribute-management flag."""
-    from uc_declarative_abac.utils import (
+    from uc_abac.utils import (
         ExecutionBatchError,
         NonexistentSecurableError,
     )
@@ -2201,7 +2201,7 @@ def test_orchestrator_still_checks_nonexistent_securables_when_taggable_manageme
     _setup_mock_workspace_empty_state(mock_workspace_client)
     # Route EVERY query to empty rows — ghost_catalog absent from actual securables.
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: [],
     )
     _setup_mock_empty_principals(mock_workspace_client)
@@ -2415,7 +2415,7 @@ def test_orchestrator_taggable_creation_filter_creates_only_listed_catalog(
 ):
     """With --create-taggables-for-namespaces=cat_a and both catalogs missing from UC,
     only cat_a gets a CREATE CATALOG statement. cat_b surfaces as NonexistentSecurableError."""
-    from uc_declarative_abac.utils import (
+    from uc_abac.utils import (
         ExecutionBatchError,
         NonexistentSecurableError,
     )
@@ -2431,7 +2431,7 @@ def test_orchestrator_taggable_creation_filter_creates_only_listed_catalog(
     root = tmp_yaml_dir({"resources/catalog.yaml": config})
     _setup_mock_workspace_empty_state(mock_workspace_client)
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: [],
     )
     _setup_mock_principals(mock_workspace_client, "data_engineers")
@@ -2510,7 +2510,7 @@ def test_orchestrator_taggable_creation_filter_still_creates_functions_in_out_of
     # Both catalogs (with their schemas) exist in UC; the functions are missing.
     sec_rows = _securable_existence_rows(config)
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: (
             sec_rows
             if (
@@ -2659,7 +2659,7 @@ def test_orchestrator_new_scope_zero_match_warns_but_does_not_raise(
     _install_fetch_router(monkeypatch, config)
     _setup_mock_principals(mock_workspace_client, "data_engineers")
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         result = run(
             config_dir=root,
             workspace_client=mock_workspace_client,
@@ -3051,7 +3051,7 @@ def test_orchestrator_warns_unmatched_tag_assignment_scope_entries(
     _install_fetch_router(monkeypatch, config)
     _setup_mock_principals(mock_workspace_client, "data_engineers")
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         result = run(
             config_dir=root,
             workspace_client=mock_workspace_client,
@@ -3077,7 +3077,7 @@ def test_orchestrator_creation_filter_qualified_schema_does_not_create_parent_ca
 ):
     """Strict prefix match: scoping creation to cat_a.sch1 creates the schema but
     NOT its parent catalog — an absent cat_a surfaces as NonexistentSecurableError."""
-    from uc_declarative_abac.utils import (
+    from uc_abac.utils import (
         ExecutionBatchError,
         NonexistentSecurableError,
     )
@@ -3093,7 +3093,7 @@ def test_orchestrator_creation_filter_qualified_schema_does_not_create_parent_ca
     _setup_mock_workspace_empty_state(mock_workspace_client)
     # Nothing exists in UC — both the catalog and schema are creation candidates.
     monkeypatch.setattr(
-        "uc_declarative_abac.helpers.unity_catalog._fetch_external_links_rows",
+        "uc_abac.helpers.unity_catalog._fetch_external_links_rows",
         lambda response: [],
     )
     _setup_mock_principals(mock_workspace_client, "data_engineers")
@@ -3374,7 +3374,7 @@ def test_orchestrator_raises_disallowed_tag_value_error_in_dry_run(
 def _capture_fetch_actual_securables_calls(monkeypatch) -> list[tuple]:
     """Patch UnityCatalogHelper.fetch_actual_securables to record its call args
     while still returning empty state. Returns the live list of recorded calls."""
-    from uc_declarative_abac.helpers import UnityCatalogHelper
+    from uc_abac.helpers import UnityCatalogHelper
 
     calls: list[tuple] = []
 
@@ -3814,7 +3814,7 @@ def test_orchestrator_warns_when_use_workspace_scim_used(
     mock_workspace_client.groups.list.return_value = []
     mock_workspace_client.service_principals.list.return_value = []
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         run(
             config_dir=root,
             workspace_client=mock_workspace_client,
@@ -3843,7 +3843,7 @@ def test_orchestrator_warns_when_skip_users_fetch_used(
     _install_fetch_router(monkeypatch, config)
     _setup_mock_empty_principals(mock_workspace_client)
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         run(
             config_dir=root,
             workspace_client=mock_workspace_client,
@@ -3870,7 +3870,7 @@ def test_orchestrator_warns_when_ref_override_strategy_used(
     _install_fetch_router(monkeypatch, config)
     _setup_mock_empty_principals(mock_workspace_client)
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         run(
             config_dir=root,
             workspace_client=mock_workspace_client,
@@ -3899,7 +3899,7 @@ def test_orchestrator_does_not_warn_ref_override_strategy_when_default(
     _install_fetch_router(monkeypatch, config)
     _setup_mock_empty_principals(mock_workspace_client)
 
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         run(
             config_dir=root,
             workspace_client=mock_workspace_client,

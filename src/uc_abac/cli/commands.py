@@ -1,0 +1,602 @@
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+import traceback
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.base import DatabricksError
+from pydantic import ValidationError
+
+from uc_abac.cli.parser import parse_cli_args
+from uc_abac.cli.presentation import format_error, format_status
+from uc_abac.cli.settings import RunSettings, resolve_settings
+from uc_abac.dumper import dump_state
+from uc_abac.orchestrator import load_config, run
+from uc_abac.utils import (
+    ExecutionBatchError,
+    OrchestratorError,
+    parse_flat_scope,
+    parse_hierarchical_scope,
+)
+
+_logger = logging.getLogger("uc_abac")
+
+
+class CliUsageError(Exception):
+    """Raised for invalid flag combinations or other CLI usage errors (exit 2)."""
+
+
+# Deprecated *-for-catalogs flags are consumed directly off the namespace by
+# _resolve_namespace_values; they are not RunSettings fields, so they must be
+# kept out of the cli_overrides passed to resolve_settings.
+_DEPRECATED_CATALOG_FLAGS = frozenset(
+    {
+        "manage_tags_for_catalogs",
+        "manage_privileges_for_catalogs",
+        "manage_taggables_for_catalogs",
+        "create_taggables_for_catalogs",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _ScopeFeature:
+    """Maps a new ``--*-scopes`` flag to the deprecated flags it supersedes.
+
+    ``namespace_*`` / ``catalog_*`` are ``None`` for flat domains. The
+    ``enable_*`` fields are also ``None`` when a scope has no deprecated gate.
+    """
+
+    new_field: str
+    new_flag: str
+    enable_field: str | None = None
+    enable_flag: str | None = None
+    namespace_field: str | None = None
+    namespace_flag: str | None = None
+    catalog_attr: str | None = None
+    catalog_flag: str | None = None
+    hierarchical: bool = True
+
+
+@dataclass(frozen=True)
+class _RenamedScope:
+    """Maps a renamed scope field to its deprecated ``(old_field, old_flag)`` aliases."""
+
+    new_field: str
+    new_flag: str
+    aliases: tuple[tuple[str, str], ...] = ()
+
+
+# One entry per renamed scope; each alias points straight at the final name.
+_RENAMED_SCOPE_SETTINGS: tuple[_RenamedScope, ...] = (
+    _RenamedScope(
+        "securable_modification_scopes",
+        "--securable-modification-scopes",
+        (
+            ("taggable_management_scopes", "--taggable-management-scopes"),
+            ("securable_management_scopes", "--securable-management-scopes"),
+        ),
+    ),
+    _RenamedScope(
+        "securable_creation_scopes",
+        "--securable-creation-scopes",
+        (("taggable_creation_scopes", "--taggable-creation-scopes"),),
+    ),
+    _RenamedScope(
+        "group_modification_scopes",
+        "--group-modification-scopes",
+        (("group_management_scopes", "--group-management-scopes"),),
+    ),
+    _RenamedScope(
+        "domain_modification_scopes",
+        "--domain-modification-scopes",
+        (("domain_management_scopes", "--domain-management-scopes"),),
+    ),
+)
+
+# One entry per new scope flag, listing the deprecated flags it replaces. Used to
+# (a) reject a new + deprecated combination for the same feature, and (b) warn
+# when a deprecated flag is used on its own.
+_SCOPE_FEATURES: tuple[_ScopeFeature, ...] = (
+    _ScopeFeature(
+        "tag_management_scopes",
+        "--tag-management-scopes",
+        "enable_tag_management",
+        "--enable-tag-management",
+        "manage_tags_for_namespaces",
+        "--manage-tags-for-namespaces",
+        "manage_tags_for_catalogs",
+        "--manage-tags-for-catalogs",
+    ),
+    _ScopeFeature("tag_assignment_scopes", "--tag-assignment-scopes"),
+    _ScopeFeature(
+        "privilege_management_scopes",
+        "--privilege-management-scopes",
+        "enable_privilege_management",
+        "--enable-privilege-management",
+        "manage_privileges_for_namespaces",
+        "--manage-privileges-for-namespaces",
+        "manage_privileges_for_catalogs",
+        "--manage-privileges-for-catalogs",
+    ),
+    _ScopeFeature(
+        "securable_modification_scopes",
+        "--securable-modification-scopes",
+        "enable_taggable_management",
+        "--enable-taggable-management",
+        "manage_taggables_for_namespaces",
+        "--manage-taggables-for-namespaces",
+        "manage_taggables_for_catalogs",
+        "--manage-taggables-for-catalogs",
+    ),
+    _ScopeFeature(
+        "securable_creation_scopes",
+        "--securable-creation-scopes",
+        "enable_taggable_creation",
+        "--enable-taggable-creation",
+        "create_taggables_for_namespaces",
+        "--create-taggables-for-namespaces",
+        "create_taggables_for_catalogs",
+        "--create-taggables-for-catalogs",
+    ),
+    _ScopeFeature(
+        "policy_deletion_scopes",
+        "--policy-deletion-scopes",
+        "enable_policy_deletion",
+        "--enable-policy-deletion",
+        "delete_policies_for_namespaces",
+        "--delete-policies-for-namespaces",
+    ),
+    _ScopeFeature(
+        "group_creation_scopes",
+        "--group-creation-scopes",
+        "enable_group_creation",
+        "--enable-group-creation",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "group_modification_scopes",
+        "--group-modification-scopes",
+        "enable_group_management",
+        "--enable-group-management",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "group_deletion_scopes",
+        "--group-deletion-scopes",
+        "enable_group_deletion",
+        "--enable-group-deletion",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "governed_tag_deletion_scopes",
+        "--governed-tag-deletion-scopes",
+        "enable_governed_tag_deletion",
+        "--enable-governed-tag-deletion",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "domain_creation_scopes",
+        "--domain-creation-scopes",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "domain_modification_scopes",
+        "--domain-modification-scopes",
+        hierarchical=False,
+    ),
+    _ScopeFeature(
+        "domain_deletion_scopes",
+        "--domain-deletion-scopes",
+        hierarchical=False,
+    ),
+)
+
+EXIT_SUCCESS = 0
+EXIT_EXECUTION_ERROR = 1
+EXIT_USAGE_ERROR = 2
+EXIT_CONFIG_ERROR = 3
+EXIT_DATABRICKS_ERROR = 4
+EXIT_INTERRUPTED = 130
+
+
+def _resolve_namespace_flag(
+    old_value: str | None,
+    new_value: str | None,
+    old_flag: str,
+    new_flag: str,
+) -> str:
+    if old_value is not None and new_value is not None:
+        raise CliUsageError(
+            f"{old_flag} is deprecated and cannot be combined with {new_flag}. "
+            f"Use {new_flag} only."
+        )
+    if old_value is not None:
+        _logger.warning(
+            "%s is deprecated; use %s instead. Treating it as %s for this run.",
+            old_flag,
+            new_flag,
+            new_flag,
+        )
+        return old_value
+    if new_value is not None:
+        return new_value
+    return "*"
+
+
+def _resolve_namespace_values(
+    settings: RunSettings,
+    namespace: argparse.Namespace,
+) -> dict[str, str]:
+    """Merge deprecated *-for-catalogs flags (namespace-only) with the resolved
+    *-for-namespaces settings (which already fold in env vars and the settings
+    file). The deprecated flags are read off the raw namespace because they are
+    not RunSettings fields; the new-style values come from settings."""
+    return {
+        "manage_tags_for_namespaces": _resolve_namespace_flag(
+            getattr(namespace, "manage_tags_for_catalogs", None),
+            settings.manage_tags_for_namespaces,
+            "--manage-tags-for-catalogs",
+            "--manage-tags-for-namespaces",
+        ),
+        "manage_privileges_for_namespaces": _resolve_namespace_flag(
+            getattr(namespace, "manage_privileges_for_catalogs", None),
+            settings.manage_privileges_for_namespaces,
+            "--manage-privileges-for-catalogs",
+            "--manage-privileges-for-namespaces",
+        ),
+        "manage_taggables_for_namespaces": _resolve_namespace_flag(
+            getattr(namespace, "manage_taggables_for_catalogs", None),
+            settings.manage_taggables_for_namespaces,
+            "--manage-taggables-for-catalogs",
+            "--manage-taggables-for-namespaces",
+        ),
+        "create_taggables_for_namespaces": _resolve_namespace_flag(
+            getattr(namespace, "create_taggables_for_catalogs", None),
+            settings.create_taggables_for_namespaces,
+            "--create-taggables-for-catalogs",
+            "--create-taggables-for-namespaces",
+        ),
+    }
+
+
+def _set_aliases(settings: RunSettings, entry: _RenamedScope) -> list[tuple[str, str]]:
+    """The ``(old_field, old_flag)`` aliases of ``entry`` that are set (non-None)."""
+    return [
+        (old_field, old_flag)
+        for old_field, old_flag in entry.aliases
+        if getattr(settings, old_field) is not None
+    ]
+
+
+def _apply_renamed_scope_settings(settings: RunSettings) -> RunSettings:
+    """Fold deprecated scope aliases into their renamed fields.
+
+    Runs before ``_resolve_scope_flags`` and covers every source (CLI flag, env var,
+    settings file), so deprecated names never reach ``run()``. A renamed field may
+    have several aliases (``securable_modification_scopes`` replaces both
+    ``taggable_management_scopes`` and ``securable_management_scopes``); each alias
+    points straight at the final name. Setting more than one of a field's names is a
+    usage error naming every flag that was set; a lone alias logs a deprecation
+    warning and its value moves to the new field. Returns a new ``RunSettings``.
+    """
+    for entry in _RENAMED_SCOPE_SETTINGS:
+        aliases = _set_aliases(settings, entry)
+        flags = [flag for _, flag in aliases]
+        if getattr(settings, entry.new_field) is not None:
+            flags.append(entry.new_flag)
+        if len(flags) > 1:
+            raise CliUsageError(
+                f"{', '.join(flags)} cannot be combined (the deprecated names are "
+                f"aliases of {entry.new_flag}). Use {entry.new_flag} only."
+            )
+        if not aliases:
+            continue
+        old_field, old_flag = aliases[0]
+        _logger.warning(
+            "%s (settings key '%s') is deprecated; use %s (settings key '%s') instead.",
+            old_flag,
+            old_field,
+            entry.new_flag,
+            entry.new_field,
+        )
+        settings = settings.model_copy(
+            update={entry.new_field: getattr(settings, old_field), old_field: None}
+        )
+    return settings
+
+
+def _deprecated_flags_for_warning(
+    feature: _ScopeFeature, settings: RunSettings
+) -> list[str]:
+    """Deprecated flags for ``feature`` that are meaningfully set (enable True or
+    namespace non-None). Excludes the ``*-for-catalogs`` flags, whose own
+    deprecation warning is owned by ``_resolve_namespace_flag``."""
+    used: list[str] = []
+    if (
+        feature.enable_field
+        and feature.enable_flag
+        and getattr(settings, feature.enable_field)
+    ):
+        used.append(feature.enable_flag)
+    if (
+        feature.namespace_field
+        and getattr(settings, feature.namespace_field) is not None
+    ):
+        used.append(feature.namespace_flag)
+    return used
+
+
+def _resolve_scope_flags(settings: RunSettings, namespace: argparse.Namespace) -> None:
+    """Validate the new ``--*-scopes`` flags against the deprecated flags they
+    supersede.
+
+    For each feature, combining a new scope flag with any deprecated counterpart
+    (enable, ``*-for-namespaces``, or ``*-for-catalogs``) is a fast usage error;
+    using a deprecated flag on its own logs a one-off migration warning. Purely
+    additive — an all-legacy invocation only warns, never fails.
+    """
+    for feature in _SCOPE_FEATURES:
+        new_spec = getattr(settings, feature.new_field)
+        new_set = new_spec is not None
+        deprecated = _deprecated_flags_for_warning(feature, settings)
+        if new_set:
+            conflicting = list(deprecated)
+            if feature.catalog_attr and (
+                getattr(namespace, feature.catalog_attr, None) is not None
+            ):
+                conflicting.append(feature.catalog_flag)
+            if conflicting:
+                raise CliUsageError(
+                    f"{feature.new_flag} cannot be combined with deprecated "
+                    f"flag(s): {', '.join(conflicting)}. Use {feature.new_flag} only."
+                )
+            # Validate the grammar up front (so `validate` catches it too, and
+            # deploy fails before contacting Databricks). ValueError -> exit 2.
+            parse = (
+                parse_hierarchical_scope if feature.hierarchical else parse_flat_scope
+            )
+            try:
+                parse(new_spec)
+            except ValueError as exc:
+                raise CliUsageError(f"{feature.new_flag}: {exc}") from exc
+        elif deprecated:
+            _logger.warning(
+                "%s deprecated; use %s instead.",
+                ", ".join(deprecated),
+                feature.new_flag,
+            )
+
+
+def _configure_logging(namespace: argparse.Namespace) -> None:
+    if getattr(namespace, "quiet", False):
+        level = logging.ERROR
+    elif getattr(namespace, "verbose", False):
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    # basicConfig only installs the root handler on the first call (no force=True),
+    # so we don't tear down handlers other libraries or pytest's caplog have added.
+    # The explicit setLevel keeps the level current across repeated invocations.
+    logging.basicConfig(level=level, format="%(message)s")
+    logging.getLogger().setLevel(level)
+
+
+def _require_config_dir(settings: RunSettings) -> Path:
+    if settings.config_dir is None:
+        raise OrchestratorError("--config-dir is required.")
+    return settings.config_dir
+
+
+def _require_warehouse_id(settings: RunSettings) -> str:
+    if settings.warehouse_id is None:
+        raise OrchestratorError("--warehouse-id is required.")
+    return settings.warehouse_id
+
+
+def _require_target_schema(settings: RunSettings) -> str:
+    if settings.target_schema is None:
+        raise OrchestratorError("--target-schema is required.")
+    target_schema = settings.target_schema
+    parts = target_schema.split(".")
+    if len(parts) != 2 or not all(parts):
+        raise CliUsageError(
+            f"--target-schema must be a two-part <catalog>.<schema> name, "
+            f"got '{target_schema}'."
+        )
+    return target_schema
+
+
+def _run_kwargs(
+    settings: RunSettings, namespaces: dict[str, str], *, dry_run: bool
+) -> dict:
+    delete_policies = settings.delete_policies_for_namespaces or "*"
+    return {
+        "config_dir": _require_config_dir(settings),
+        "warehouse_id": _require_warehouse_id(settings),
+        "system_catalog": settings.system_catalog,
+        "timezone": settings.timezone,
+        "dry_run": dry_run,
+        "use_workspace_scim": settings.use_workspace_scim,
+        "skip_users_fetch": settings.skip_users_fetch,
+        "enable_tag_management": settings.enable_tag_management,
+        "enable_taggable_management": settings.enable_taggable_management,
+        "enable_taggable_creation": settings.enable_taggable_creation,
+        "enable_privilege_management": settings.enable_privilege_management,
+        "enable_governed_tag_deletion": settings.enable_governed_tag_deletion,
+        "enable_policy_deletion": settings.enable_policy_deletion,
+        "enable_group_creation": settings.enable_group_creation,
+        "enable_group_management": settings.enable_group_management,
+        "enable_group_deletion": settings.enable_group_deletion,
+        "ignore_unresolvable_principals": settings.ignore_unresolvable_principals,
+        "manage_tags_for_namespaces": namespaces["manage_tags_for_namespaces"],
+        "manage_privileges_for_namespaces": namespaces[
+            "manage_privileges_for_namespaces"
+        ],
+        "manage_taggables_for_namespaces": namespaces[
+            "manage_taggables_for_namespaces"
+        ],
+        "create_taggables_for_namespaces": namespaces[
+            "create_taggables_for_namespaces"
+        ],
+        "delete_policies_for_namespaces": delete_policies,
+        "tag_management_scopes": settings.tag_management_scopes,
+        "tag_assignment_scopes": settings.tag_assignment_scopes,
+        "privilege_management_scopes": settings.privilege_management_scopes,
+        "securable_modification_scopes": settings.securable_modification_scopes,
+        "securable_creation_scopes": settings.securable_creation_scopes,
+        "policy_deletion_scopes": settings.policy_deletion_scopes,
+        "group_creation_scopes": settings.group_creation_scopes,
+        "group_modification_scopes": settings.group_modification_scopes,
+        "group_deletion_scopes": settings.group_deletion_scopes,
+        "governed_tag_deletion_scopes": settings.governed_tag_deletion_scopes,
+        "domain_creation_scopes": settings.domain_creation_scopes,
+        "domain_modification_scopes": settings.domain_modification_scopes,
+        "domain_deletion_scopes": settings.domain_deletion_scopes,
+        "retain_tag_prefixes": settings.retain_tag_prefixes,
+        "force": settings.force,
+        "ref_override_strategy": settings.ref_override_strategy,
+        "max_parallel_changes": settings.max_parallel_changes,
+    }
+
+
+def cmd_validate(settings: RunSettings) -> int:
+    config_dir = _require_config_dir(settings)
+    load_config(config_dir, settings.ref_override_strategy)
+    _logger.info(format_status("success", "Config validation successful."))
+    return EXIT_SUCCESS
+
+
+def cmd_deploy(
+    settings: RunSettings,
+    namespace: argparse.Namespace,
+    namespaces: dict[str, str],
+) -> int:
+    dry_run = getattr(namespace, "dry_run", False)
+    kwargs = _run_kwargs(settings, namespaces, dry_run=dry_run)
+    workspace_client = WorkspaceClient(profile=settings.profile)
+    run(workspace_client=workspace_client, **kwargs)
+    return EXIT_SUCCESS
+
+
+def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
+    dry_run = getattr(namespace, "dry_run", False)
+    config_dir = _require_config_dir(settings)
+    warehouse_id = _require_warehouse_id(settings)
+    target_schema = _require_target_schema(settings)
+    workspace_client = WorkspaceClient(profile=settings.profile)
+    dump_state(
+        workspace_client,
+        config_dir=config_dir,
+        warehouse_id=warehouse_id,
+        target_schema=target_schema,
+        system_catalog=settings.system_catalog,
+        timezone=settings.timezone,
+        ref_override_strategy=settings.ref_override_strategy,
+        max_parallel_tables=settings.max_parallel_changes,
+        dry_run=dry_run,
+        replace_tables=settings.replace_tables,
+    )
+    return EXIT_SUCCESS
+
+
+def _error_hint(message: str) -> str | None:
+    if "--warehouse-id is required" in message:
+        return (
+            "Pass `--warehouse-id <id>`, set `UC_ABAC_WAREHOUSE_ID`, "
+            "or add `warehouse_id` to the settings file."
+        )
+    if "--target-schema is required" in message:
+        return (
+            "Pass `--target-schema <catalog>.<schema>`, set `UC_ABAC_TARGET_SCHEMA`, "
+            "or add `target_schema` to the settings file."
+        )
+    return None
+
+
+def _print_error(message: str, *, verbose: bool) -> None:
+    sys.stderr.write(
+        format_error(message, hint=_error_hint(message), stream=sys.stderr)
+    )
+    if verbose:
+        traceback.print_exc()
+
+
+def _handle_cli_error(exc: Exception, *, verbose: bool) -> int:
+    if isinstance(exc, ExecutionBatchError):
+        _print_error(str(exc), verbose=verbose)
+        return EXIT_EXECUTION_ERROR
+    if isinstance(
+        exc, (OrchestratorError, ValidationError, ValueError, TypeError, yaml.YAMLError)
+    ):
+        _print_error(str(exc), verbose=verbose)
+        return EXIT_CONFIG_ERROR
+    if isinstance(exc, DatabricksError):
+        _print_error(str(exc), verbose=verbose)
+        return EXIT_DATABRICKS_ERROR
+    if isinstance(exc, CliUsageError):
+        _print_error(str(exc), verbose=verbose)
+        return EXIT_USAGE_ERROR
+    raise exc
+
+
+def run_cli(argv: list[str] | None = None) -> int:
+    namespace = parse_cli_args(argv)
+    _configure_logging(namespace)
+
+    if getattr(namespace, "legacy", False):
+        _logger.warning(
+            "Invoking uc-abac without a subcommand is deprecated. "
+            "Use 'uc-abac deploy' (add --dry-run to preview) instead."
+        )
+
+    cli_overrides = {
+        key: value
+        for key, value in vars(namespace).items()
+        if key
+        not in {"command", "legacy", "settings_file", "verbose", "quiet", "dry_run"}
+        and key not in _DEPRECATED_CATALOG_FLAGS
+    }
+    settings_file = getattr(namespace, "settings_file", None)
+    settings = resolve_settings(cli_overrides, settings_file=settings_file)
+
+    try:
+        # Resolve/validate scope flags up front so the deprecated+new conflict
+        # check (CliUsageError -> exit 2) fires for every command, not just
+        # deploy. New-vs-deprecated conflicts are checked before the legacy
+        # namespace resolution so the clearer error wins over a stale warning.
+        settings = _apply_renamed_scope_settings(settings)
+        _resolve_scope_flags(settings, namespace)
+        namespaces = _resolve_namespace_values(settings, namespace)
+        if namespace.command == "validate":
+            return cmd_validate(settings)
+        if namespace.command == "dump":
+            return cmd_dump(settings, namespace)
+        return cmd_deploy(settings, namespace, namespaces)
+    except KeyboardInterrupt:
+        return EXIT_INTERRUPTED
+    except (
+        ExecutionBatchError,
+        OrchestratorError,
+        ValidationError,
+        ValueError,
+        TypeError,
+        yaml.YAMLError,
+        DatabricksError,
+        CliUsageError,
+    ) as exc:
+        verbose = getattr(namespace, "verbose", False)
+        return _handle_cli_error(exc, verbose=verbose)
+
+
+def main() -> None:
+    sys.exit(run_cli())
+
+
+# Re-exported for tests that monkeypatch the CLI boundary.
+__all__ = ["WorkspaceClient", "dump_state", "main", "run", "run_cli"]

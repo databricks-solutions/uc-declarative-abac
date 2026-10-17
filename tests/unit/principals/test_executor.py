@@ -4,15 +4,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import (
     Group,
     GroupDiff,
     GroupRename,
     Principal,
     execute_group_diff,
 )
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.types import PrincipalType
 
 
 def _resolved_user(name: str) -> Principal:

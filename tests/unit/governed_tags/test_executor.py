@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 import pytest
 from databricks.sdk.errors.base import DatabricksError
 
-from uc_declarative_abac.governed_tags import (
+from uc_abac.governed_tags import (
     GovernedTag,
     GovernedTagDiff,
     execute_governed_tag_diff,
 )
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import Principal
+from uc_abac.types import PrincipalType
 
 
 def _gt(
@@ -320,7 +320,7 @@ def test_governed_tag_executor_raises_interactive_confirmation_error_on_eof_when
     monkeypatch,
 ):
     """EOFError from `input()` in a non-forced context raises InteractiveConfirmationRequiredError."""
-    from uc_declarative_abac.utils import InteractiveConfirmationRequiredError
+    from uc_abac.utils import InteractiveConfirmationRequiredError
 
     def _raise_eof(*_):
         raise EOFError()

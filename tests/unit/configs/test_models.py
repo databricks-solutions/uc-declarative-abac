@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from uc_declarative_abac.configs import (
+from uc_abac.configs import (
     FunctionConfig,
     ParameterConfig,
     ResourcesConfig,
 )
-from uc_declarative_abac.types import PrivilegeType, SecurableType
-from uc_declarative_abac.utils import DuplicateResourceError
+from uc_abac.types import PrivilegeType, SecurableType
+from uc_abac.utils import DuplicateResourceError
 
 
 def _minimal_catalog(**overrides):
@@ -1850,7 +1850,7 @@ def test_taggable_configs_default_comment_and_location_to_none():
 # ---------------------------------------------------------------------------
 #
 # Comments are emitted into SQL as ``COMMENT "<value>"`` (see
-# ``_build_comment_clause`` in ``src/uc_declarative_abac/securables/executor.py``).
+# ``_build_comment_clause`` in ``src/uc_abac/securables/executor.py``).
 # A ``"`` inside the value would break the quoting; reject at config-load
 # instead of trying to escape it. Single quotes must still be permitted —
 # they round-trip cleanly through the existing escaping logic exercised by

@@ -2,22 +2,22 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.policies import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.policies import (
     Policy,
     PolicyDiff,
     compute_policy_diff,
 )
-from uc_declarative_abac.principals import (
+from uc_abac.principals import (
     Principal,
     PrincipalResolver,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PolicyType,
     PrincipalType,
     SecurableType,
 )
-from uc_declarative_abac.utils import Scope, scope_from_namespace_tokens
+from uc_abac.utils import Scope, scope_from_namespace_tokens
 
 
 def _resolver() -> PrincipalResolver:
@@ -28,7 +28,7 @@ def _resolver() -> PrincipalResolver:
 def _failing_resolver() -> PrincipalResolver:
     """A resolver whose ws_helper raises PrincipalValidationError for any lookup —
     used to exercise the unresolvable-principal paths."""
-    from uc_declarative_abac.utils import PrincipalValidationError
+    from uc_abac.utils import PrincipalValidationError
 
     ws_helper = MagicMock()
     ws_helper.resolve_by_name.side_effect = lambda n: (_ for _ in ()).throw(
@@ -45,7 +45,7 @@ def _selective_resolver(resolvable: dict[str, Principal]) -> PrincipalResolver:
     raises PrincipalValidationError for everything else. Keys are the identifier
     (for actual-state principals) or name (for config-side principals) carried by
     the unresolved input Principal; values are the resolved Principal to return."""
-    from uc_declarative_abac.utils import PrincipalValidationError
+    from uc_abac.utils import PrincipalValidationError
 
     def _lookup(key: str) -> Principal:
         if key in resolvable:

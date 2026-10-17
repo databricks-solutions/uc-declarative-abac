@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.principals import Principal
+from uc_abac.types import PrincipalType
 
 # ---------------------------------------------------------------------------
 # Principal invariants

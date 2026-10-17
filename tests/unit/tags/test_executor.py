@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 import pytest
 import sqlglot
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.tags import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.tags import (
     SecurableTag,
     TagDiff,
     execute_tag_diff,
 )
-from uc_declarative_abac.types import SecurableType
-from uc_declarative_abac.utils import InteractiveConfirmationRequiredError
+from uc_abac.types import SecurableType
+from uc_abac.utils import InteractiveConfirmationRequiredError
 
 
 def _parse_sql(sql: str):

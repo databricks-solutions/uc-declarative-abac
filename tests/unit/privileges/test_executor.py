@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.privileges import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import Principal
+from uc_abac.privileges import (
     PrivilegeDiff,
     SecurablePrivilege,
     execute_privilege_diff,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PrincipalType,
     PrivilegeType,
     SecurableType,
@@ -124,8 +124,8 @@ def test_privilege_executor_resolves_sp_display_name_to_application_id():
 
 def test_privilege_executor_uses_principal_identifier_in_grant_sql():
     """When principal is a Principal object, the SQL uses its identifier (not display_name)."""
-    from uc_declarative_abac.principals import Principal
-    from uc_declarative_abac.types import PrincipalType
+    from uc_abac.principals import Principal
+    from uc_abac.types import PrincipalType
 
     uc_helper = MagicMock()
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.principals import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.principals import (
     Principal,
     compile_desired_groups,
 )
-from uc_declarative_abac.types import PrincipalType
+from uc_abac.types import PrincipalType
 
 
 def test_groups_compiler_emits_empty_set_when_no_groups():

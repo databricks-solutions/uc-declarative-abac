@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from uc_declarative_abac.cli.parser import parse_cli_args
+from uc_abac.cli.parser import parse_cli_args
 
 _SHARED_DEFAULT_ANNOTATIONS = (
     r"--system-catalog\b[\s\S]*?\[default: system\]",

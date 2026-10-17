@@ -4,19 +4,19 @@ from unittest.mock import MagicMock, call, patch
 
 from databricks.sdk.errors.base import DatabricksError
 
-from uc_declarative_abac.domains import (
+from uc_abac.domains import (
     Domain,
     DomainDiff,
     DomainIcon,
     execute_domain_diff,
 )
-from uc_declarative_abac.helpers import WorkspaceHelper
-from uc_declarative_abac.logger import ChangeLogger
+from uc_abac.helpers import WorkspaceHelper
+from uc_abac.logger import ChangeLogger
 
 
 def test_domain_executor_passes_owners_on_create() -> None:
-    from uc_declarative_abac.principals import Principal
-    from uc_declarative_abac.types import PrincipalType
+    from uc_abac.principals import Principal
+    from uc_abac.types import PrincipalType
 
     business = frozenset(
         {Principal(PrincipalType.GROUP, name="stewards", identifier="stewards")}

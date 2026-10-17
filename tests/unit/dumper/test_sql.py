@@ -1,8 +1,8 @@
-"""Tests for uc_declarative_abac.dumper SQL rendering functions."""
+"""Tests for uc_abac.dumper SQL rendering functions."""
 
 from __future__ import annotations
 
-from uc_declarative_abac.dumper import (
+from uc_abac.dumper import (
     INSERT_MAX_BYTES,
     ColumnSpec,
     TableSpec,

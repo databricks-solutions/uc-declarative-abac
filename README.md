@@ -31,7 +31,7 @@ The package installs two console scripts that point at the same entry point:
 | `uc-abac` | Short alias (recommended) |
 | `uc-declarative-abac` | Full package name |
 
-`python -m uc_declarative_abac` still works but is deprecated in favour of the console scripts.
+`python -m uc_abac` still works but is deprecated in favour of the console scripts.
 
 ## Quick Start
 
@@ -1407,7 +1407,7 @@ Mask and filter policies are additive by default (create/update, never delete). 
 #### Principal management
 - **Account identity API** (default) — fetches all account-level principals via the Workspace Identity V2 API (`workspace_iam_v2`)
 - **Workspace SCIM** (optional `--use-workspace-scim`) — fetches workspace-level principals via SDK, automatically including the account-level system groups `account users` and `account admins` (which the workspace SCIM API does not surface)
-- **Centralised resolution** — `PrincipalResolver` (in `uc_declarative_abac.principals`) bridges YAML display names with UC identifiers. Service principals appear in config by display name but in UC system tables / SDK responses as `application_id`; the resolver normalises both sides to the same `Principal` object so diffs compare correctly across all domains
+- **Centralised resolution** — `PrincipalResolver` (in `uc_abac.principals`) bridges YAML display names with UC identifiers. Service principals appear in config by display name but in UC system tables / SDK responses as `application_id`; the resolver normalises both sides to the same `Principal` object so diffs compare correctly across all domains
 - **Per-domain integration** — each domain's `compute_*_diff` accepts the shared `PrincipalResolver` and `ChangeLogger` and resolves principals internally on both desired and actual state before diffing
 - **Runtime guards** — `ensure_resolved(p)` / `ensure_all_resolved(iterable)` assert the resolved invariant at the executor boundary before SQL emission
 - **Unresolvable principals** — a principal in your **config** that can't be resolved (e.g. a mistyped group name) is a fatal error and fails the run. A principal that exists only in UC's **actual state** and can't be resolved from SCIM is dropped from the diff and reported as a non-fatal **warning** (the run still succeeds). This covers Databricks-managed **system/application service principals** — used internally by features like predictive optimization and scheduled dashboard refresh — which show up in the system tables as `application_id` UUIDs, are not returned by SCIM, and cannot be managed; they would otherwise cause intermittent failures whenever those background jobs have recently run.

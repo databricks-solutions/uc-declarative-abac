@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from uc_declarative_abac.configs import (
+from uc_abac.configs import (
     ResourcesConfig,
     consolidate_resources,
     resolve_refs,
 )
-from uc_declarative_abac.utils import (
+from uc_abac.utils import (
     DuplicateResourceError,
     OrchestratorError,
 )

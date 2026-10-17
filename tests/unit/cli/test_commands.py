@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import uc_declarative_abac.cli.commands as cli
-from uc_declarative_abac.cli.settings import RunSettings
+import uc_abac.cli.commands as cli
+from uc_abac.cli.settings import RunSettings
 
 # ---------------------------------------------------------------------------
 # Legacy flat invocation (regression coverage for pre-subcommand CLI)
@@ -43,7 +43,7 @@ def test_main_defaults_namespace_flag_to_star_when_unset(monkeypatch):
 
 
 def test_main_converts_deprecated_catalog_flag_and_warns(monkeypatch, caplog):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(
             monkeypatch,
             ["--manage-tags-for-catalogs", "cat_a"],
@@ -141,7 +141,7 @@ def test_main_defaults_skip_users_fetch_off(monkeypatch):
 def test_cli_warns_when_invoked_with_legacy_flat_flags(monkeypatch, caplog):
     monkeypatch.setattr(cli, "run", lambda **_: None)
     monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         cli.run_cli(["--config-dir", "cfg", "--warehouse-id", "wh"])
     assert any("deprecated" in r.getMessage().lower() for r in caplog.records)
 
@@ -176,7 +176,7 @@ def test_commands_reports_success_when_config_is_valid(tmp_path: Path, caplog):
         encoding="utf-8",
     )
 
-    with caplog.at_level(logging.INFO, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.INFO, logger="uc_abac"):
         exit_code = cli.run_cli(["validate", "--config-dir", str(config_dir)])
 
     output = caplog.text
@@ -364,7 +364,7 @@ def test_main_new_scope_for_one_feature_does_not_conflict_with_legacy_of_another
 
 
 def test_main_warns_when_deprecated_enable_used_alone(monkeypatch, caplog):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         _run_legacy(monkeypatch, ["--enable-privilege-management"])
     assert any(
         "--enable-privilege-management" in r.getMessage()
@@ -480,7 +480,7 @@ def test_main_passes_securable_scope_flags_through_to_run(monkeypatch):
 def test_main_converts_deprecated_taggable_scope_flag_and_warns(
     monkeypatch, caplog, flag_name, kwarg_name, deprecated_flag
 ):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(monkeypatch, [deprecated_flag, "main.sales*"])
     assert captured[kwarg_name] == "main.sales*"
     assert flag_name not in captured or captured[flag_name] is None
@@ -499,7 +499,7 @@ def test_main_converts_deprecated_taggable_scope_from_settings_file_and_warns(
 ):
     settings_file = tmp_path / "uc_abac.yml"
     settings_file.write_text("taggable_management_scopes: 'cat_a'", encoding="utf-8")
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured: dict = {}
 
         def _fake_run(**kwargs):
@@ -530,7 +530,7 @@ def test_main_converts_deprecated_taggable_scope_from_env_and_warns(
     monkeypatch, caplog
 ):
     monkeypatch.setenv("UC_ABAC_TAGGABLE_CREATION_SCOPES", "team_*")
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(monkeypatch, [])
     assert captured["securable_creation_scopes"] == "team_*"
     assert any(
@@ -595,7 +595,7 @@ def test_main_fails_when_securable_scope_combined_with_deprecated_enable_taggabl
 def test_main_warns_deprecated_enable_taggable_points_to_securable_scopes(
     monkeypatch, caplog
 ):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         _run_legacy(monkeypatch, ["--enable-taggable-management"])
     assert any(
         "--enable-taggable-management" in r.getMessage()
@@ -652,7 +652,7 @@ def test_main_passes_modification_scope_flags_through_to_run(monkeypatch):
 def test_main_converts_deprecated_management_scope_flag_and_warns(
     monkeypatch, caplog, feature_name, scope_kwarg, deprecated_flag, scope_value
 ):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(monkeypatch, [deprecated_flag, scope_value])
     # Value should reach run() under the new kwarg
     assert captured[scope_kwarg] == scope_value
@@ -669,7 +669,7 @@ def test_main_converts_deprecated_taggable_management_scope_directly_to_modifica
 ):
     """Verify --taggable-management-scopes maps directly to --securable-modification-scopes,
     not --securable-management-scopes."""
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(monkeypatch, ["--taggable-management-scopes", "main.*"])
     assert captured["securable_modification_scopes"] == "main.*"
     # Warning must mention --securable-modification-scopes and NOT suggest --securable-management-scopes
@@ -714,7 +714,7 @@ def test_main_converts_deprecated_management_scope_from_settings_file_and_warns(
 ):
     settings_file = tmp_path / "uc_abac.yml"
     settings_file.write_text(f"{scope_field}: '{scope_value}'", encoding="utf-8")
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured: dict = {}
 
         def _fake_run(**kwargs):
@@ -763,7 +763,7 @@ def test_main_converts_deprecated_management_scope_from_env_and_warns(
     monkeypatch, caplog, feature_name, env_var, scope_kwarg, scope_value
 ):
     monkeypatch.setenv(env_var, scope_value)
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         captured = _run_legacy(monkeypatch, [])
     assert captured[scope_kwarg] == scope_value
     # Build expected new flag name from env var
@@ -857,7 +857,7 @@ def test_main_fails_when_group_modification_scope_combined_with_deprecated_enabl
 def test_main_warns_deprecated_enable_group_management_points_to_group_modification_scopes(
     monkeypatch, caplog
 ):
-    with caplog.at_level(logging.WARNING, logger="uc_declarative_abac"):
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
         _run_legacy(monkeypatch, ["--enable-group-management"])
     assert any(
         "--enable-group-management" in r.getMessage()
@@ -1059,7 +1059,7 @@ def test_commands_dump_execution_batch_error_returns_error_code(
     monkeypatch, tmp_path: Path
 ):
     def _fake_dump_state(ws_client, **kwargs):
-        from uc_declarative_abac.utils import ExecutionBatchError, ExecutionError
+        from uc_abac.utils import ExecutionBatchError, ExecutionError
 
         raise ExecutionBatchError(
             [

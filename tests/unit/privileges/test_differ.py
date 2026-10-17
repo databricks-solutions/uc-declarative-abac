@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import (
     Principal,
     PrincipalResolver,
 )
-from uc_declarative_abac.privileges import (
+from uc_abac.privileges import (
     PrivilegeDiff,
     SecurablePrivilege,
     compute_privilege_diff,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PrincipalType,
     PrivilegeType,
     SecurableType,
@@ -27,7 +27,7 @@ def _resolver() -> PrincipalResolver:
 def _failing_resolver() -> PrincipalResolver:
     """A resolver whose ws_helper raises PrincipalValidationError for any lookup —
     used to exercise the unresolvable-principal paths."""
-    from uc_declarative_abac.utils import PrincipalValidationError
+    from uc_abac.utils import PrincipalValidationError
 
     ws_helper = MagicMock()
     ws_helper.resolve_by_name.side_effect = lambda n: (_ for _ in ()).throw(

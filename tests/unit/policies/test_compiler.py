@@ -4,18 +4,18 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from uc_declarative_abac.configs import ResourcesConfig
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.policies import (
+from uc_abac.configs import ResourcesConfig
+from uc_abac.logger import ChangeLogger
+from uc_abac.policies import (
     Policy,
     compile_desired_policies,
     render_tag_when_condition,
 )
-from uc_declarative_abac.types import (
+from uc_abac.types import (
     PolicyType,
     SecurableType,
 )
-from uc_declarative_abac.utils import UngovernedTagError
+from uc_abac.utils import UngovernedTagError
 
 # Permissive superset of every tag key used across the fixtures in this file.
 # Tests that target the "ungoverned tag" validation pass a narrower set explicitly.

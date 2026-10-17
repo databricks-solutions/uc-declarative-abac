@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.policies import (
+from uc_abac.logger import ChangeLogger
+from uc_abac.policies import (
     Policy,
     PolicyDiff,
     execute_policy_diff,
 )
-from uc_declarative_abac.principals import Principal
-from uc_declarative_abac.types import (
+from uc_abac.principals import Principal
+from uc_abac.types import (
     PolicyType,
     PrincipalType,
     SecurableType,
 )
-from uc_declarative_abac.utils import ExecutionError
+from uc_abac.utils import ExecutionError
 
 
 def _resolved(
@@ -559,7 +559,7 @@ def test_policy_executor_raises_interactive_error_on_eof_when_not_forced(monkeyp
     InteractiveConfirmationRequiredError directing the operator to set --force."""
     import pytest
 
-    from uc_declarative_abac.utils import InteractiveConfirmationRequiredError
+    from uc_abac.utils import InteractiveConfirmationRequiredError
 
     def _raise_eof(*_):
         raise EOFError

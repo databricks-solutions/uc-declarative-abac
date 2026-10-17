@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from uc_declarative_abac.domains import (
+from uc_abac.domains import (
     Domain,
     DomainIcon,
     compute_domain_diff,
 )
-from uc_declarative_abac.logger import ChangeLogger
-from uc_declarative_abac.principals import Principal, PrincipalResolver
-from uc_declarative_abac.types import PrincipalType
-from uc_declarative_abac.utils import PrincipalValidationError, parse_flat_scope
+from uc_abac.logger import ChangeLogger
+from uc_abac.principals import Principal, PrincipalResolver
+from uc_abac.types import PrincipalType
+from uc_abac.utils import PrincipalValidationError, parse_flat_scope
 
 
 def _resolver_passthrough() -> PrincipalResolver:
