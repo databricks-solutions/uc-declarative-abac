@@ -68,13 +68,14 @@ def _ensure_target_schema(
     target_schema: str,
     logger: DumpLogger,
     dry_run: bool,
-) -> None:
-    """Create the target schema only when it is missing.
+) -> bool:
+    """Create the target schema only when it is missing; return whether it existed.
 
     Runs before the (slow) state fetch so a missing catalog or a permission problem
     fails fast. A missing schema gets a ``CREATE SCHEMA`` with a comment; an existing
     schema gets no DDL at all (its comment is never overwritten). The existence check
-    is read-only, so it also runs in a dry run.
+    is read-only, so it also runs in a dry run. Returns False when the schema was
+    missing (so it has no tables to list; see ``_existing_table_names``).
     """
     try:
         workspace_client.schemas.get(target_schema)
@@ -85,13 +86,37 @@ def _ensure_target_schema(
                 f"COMMENT {sql_string_literal(TARGET_SCHEMA_COMMENT)}"
             )
         logger.log_target_schema_created(target_schema)
-        return
+        return False
     except Exception as exc:
         logger.log_error(
             ExecutionError(context=f"target schema {target_schema}", exception=exc)
         )
         raise
     logger.log_target_schema_exists(target_schema)
+    return True
+
+
+def _existing_table_names(
+    workspace_client: WorkspaceClient, target_schema: str, schema_existed: bool
+) -> frozenset[str]:
+    """The lower-cased names of the tables already in the target schema.
+
+    One read-only listing up front, so a table known to be missing (e.g. on the first
+    run) is created directly rather than through a schema-evolution swap that is
+    certain to fail and warn. A schema created by this run has no tables, so it isn't
+    listed. Names are lower-cased because Unity Catalog stores them that way.
+    """
+    if not schema_existed:
+        return frozenset()
+    catalog, schema = target_schema.split(".", 1)
+    tables = workspace_client.tables.list(
+        catalog_name=catalog,
+        schema_name=schema,
+        omit_columns=True,
+        omit_properties=True,
+        omit_username=True,
+    )
+    return frozenset(table.name.lower() for table in tables)
 
 
 def _execute(statement: str, ctx: _ExecutionContext) -> None:
@@ -156,17 +181,18 @@ def _swap_into_target(
     spec: TableSpec,
     *,
     replace_tables: bool,
+    target_exists: bool,
     ctx: _ExecutionContext,
 ) -> None:
     """Move the staging table's rows into the target.
 
-    By default a single ``INSERT WITH SCHEMA EVOLUTION OVERWRITE ... BY NAME`` swaps
-    the rows in atomically, so readers keep the previous snapshot until it commits;
-    columns new to an existing target are appended at its end. If that fails for any
-    reason (e.g. the target doesn't exist yet, or a column's type changed
-    incompatibly), a warning
-    is logged and the target is recreated instead (``_replace_target``).
-    ``replace_tables`` skips straight to the recreate. If both paths fail, both errors
+    A target that doesn't exist yet is created and loaded directly (see
+    ``_replace_target``), as is every target with ``replace_tables``. For an existing
+    target, a single ``INSERT WITH SCHEMA EVOLUTION OVERWRITE ... BY
+    NAME`` swaps the rows in atomically, so readers keep the previous snapshot until it
+    commits; columns new to the target are appended at its end. If that fails for any
+    reason (e.g. a column's type changed incompatibly), a warning is logged and the
+    target is recreated instead (``_replace_target``). If both paths fail, both errors
     are raised together. A recreate is not atomic: if its load fails, the target is
     left empty.
     """
@@ -177,7 +203,7 @@ def _swap_into_target(
         spec,
         ctx=ctx,
     )
-    if replace_tables:
+    if replace_tables or not target_exists:
         replace()
         return
     evolution_sql = build_overwrite_from_sql(
@@ -293,6 +319,7 @@ def _load_and_swap(
     spec: TableSpec,
     batches: list[InsertBatch],
     replace_tables: bool,
+    target_exists: bool,
     *,
     ctx: _ExecutionContext,
     progress_interval_seconds: float,
@@ -312,6 +339,7 @@ def _load_and_swap(
         staging_full_name,
         spec,
         replace_tables=replace_tables,
+        target_exists=target_exists,
         ctx=ctx,
     )
 
@@ -329,6 +357,7 @@ def _write_table(
     replace_tables: bool,
     budget: threading.BoundedSemaphore,
     max_parallel_tables: int,
+    existing_tables: frozenset[str],
 ) -> tuple[int, int]:
     """Load one table via its staging table; returns ``(row_count, batch_count)``.
 
@@ -336,10 +365,12 @@ def _write_table(
     ``staging_table_name``) and only then swapped into the target (see
     ``_swap_into_target``), so a failed staging load leaves the target's previous
     snapshot in place. Progress is logged against the target's name. The staging table
-    is dropped whether or not the load succeeded.
+    is dropped whether or not the load succeeded. ``existing_tables`` holds the
+    target schema's table names (see ``_existing_table_names``).
     """
     table_full_name = f"{target_schema}.{spec.name}"
     staging_full_name = staging_table_name(table_full_name)
+    target_exists = spec.name.lower() in existing_tables
     rows = spec.rows(state, context)
     logger.log_table_started(table_full_name, len(rows))
     batches = build_insert_batches(staging_full_name, spec, rows)
@@ -361,6 +392,7 @@ def _write_table(
             spec,
             batches,
             replace_tables,
+            target_exists,
             ctx=ctx,
             progress_interval_seconds=progress_interval_seconds,
             max_parallel_tables=max_parallel_tables,
@@ -394,12 +426,12 @@ def dump_state(
 
     Each table in ``TABLE_SPECS`` has its rows fully replaced: rows are loaded into a
     staging table and then swapped in (see ``_write_table``), so a table whose load
-    fails keeps its previous snapshot. ``replace_tables`` recreates each table from
-    its spec instead of swapping in place (see ``_swap_into_target``). Tables, and the
-    insert batches within each table, are written concurrently, with at most
-    ``max_parallel_tables`` SQL statements in flight in total (see
-    ``_ExecutionContext``). A failed table doesn't stop the others; all failures are
-    raised together as ``ExecutionBatchError`` at the end.
+    fails keeps its previous snapshot; a table that doesn't exist yet is created.
+    ``replace_tables`` recreates each table from its spec instead of swapping in place
+    (see ``_swap_into_target``). Tables, and the insert batches within each table, are
+    written concurrently, with at most ``max_parallel_tables`` SQL statements in flight
+    in total (see ``_ExecutionContext``). A failed table doesn't stop the others; all
+    failures are raised together as ``ExecutionBatchError`` at the end.
     ``dry_run`` builds and logs every statement but executes none.
     A table still loading after ``progress_interval_seconds`` logs its rows written
     so far (at most once per interval).
@@ -418,12 +450,18 @@ def dump_state(
     ws_helper = WorkspaceHelper(
         workspace_client, manage_groups=True, manage_domain_owners=True
     )
-    _ensure_target_schema(workspace_client, uc_helper, target_schema, logger, dry_run)
+    schema_existed = _ensure_target_schema(
+        workspace_client, uc_helper, target_schema, logger, dry_run
+    )
 
     logger.log_fetching_state()
     state = fetch_actual_state(config, uc_helper, ws_helper)
     logger.log_fetched_state(state)
     context = build_dump_context(state, config, run_date_for_timezone(timezone))
+
+    existing_tables = _existing_table_names(
+        workspace_client, target_schema, schema_existed
+    )
 
     budget = threading.BoundedSemaphore(max(1, max_parallel_tables))
 
@@ -451,6 +489,7 @@ def dump_state(
             replace_tables=replace_tables,
             budget=budget,
             max_parallel_tables=max_parallel_tables,
+            existing_tables=existing_tables,
         ),
         max_workers=max_parallel_tables,
         on_complete=_on_complete,
