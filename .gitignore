@@ -43,3 +43,6 @@ htmlcov/
 
 # Databricks
 scratch/
+
+# Docs
+docs/_build/

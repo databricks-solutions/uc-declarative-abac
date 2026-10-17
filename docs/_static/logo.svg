@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="64" viewBox="0 0 240 64" role="img" aria-label="UC Declarative ABAC">
+  <path d="M26 6 L46 13 V30 C46 43 37.5 52 26 57 C14.5 52 6 43 6 30 V13 Z" fill="#FF3621"/>
+  <path d="M22 21 C18.5 21 18.5 23 18.5 26 C18.5 29 17 31 15 31.5 C17 32 18.5 34 18.5 37 C18.5 40 18.5 42 22 42" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M30 21 C33.5 21 33.5 23 33.5 26 C33.5 29 35 31 37 31.5 C35 32 33.5 34 33.5 37 C33.5 40 33.5 42 30 42" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="58" y="29" font-family="Lato, 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#FFFFFF">UC Declarative</text>
+  <text x="58" y="51" font-family="Lato, 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#FF3621" letter-spacing="2">ABAC</text>
+</svg>

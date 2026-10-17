@@ -13,6 +13,11 @@ dependencies = [
     "databricks-sdk>=0.136.0",
 ]
 
+[project.urls]
+Documentation = "https://uc-declarative-abac.readthedocs.io/"
+Source = "https://github.com/liamperritt/uc-declarative-abac"
+Issues = "https://github.com/liamperritt/uc-declarative-abac/issues"
+
 [project.scripts]
 uc-abac = "uc_abac.cli:main"
 uc-declarative-abac = "uc_abac.cli:main"
@@ -26,6 +31,12 @@ dev = [
     "pytest-cov>=7.0",
     "sqlglot>=20.0",
     "ruff==0.16.1",
+]
+docs = [
+    "sphinx>=8.0",
+    "sphinx-rtd-theme>=3.0",
+    "myst-parser>=4.0",
+    "sphinx-copybutton>=0.5",
 ]
 
 [tool.pytest.ini_options]
