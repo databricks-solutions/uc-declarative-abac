@@ -4,7 +4,7 @@
 
 A Python framework that lets Databricks customers define ABAC governance (tags, grants, masking, filtering, UC objects) as declarative YAML configs. The engine reads configs, queries UC system tables for current state, computes diffs, and applies only the required changes.
 
-See `README.md` for the full design specification, YAML config structures, and examples.
+See the documentation site in `docs/` (published at https://uc-declarative-abac.readthedocs.io/) for the full YAML config reference, deployment behaviour, and examples.
 
 ## Architecture
 
@@ -86,7 +86,9 @@ plumbing and forget the Action, so treat this as a checklist and update every it
    places, so a flag that isn't in all three is under-wired.
    A flag the `dump` subcommand also takes (it has its own narrower parser,
    `_add_dump_arguments`) must be wired into **`dump/action.yml`** the same way.
-6. **`README.md`** — add the row to the GitHub Action input table (and any prose).
+6. **Docs** — add the flag to `docs/reference/cli.md` and the input row to the matching table in
+   `docs/deploying/github-actions.md` (plus `docs/deploying/dumping-state.md` for a dump flag),
+   and any prose on the relevant topic page.
 7. **Tests** — parser help, settings env var, and commands passthrough at minimum.
 
 ## YAML config conventions
@@ -185,12 +187,25 @@ both, and a green `pytest` is not enough on its own:
 
 ## Documentation
 
-`README.md` is **customer-facing**. Document observable behaviour and configuration, not
-internal implementation or performance tuning — customers don't care how the state fetch is
-optimised, only what the feature does and how to configure it. Keep internal reasoning
-(query shapes, fetch/merge mechanics, why-it's-fast) in code comments/docstrings and
-`AGENTS.md`, never in `README.md`. Don't add prose to `README.md` when it's already correct —
-adding fat that restates or over-explains is a regression, not an improvement.
+The customer-facing documentation is a Sphinx site in `docs/`, written in **MyST Markdown**,
+rendered with `sphinx_rtd_theme`, and published by Read the Docs at
+https://uc-declarative-abac.readthedocs.io/ (`.readthedocs.yaml`). `README.md` is a thin landing
+page that links to it; document features in the relevant `docs/` page, not the README.
+
+- **Customer-facing only.** Document observable behaviour and configuration, not internal
+  implementation or performance tuning — customers don't care how the state fetch is optimised,
+  only what the feature does and how to configure it. Keep internal reasoning (query shapes,
+  fetch/merge mechanics, why-it's-fast) in code comments/docstrings and `AGENTS.md`, never in
+  `docs/` or `README.md`.
+- **No fat.** Don't add prose when it's already correct — adding fat that restates or
+  over-explains is a regression, not an improvement. Link to the page that owns a topic instead
+  of repeating it.
+- **No en or em dashes** (U+2013, U+2014) anywhere in `README.md`, `CONTRIBUTING.md`, `docs/`, or
+  the `examples/` READMEs — rewrite with a semicolon, comma, colon, or period. Enforced by
+  `tests/unit/test_docs.py`.
+- **Cross-references** use `(label)=` targets and `{ref}` roles, not raw URLs or `#anchors`.
+- **The build must be warning-free**: `.venv/bin/sphinx-build -W --keep-going -n -b html docs docs/_build/html`
+  (CI and Read the Docs both fail on warnings). Install the tooling with `uv sync --extra docs`.
 
 ## Testing
 
@@ -202,8 +217,6 @@ adding fat that restates or over-explains is a regression, not an improvement.
 - Test assertions should be loose enough to test the behaviour without tightly coupling to the internals of the implementation. The implementation should be changeable without breaking the test, as long as the same behaviour and public interface are maintained.
 
 ## Implementation approach
-
-See `docs/implementation_design.md` for the full implementation plan.
 
 This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Development (BDD)** with a four-agent pattern. **All implementation plans must follow TDD/BDD** — when creating a new plan, structure it around the TDD/BDD cycle (stubs → tester agent → RED → implementer agent → GREEN → refactor).
 
@@ -231,7 +244,9 @@ This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Developme
   - It must NOT modify tests or refactor
 
 - **Isaac Review** (CLI, run by the manager) — reviews the completed feature, suggesting improvements:
-  - Run `isaac review --uncommitted -f markdown -o <file>`. With no arguments it diffs against `master`, so on this repo pass `--base origin/main` to review the whole branch
+  - Pick **one** scope; `--uncommitted` and `--base` are mutually exclusive and combining them errors out:
+    - `isaac review --uncommitted -f markdown -o <file>` reviews uncommitted changes (staged + unstaged vs `HEAD`)
+    - `isaac review --base origin/main -f markdown -o <file>` reviews the whole committed branch. With no arguments it diffs against `master`, so on this repo always pass `--base origin/main`
   - It takes several minutes; run it in the background and read the output file when it finishes
   - Validate each finding before acting on it; don't apply suggestions that contradict a design decision the user made
 

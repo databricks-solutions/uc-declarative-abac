@@ -1,0 +1,64 @@
+/* UC Declarative ABAC branding on top of sphinx_rtd_theme. */
+
+:root {
+  --uc-abac-navy: #1b3139;
+  --uc-abac-accent: #ff3621;
+  --uc-abac-accent-dark: #bd2b1a;
+}
+
+/* Links and hover states. */
+.rst-content a,
+.rst-content a:visited {
+  color: var(--uc-abac-accent-dark);
+}
+
+.rst-content a:hover {
+  color: var(--uc-abac-accent);
+}
+
+/* Sidebar: navy to match the header, accent on the current page. */
+.wy-nav-side {
+  background: var(--uc-abac-navy);
+}
+
+.wy-side-nav-search .wy-dropdown > a img.logo,
+.wy-side-nav-search > a img.logo {
+  max-width: 100%;
+  padding: 0.25rem 0;
+}
+
+.wy-menu-vertical a:hover {
+  background-color: #24434d;
+}
+
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.on a {
+  border-left: 3px solid var(--uc-abac-accent);
+}
+
+/* Wide tables scroll horizontally instead of overflowing the content column. */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+  white-space: normal;
+}
+
+.wy-table-responsive {
+  overflow-x: auto;
+}
+
+/* Long inline code (flag names, identifiers) wraps inside table cells. */
+.rst-content table code.literal {
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* Wider content column for reference tables. */
+.wy-nav-content {
+  max-width: 960px;
+}
+
+.uc-abac-disclaimer {
+  font-size: 0.85em;
+  color: #6b7a80;
+  margin-top: 0.75rem;
+}

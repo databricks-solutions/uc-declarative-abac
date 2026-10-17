@@ -1,13 +1,13 @@
-# Finance Demo — a worked `uc-abac` example
+# Finance Demo: a worked `uc-abac` example
 
 A complete, deployable-from-scratch governance project for a fictional financial-services
 organisation. It models one logical catalog deployed to two environments and exercises
-every GA feature of the [UC Declarative ABAC](../../README.md) engine while reading like a
+every GA feature of the [UC Declarative ABAC](https://uc-declarative-abac.readthedocs.io/en/latest/) engine while reading like a
 real Unity Catalog setup. Every catalog, group, and governed tag is prefixed `uc_abac_`.
 
 > **Deploy-from-scratch, no pre-existing principals.** The engine can create **groups** (it
-> never creates users or service principals), so every principal in this project — owners,
-> grant/mask/filter targets, tag assigners, group members — is a `uc_abac_*` **group** this
+> never creates users or service principals), so every principal in this project (owners,
+> grant/mask/filter targets, tag assigners, group members) is a `uc_abac_*` **group** this
 > project creates, or an always-present system group (`account users` / `account admins`).
 > Leaf groups are created empty; you populate them with your real users afterwards (or from
 > your IdP). Nothing here depends on a principal existing beforehand.
@@ -18,15 +18,15 @@ real Unity Catalog setup. Every catalog, group, and governed tag is prefixed `uc
   both thin `$ref`s to a single catalog definition parameterised by `${env}`.
 - **A medallion layout per business sub-domain**, encoded in the schema name
   (`<sub_domain>_<medallion>`), never as a folder level:
-  - **transactions** — a region-partitioned raw layer `transactions_bronze_amer` /
+  - **transactions**: a region-partitioned raw layer `transactions_bronze_amer` /
     `_emea` / `_apac` (one schema template instantiated three times) unioned into
     `transactions_silver` and rolled up into `transactions_gold`. Bronze and silver both
     extend a shared `base_transactions` schema whose tables `$ref` a layer-specific base
-    table selected by `${layer}` — so the silver layer picks up a `region` column (for row
+    table selected by `${layer}`, so the silver layer picks up a `region` column (for row
     filtering) without overriding each table.
-  - **customers** — `customers_bronze` → `customers_silver` (PII masking) →
+  - **customers**: `customers_bronze` → `customers_silver` (PII masking) →
     `customers_gold` (a high-sensitivity `customer_360` masked by default).
-  - **shared** — a utility schema holding the reusable governance UDFs.
+  - **shared**: a utility schema holding the reusable governance UDFs.
 - **A nested group hierarchy**, **governed tags** with allowed values and assigners, and
   **mask / filter / grant** ABAC policies.
 
@@ -35,7 +35,7 @@ real Unity Catalog setup. Every catalog, group, and governed tag is prefixed `uc
 
 ## Layout
 
-The tree mirrors the Unity Catalog hierarchy — the only directory levels are UC resource
+The tree mirrors the Unity Catalog hierarchy; the only directory levels are UC resource
 types (`catalogs/<catalog>/schemas/<schema>/{tables,volumes,functions}`). Business grouping
 lives in the schema *name*, not the path.
 
@@ -97,10 +97,10 @@ governs a tag by looking in that tag's folder.
 The `uc_abac_finance*` governed tags back a Unity Catalog **Discovery domain**
 hierarchy declared under `resources/domains/`:
 
-- **`uc_abac_finance`** — the parent domain. Its governed tag is set on the catalog and
+- **`uc_abac_finance`**: the parent domain. Its governed tag is set on the catalog and
   inherited by every child, and it is also applied directly to the gold/aggregate
   reporting tables so they surface in the finance domain rather than a subdomain.
-- **`uc_abac_finance/account` · `/customer` · `/transaction`** — subdomains (the `/` in the
+- **`uc_abac_finance/account` · `/customer` · `/transaction`**: subdomains (the `/` in the
   governed-tag key nests them under `uc_abac_finance`). Each tags its per-subject schemas.
 
 Each domain sets a `subtitle` and an `icon`; the description falls back to the referenced
@@ -122,7 +122,7 @@ uc_abac_temp_auditors        → uc_abac_compliance     (expires 2026-12-31: mem
 ```
 
 Leaf groups (`uc_abac_platform_engineers`, `uc_abac_data_stewards`, `uc_abac_compliance`,
-`uc_abac_fraud_analysts`, `uc_abac_region_*`) are created empty — add your real users.
+`uc_abac_fraud_analysts`, `uc_abac_region_*`) are created empty; add your real users.
 
 ## Features exercised
 
@@ -148,14 +148,14 @@ functions, region row-level security, large-transaction oversight) · **grant** 
 ### Prerequisites
 
 The identity `uc-abac` authenticates as (typically a service principal) needs, per the
-[main README](../../README.md#authentication): **workspace admin**, **metastore admin**,
-governed-tag **creator/manager**, and — because this project creates groups — the group
+[authentication docs](https://uc-declarative-abac.readthedocs.io/en/latest/deploying/authentication.html): **workspace admin**, **metastore admin**,
+governed-tag **creator/manager**, and (because this project creates groups) the group
 scopes run against the **account SCIM proxy** (so don't combine them with workspace SCIM).
 
 ### Steps
 
 ```bash
-# 1. Validate offline — no warehouse or credentials needed.
+# 1. Validate offline: no warehouse or credentials needed.
 uc-abac validate --config-dir configs
 
 # 2. Authenticate (env-based shown; a --profile also works).
@@ -172,7 +172,7 @@ uc-abac deploy --warehouse-id <warehouse-id>
 
 `uc_abac.yml` in this directory sets the scopes: additive tag/privilege/attribute management
 and object + group creation are on; destructive gates (policy / governed-tag / group
-deletion) are commented out — enable them deliberately, and add `--force` in CI.
+deletion) are commented out. Enable them deliberately, and add `--force` in CI.
 
 ### Continuous deployment
 
@@ -186,4 +186,4 @@ and the `DATABRICKS_WAREHOUSE_ID` variable.
 Copy `finance_demo/` into a new repo, delete what you don't need, rename the
 `uc_abac_finance` catalog and the `uc_abac_` prefixes to your own, point `uc_abac.yml` at your
 warehouse, and iterate with `uc-abac validate`. Optional locations (managed catalog/schema,
-external tables/volumes) are shown commented — enable them once you have a storage location.
+external tables/volumes) are shown commented; enable them once you have a storage location.
