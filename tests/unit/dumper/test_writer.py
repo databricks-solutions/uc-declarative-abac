@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +20,8 @@ from uc_declarative_abac.dumper import (
     INSERT_MAX_ROWS,
     TABLE_SPECS,
     TARGET_SCHEMA_COMMENT,
+    build_create_table_sql,
+    build_overwrite_from_sql,
     dump_state,
 )
 from uc_declarative_abac.securables import Securable
@@ -57,6 +62,23 @@ def _normalize_sql_backticks(sql: str) -> str:
     return sql.replace("`", "")
 
 
+def _existing_tables(mock_workspace_client: MagicMock, *names: str) -> None:
+    """Mark a set of table names as existing in the target schema.
+
+    Sets mock_workspace_client.tables.list.return_value to return SimpleNamespace
+    objects with .name set to each provided name. Used to signal to dump_state that
+    these tables should be treated as existing and eligible for schema evolution swap.
+    """
+    mock_workspace_client.tables.list.return_value = [
+        SimpleNamespace(name=name) for name in names
+    ]
+
+
+def _mark_all_tables_as_existing(mock_workspace_client: MagicMock) -> None:
+    """Mark all TABLE_SPECS tables as existing."""
+    _existing_tables(mock_workspace_client, *[spec.name for spec in TABLE_SPECS])
+
+
 # ---
 # CREATE TABLE and INSERT statement tests
 # ---
@@ -65,7 +87,7 @@ def _normalize_sql_backticks(sql: str) -> str:
 def test_dumper_writer_creates_one_table_per_spec(
     mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
 ) -> None:
-    """dump_state writes one CREATE OR REPLACE TABLE per TABLE_SPECS table into the target schema."""
+    """dump_state creates one staging CREATE OR REPLACE TABLE and one swap per TABLE_SPECS table."""
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
@@ -79,29 +101,29 @@ def test_dumper_writer_creates_one_table_per_spec(
             target_schema="main.state",
         )
 
-    # Check that we have one CREATE for each table
+    # Check that we have one staging CREATE for each table
     create_statements = [
         sql
         for sql in mock_workspace_client.executed_sql
-        if "CREATE OR REPLACE TABLE" in sql
+        if "CREATE OR REPLACE TABLE" in sql and "_tmp_" in sql
     ]
     assert len(create_statements) == len(TABLE_SPECS), (
-        f"Expected {len(TABLE_SPECS)} CREATE statements, got {len(create_statements)}"
+        f"Expected {len(TABLE_SPECS)} staging CREATE statements, got {len(create_statements)}"
     )
 
-    # Check that each table name appears in the CREATE statements
+    # Check that each staging table name appears in the CREATE statements
     normalized_creates = [_normalize_sql_backticks(sql) for sql in create_statements]
     for spec in TABLE_SPECS:
-        table_full_name = f"main.state.{spec.name}"
+        staging_full_name = f"main.state._tmp_{spec.name}"
         assert any(
-            table_full_name in normalized for normalized in normalized_creates
-        ), f"Table {table_full_name} not found in CREATE statements"
+            staging_full_name in normalized for normalized in normalized_creates
+        ), f"Staging table {staging_full_name} not found in CREATE statements"
 
 
 def test_dumper_writer_writes_pseudo_policies_table(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    """dump_state creates the pseudo_policies table with CREATE OR REPLACE TABLE."""
+    """dump_state creates the staging pseudo_policies table with CREATE OR REPLACE TABLE."""
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
@@ -115,17 +137,17 @@ def test_dumper_writer_writes_pseudo_policies_table(
             target_schema="main.state",
         )
 
-    # Check that CREATE OR REPLACE TABLE for pseudo_policies is executed
+    # Check that CREATE OR REPLACE TABLE for pseudo_policies staging is executed
     normalized_stmts = [
         _normalize_sql_backticks(sql) for sql in mock_workspace_client.executed_sql
     ]
     pseudo_policies_creates = [
         s
         for s in normalized_stmts
-        if "CREATE OR REPLACE TABLE main.state.pseudo_policies" in s
+        if "CREATE OR REPLACE TABLE main.state._tmp_pseudo_policies" in s
     ]
     assert len(pseudo_policies_creates) == 1, (
-        f"Expected exactly one CREATE for pseudo_policies table, got {len(pseudo_policies_creates)}"
+        f"Expected exactly one CREATE for pseudo_policies staging table, got {len(pseudo_policies_creates)}"
     )
 
 
@@ -174,7 +196,7 @@ def test_dumper_writer_create_precedes_inserts(
 def test_dumper_writer_empty_domain_creates_table_without_insert(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    """dump_state handles a table with no rows: CREATE only, no INSERT."""
+    """dump_state handles a table with no rows: staging CREATE, swap, no INSERT batches."""
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
@@ -192,22 +214,28 @@ def test_dumper_writer_empty_domain_creates_table_without_insert(
     sql_statements = mock_workspace_client.executed_sql
     normalized_stmts = [_normalize_sql_backticks(sql) for sql in sql_statements]
 
-    # The domains table should have a CREATE but no INSERT (since state has no domains)
+    # The domains table should have a staging CREATE but no INSERT (since state has no domains)
     domains_creates = [
-        s for s in normalized_stmts if "CREATE OR REPLACE TABLE main.state.domains" in s
+        s
+        for s in normalized_stmts
+        if "CREATE OR REPLACE TABLE main.state._tmp_domains" in s
     ]
     domains_inserts = [
-        s for s in normalized_stmts if "INSERT INTO main.state.domains" in s
+        s for s in normalized_stmts if "INSERT INTO main.state._tmp_domains" in s
     ]
 
-    assert len(domains_creates) == 1, "Should have exactly one CREATE for domains table"
-    assert len(domains_inserts) == 0, "Should have no INSERT for empty domains table"
+    assert len(domains_creates) == 1, (
+        "Should have exactly one CREATE for domains staging table"
+    )
+    assert len(domains_inserts) == 0, (
+        "Should have no INSERT batches for empty domains table"
+    )
 
 
 def test_dumper_writer_multiple_inserts_when_exceeding_max_rows(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    """dump_state chunks INSERT statements when row count exceeds INSERT_MAX_ROWS."""
+    """dump_state chunks INSERT statements into staging when row count exceeds INSERT_MAX_ROWS."""
     config_dir = _build_minimal_config_dir(tmp_path)
     mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
 
@@ -241,17 +269,17 @@ def test_dumper_writer_multiple_inserts_when_exceeding_max_rows(
     sql_statements = mock_workspace_client.executed_sql
     normalized_stmts = [_normalize_sql_backticks(sql) for sql in sql_statements]
 
-    # Find all INSERT statements for securables table - match precisely
+    # Find all INSERT statements for securables staging table
     securables_inserts = [
         s
         for s in normalized_stmts
-        if "INSERT INTO main.state.securables " in s
-        or "INSERT INTO main.state.securables(" in s
+        if "INSERT INTO main.state._tmp_securables " in s
+        or "INSERT INTO main.state._tmp_securables(" in s
     ]
 
     # With 2500 rows and INSERT_MAX_ROWS=1000, we expect exactly 3 INSERT statements
     assert len(securables_inserts) == 3, (
-        f"Expected exactly 3 INSERT statements for securables "
+        f"Expected exactly 3 INSERT statements for securables staging "
         f"(2500 rows / 1000 max), got {len(securables_inserts)}"
     )
 
@@ -493,8 +521,8 @@ def test_dumper_writer_failing_table_continues_other_tables(
 
     def fail_on_securable_tags(*args, **kwargs):
         statement = kwargs.get("statement", args[0] if args else "")
-        # Match precisely: securable_tags but not securables/securable_privileges
-        if "main.state.securable_tags" in _normalize_sql_backticks(statement):
+        # Match precisely: securable_tags staging table
+        if "main.state._tmp_securable_tags" in _normalize_sql_backticks(statement):
             raise RuntimeError("securable_tags table failed")
         # Use original side effect for other statements
         return original_side_effect(*args, **kwargs)
@@ -517,21 +545,21 @@ def test_dumper_writer_failing_table_continues_other_tables(
         # The error should mention the failed table
         assert "securable_tags" in str(exc_info.value).lower()
 
-    # Every OTHER table (all except securable_tags) should have CREATE executed
+    # Every OTHER table (all except securable_tags) should have staging CREATE executed
     sql_statements = mock_workspace_client.executed_sql
     normalized_stmts = [_normalize_sql_backticks(sql) for sql in sql_statements]
 
     for spec in TABLE_SPECS:
         if spec.name != "securable_tags":
-            # Check that this table has a CREATE statement
-            table_full_name = f"main.state.{spec.name}"
+            # Check that this table has a staging CREATE statement
+            staging_name = f"main.state._tmp_{spec.name}"
             has_create = any(
-                f"CREATE OR REPLACE TABLE {table_full_name} " in stmt
-                or f"CREATE OR REPLACE TABLE {table_full_name}(" in stmt
+                f"CREATE OR REPLACE TABLE {staging_name} " in stmt
+                or f"CREATE OR REPLACE TABLE {staging_name}(" in stmt
                 for stmt in normalized_stmts
             )
             assert has_create, (
-                f"Table {spec.name} should have CREATE executed "
+                f"Table {spec.name} should have staging CREATE executed "
                 f"even though another table failed"
             )
 
@@ -549,10 +577,13 @@ def test_dumper_writer_failing_table_raises_execution_batch_error(
 
     def fail_on_securables(*args, **kwargs):
         statement = kwargs.get("statement", args[0] if args else "")
-        # Match precisely: main.state.securables (not securable_tags/securable_privileges)
+        # Match precisely: staging table creation for securables
         normalized = _normalize_sql_backticks(statement)
-        if "main.state.securables " in normalized and "CREATE OR REPLACE" in normalized:
-            raise RuntimeError("securables table creation failed")
+        if (
+            "main.state._tmp_securables " in normalized
+            and "CREATE OR REPLACE" in normalized
+        ):
+            raise RuntimeError("securables table staging creation failed")
         # Use original side effect for other statements
         return original_side_effect(*args, **kwargs)
 
@@ -708,20 +739,121 @@ def test_dumper_writer_with_default_parallelism(
 
 
 # ---------------------------------------------------------------------------
-# Truncation of partially written tables
+# Table existence listing behavior (tables.list)
 # ---------------------------------------------------------------------------
 
 
-def _fail_statements_matching(mock_workspace_client: MagicMock, predicate) -> None:
+def _swap_statements(mock_workspace_client: MagicMock, table: str) -> list[str]:
+    """Normalised statements that create or overwrite the target ``main.state.<table>``."""
+    target = f"main.state.{table} "
+    return [
+        sql
+        for sql in map(_normalize_sql_backticks, mock_workspace_client.executed_sql)
+        if f"TABLE {target}" in sql or f"OVERWRITE {target}" in sql
+    ]
+
+
+def test_dumper_writer_recreates_a_missing_table_without_attempting_schema_evolution(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """A target table that doesn't exist yet is created and loaded straight away: no
+    schema-evolution swap is attempted and no fallback warning is logged."""
+    _existing_tables(mock_workspace_client)
+
+    with caplog.at_level(logging.WARNING):
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    staging = "main.state._tmp_securables"
+    assert _swap_statements(mock_workspace_client, "securables") == [
+        _normalize_sql_backticks(
+            build_create_table_sql(
+                "main.state.securables",
+                next(spec for spec in TABLE_SPECS if spec.name == "securables"),
+            )
+        ),
+        _normalize_sql_backticks(
+            build_overwrite_from_sql(
+                "main.state.securables", staging, schema_evolution=False
+            )
+        ),
+    ]
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_dumper_writer_swaps_an_existing_table_with_schema_evolution(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """Only a target table that already exists gets the schema-evolution swap; a
+    missing one in the same run is created instead."""
+    _existing_tables(mock_workspace_client, "securables")
+
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    securables = _swap_statements(mock_workspace_client, "securables")
+    domains = _swap_statements(mock_workspace_client, "domains")
+    assert len(securables) == 1 and "WITH SCHEMA EVOLUTION" in securables[0]
+    assert len(domains) == 2 and domains[0].startswith("CREATE OR REPLACE TABLE")
+    assert not any("WITH SCHEMA EVOLUTION" in sql for sql in domains)
+
+
+def test_dumper_writer_matches_existing_tables_case_insensitively(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """An existing table listed under a different case still counts as existing."""
+    _existing_tables(mock_workspace_client, "SECURABLES")
+
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    securables = _swap_statements(mock_workspace_client, "securables")
+    assert len(securables) == 1 and "WITH SCHEMA EVOLUTION" in securables[0]
+
+
+def test_dumper_writer_does_not_list_tables_when_target_schema_is_created(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """When the target schema is created by this run, its tables aren't listed and
+    every table is created without a schema-evolution attempt."""
+    mock_workspace_client.schemas.get.side_effect = NotFound("schema not found")
+
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    mock_workspace_client.tables.list.assert_not_called()
+    for spec in TABLE_SPECS:
+        statements = _swap_statements(mock_workspace_client, spec.name)
+        assert len(statements) == 2, spec.name
+        assert not any("WITH SCHEMA EVOLUTION" in sql for sql in statements)
+
+
+def test_dumper_writer_lists_target_tables_once(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state lists the existing target schema's tables once per run."""
+    _existing_tables(mock_workspace_client)
+
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    mock_workspace_client.tables.list.assert_called_once()
+    kwargs = mock_workspace_client.tables.list.call_args.kwargs
+    assert (kwargs["catalog_name"], kwargs["schema_name"]) == ("main", "state")
+
+
+# ---------------------------------------------------------------------------
+# Staging table behavior
+# ---------------------------------------------------------------------------
+
+
+def _fail_statements_matching(
+    mock_workspace_client: MagicMock, predicate, message: str = "insert failed"
+) -> None:
     """Make every statement whose backtick-normalised SQL matches ``predicate`` raise,
-    while still recording it in ``executed_sql``."""
+    while still recording it in ``executed_sql``. Optional ``message`` customizes the error."""
     original = mock_workspace_client.statement_execution.execute_statement.side_effect
 
     def _side_effect(*args, **kwargs):
         statement = kwargs.get("statement", args[0] if args else "")
         if predicate(_normalize_sql_backticks(statement)):
             mock_workspace_client.executed_sql.append(statement)
-            raise RuntimeError("insert failed")
+            raise RuntimeError(message)
         return original(*args, **kwargs)
 
     mock_workspace_client.statement_execution.execute_statement.side_effect = (
@@ -738,7 +870,12 @@ def _state_with_securables(count: int) -> ActualState:
     )
 
 
-def _dump(mock_workspace_client: MagicMock, tmp_path: Path, state: ActualState):
+def _dump(
+    mock_workspace_client: MagicMock,
+    tmp_path: Path,
+    state: ActualState,
+    max_parallel_tables: int = 1,
+):
     with patch(
         "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
     ):
@@ -747,19 +884,90 @@ def _dump(mock_workspace_client: MagicMock, tmp_path: Path, state: ActualState):
             config_dir=_build_minimal_config_dir(tmp_path),
             warehouse_id="warehouse-1",
             target_schema="main.state",
-            max_parallel_tables=1,
+            max_parallel_tables=max_parallel_tables,
         )
 
 
-def test_dumper_writer_truncates_table_when_an_insert_fails(
+def test_dumper_writer_creates_staging_table(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    """A failed INSERT leaves no partial snapshot: the table is truncated, so it
-    reads as empty rather than silently incomplete."""
+    """dump_state creates staging tables _tmp_<table> for each target table."""
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+        )
+
+    # Check for staging table creates
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    for spec in TABLE_SPECS:
+        staging_name = f"main.state._tmp_{spec.name}"
+        has_staging_create = any(
+            f"CREATE OR REPLACE TABLE {staging_name}" in s for s in statements
+        )
+        assert has_staging_create, f"Expected CREATE for staging table {staging_name}"
+
+
+def test_dumper_writer_inserts_into_staging_table(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state inserts rows into staging tables, not target tables."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    securables_inserts = [
+        s for s in statements if "INSERT INTO main.state.securables " in s
+    ]
+    staging_inserts = [
+        s for s in statements if "INSERT INTO main.state._tmp_securables " in s
+    ]
+
+    # Should have inserts into staging table
+    assert len(staging_inserts) > 0, "Should have inserts into staging table"
+    # Should not have inserts into target table
+    assert len(securables_inserts) == 0, "Should not insert into target table directly"
+
+
+def test_dumper_writer_drops_staging_table_after_success(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state drops staging tables after successful swap."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    drops = [
+        s
+        for s in statements
+        if s.strip() == "DROP TABLE IF EXISTS main.state._tmp_securables"
+    ]
+    assert len(drops) == 1, "Should drop staging table after swap"
+
+
+def test_dumper_writer_staging_insert_failure_does_not_touch_target(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """A failed INSERT into staging never touches the target table."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
     _fail_statements_matching(
         mock_workspace_client,
         lambda sql: (
-            sql.startswith("INSERT INTO main.state.securables ") and "'c1500'" in sql
+            sql.startswith("INSERT INTO main.state._tmp_securables ")
+            and "'c150'" in sql
         ),
     )
 
@@ -771,38 +979,332 @@ def test_dumper_writer_truncates_table_when_an_insert_fails(
     statements = [
         _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
     ]
-    failed_index = next(
-        i for i, s in enumerate(statements) if "'c1500'" in s and "INSERT" in s
-    )
-    truncates = [
-        i
-        for i, s in enumerate(statements)
-        if s.strip() == "TRUNCATE TABLE main.state.securables"
+
+    # Should not have INSERT OVERWRITE of target (swap failed)
+    overwrite_target = [
+        s
+        for s in statements
+        if "INSERT OVERWRITE" in s and "main.state.securables" in s
     ]
-    assert truncates and truncates[0] > failed_index
+    assert len(overwrite_target) == 0, "Swap should not occur when staging INSERT fails"
+
+    # Should not have truncate on target
+    target_truncates = [
+        s for s in statements if s.strip() == "TRUNCATE TABLE main.state.securables"
+    ]
+    assert len(target_truncates) == 0, "Should not truncate target on staging failure"
 
 
-def test_dumper_writer_does_not_truncate_when_create_fails(
+def test_dumper_writer_drops_staging_after_failure(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    """Nothing was written if the CREATE itself failed, so there is nothing to truncate."""
+    """dump_state drops staging table even when staging INSERT fails."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
     _fail_statements_matching(
         mock_workspace_client,
-        lambda sql: sql.startswith("CREATE OR REPLACE TABLE main.state.securables "),
+        lambda sql: (
+            sql.startswith("INSERT INTO main.state._tmp_securables ") and "'c50'" in sql
+        ),
     )
 
     with pytest.raises(ExecutionBatchError):
-        _dump(mock_workspace_client, tmp_path, _state_with_securables(3))
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(100))
 
-    assert not any("TRUNCATE" in s for s in mock_workspace_client.executed_sql)
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    drops = [
+        s
+        for s in statements
+        if s.strip() == "DROP TABLE IF EXISTS main.state._tmp_securables"
+    ]
+    assert len(drops) == 1, "Should drop staging table even on failure"
 
 
-def test_dumper_writer_does_not_truncate_successful_tables(
+def test_dumper_writer_empty_table_still_swaps(
     mock_workspace_client: MagicMock, tmp_path: Path
 ) -> None:
-    _dump(mock_workspace_client, tmp_path, _state_with_securables(3))
+    """dump_state swaps even an empty staging table into the target."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
+    _dump(mock_workspace_client, tmp_path, _build_minimal_actual_state())
 
-    assert not any("TRUNCATE" in s for s in mock_workspace_client.executed_sql)
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+
+    # Should have staging creates for all tables (even if no inserts)
+    for spec in TABLE_SPECS:
+        staging_name = f"main.state._tmp_{spec.name}"
+        has_create = any(
+            f"CREATE OR REPLACE TABLE {staging_name}" in s for s in statements
+        )
+        assert has_create, f"Should create staging for {spec.name} even if empty"
+
+        # Should have swap statement (INSERT ... OVERWRITE ... BY NAME) for empty table
+        target_name = f"main.state.{spec.name}"
+        has_swap = any(
+            "INSERT" in s.upper()
+            and "OVERWRITE" in s.upper()
+            and "BY NAME" in s.upper()
+            and target_name in s
+            for s in statements
+        )
+        assert has_swap, f"Should swap empty table {spec.name}"
+
+        # Should drop staging
+        has_drop = any(
+            s.strip() == f"DROP TABLE IF EXISTS main.state._tmp_{spec.name}"
+            for s in statements
+        )
+        assert has_drop, f"Should drop staging for {spec.name}"
+
+
+def test_dumper_writer_reports_both_errors_when_evolution_and_recreate_fail(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """When the schema-evolution swap and the recreate fallback both fail, the table
+    fails with both errors and its staging table is still dropped."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _existing_tables(
+        mock_workspace_client, "securables"
+    )  # Table exists, so evolution is attempted
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: "OVERWRITE main.state.securables " in sql,
+        message="overwrite failed",
+    )
+
+    with pytest.raises(ExecutionBatchError) as exc_info:
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(1))
+
+    assert str(exc_info.value).count("overwrite failed") >= 2
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    assert "DROP TABLE IF EXISTS main.state._tmp_securables" in statements
+
+
+def test_dumper_writer_swaps_after_all_inserts_and_drops_staging_last(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state creates the staging table, loads every batch into it, then swaps it
+    into the target, and only then drops it."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _existing_tables(
+        mock_workspace_client, "securables"
+    )  # Table exists, so evolution is used
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(INSERT_MAX_ROWS * 2))
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    staging = "main.state._tmp_securables"
+    create = next(
+        i
+        for i, s in enumerate(statements)
+        if s.startswith(f"CREATE OR REPLACE TABLE {staging} ")
+    )
+    inserts = [
+        i for i, s in enumerate(statements) if s.startswith(f"INSERT INTO {staging} ")
+    ]
+    swap = statements.index(
+        _normalize_sql_backticks(
+            build_overwrite_from_sql(
+                "main.state.securables", staging, schema_evolution=True
+            )
+        )
+    )
+    drop = statements.index(f"DROP TABLE IF EXISTS {staging}")
+    assert len(inserts) == 2
+    assert create < min(inserts) and max(inserts) < swap < drop
+
+
+def test_dumper_writer_warns_when_falling_back_to_recreate(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """dump_state logs a warning naming the table and the swap error when it falls
+    back to recreating the table."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _existing_tables(
+        mock_workspace_client, "securables"
+    )  # Table exists, so evolution is attempted
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: "WITH SCHEMA EVOLUTION OVERWRITE main.state.securables " in sql,
+        message="evolution unsupported",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(1))
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "main.state.securables" in w and "evolution unsupported" in w for w in warnings
+    )
+
+
+def test_dumper_writer_falls_back_to_create_and_overwrite_when_evolution_insert_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """When INSERT with schema evolution fails, dump_state falls back to CREATE OR REPLACE
+    target + INSERT OVERWRITE without evolution; the swap succeeds and staging is dropped."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _existing_tables(
+        mock_workspace_client, "securables"
+    )  # Table exists, so evolution is attempted
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: "WITH SCHEMA EVOLUTION" in sql.upper(),
+        message="schema evolution attempt failed",
+    )
+
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+
+    # Find the failed evolution attempt and the fallback statements
+    evolution_attempts = [
+        s
+        for s in statements
+        if "INSERT" in s.upper()
+        and "WITH SCHEMA EVOLUTION" in s.upper()
+        and "OVERWRITE" in s.upper()
+        and "main.state.securables" in s
+    ]
+    assert len(evolution_attempts) > 0, "Should attempt evolution"
+
+    # Find fallback: CREATE OR REPLACE target followed by INSERT OVERWRITE without evolution
+    target_creates = [
+        s
+        for s in statements
+        if "CREATE OR REPLACE TABLE main.state.securables"
+        in _normalize_sql_backticks(s)
+        and "_tmp_" not in s
+    ]
+    assert len(target_creates) > 0, (
+        "Should create target table as fallback after evolution fails"
+    )
+
+    fallback_inserts = [
+        s
+        for s in statements
+        if "INSERT OVERWRITE" in s.upper()
+        and "main.state.securables" in s
+        and "WITH SCHEMA EVOLUTION" not in s.upper()
+        and "BY NAME" in s.upper()
+    ]
+    assert len(fallback_inserts) > 0, (
+        "Should have INSERT OVERWRITE without evolution as fallback"
+    )
+
+    # Verify order: CREATE comes before INSERT OVERWRITE
+    last_create_idx = max(
+        (
+            i
+            for i, s in enumerate(statements)
+            if "CREATE OR REPLACE TABLE main.state.securables"
+            in _normalize_sql_backticks(s)
+        ),
+        default=-1,
+    )
+    first_fallback_idx = min(
+        (
+            i
+            for i, s in enumerate(statements)
+            if "INSERT OVERWRITE" in s.upper()
+            and "main.state.securables" in s
+            and "WITH SCHEMA EVOLUTION" not in s.upper()
+        ),
+        default=float("inf"),
+    )
+    assert last_create_idx < first_fallback_idx, (
+        "CREATE must come before fallback INSERT OVERWRITE"
+    )
+
+    # Staging should still be dropped
+    drops = [
+        s
+        for s in statements
+        if s.strip() == "DROP TABLE IF EXISTS main.state._tmp_securables"
+    ]
+    assert len(drops) == 1, "Should drop staging even after fallback"
+
+
+def test_dumper_writer_reports_both_errors_when_drop_fails_after_failure(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """When staging INSERT fails AND DROP TABLE fails, ExecutionBatchError mentions both."""
+    original = mock_workspace_client.statement_execution.execute_statement.side_effect
+
+    def side_effect_with_drop_failure(*args, **kwargs):
+        statement = kwargs.get("statement", args[0] if args else "")
+        normalized = _normalize_sql_backticks(statement)
+        # Fail staging INSERT
+        if (
+            "INSERT INTO main.state._tmp_securables" in normalized
+            and "'c50'" in normalized
+        ):
+            mock_workspace_client.executed_sql.append(statement)
+            raise RuntimeError("staging insert failed")
+        # Also fail the DROP
+        if normalized.strip() == "DROP TABLE IF EXISTS main.state._tmp_securables":
+            mock_workspace_client.executed_sql.append(statement)
+            raise RuntimeError("drop failed")
+        return original(*args, **kwargs)
+
+    mock_workspace_client.statement_execution.execute_statement.side_effect = (
+        side_effect_with_drop_failure
+    )
+
+    with pytest.raises(ExecutionBatchError) as exc_info:
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(100))
+
+    error_text = str(exc_info.value)
+    # Error should mention both failures
+    assert "staging insert failed" in error_text and "drop failed" in error_text, (
+        f"Error should mention both insert and drop failures, got: {error_text}"
+    )
+
+
+def test_dumper_writer_table_fails_when_only_drop_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """When only DROP TABLE fails (not the insert), ExecutionBatchError is raised."""
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: sql.strip().startswith("DROP TABLE IF EXISTS main.state._tmp_"),
+        message="drop failed",
+    )
+
+    with pytest.raises(ExecutionBatchError) as exc_info:
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    error_text = str(exc_info.value)
+    assert "drop failed" in error_text, (
+        f"Error should mention drop failure, got: {error_text}"
+    )
+
+
+def test_dumper_writer_never_truncates(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state never executes TRUNCATE statements, even on failure."""
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: "INSERT INTO main.state._tmp_securables" in sql and "'c100'" in sql,
+        message="insert failed",
+    )
+
+    with pytest.raises(ExecutionBatchError):
+        _dump(mock_workspace_client, tmp_path, _state_with_securables(200))
+
+    # Verify no TRUNCATE statements were executed
+    assert not any("TRUNCATE" in s for s in mock_workspace_client.executed_sql), (
+        "TRUNCATE should never be executed"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -826,6 +1328,8 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
     """Once the progress interval has elapsed, each completed batch logs the rows
     written so far out of the table's total; the final batch is covered by the
     'Wrote to' line instead."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
     state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
     with (
         patch(
@@ -838,6 +1342,7 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
             config_dir=_build_minimal_config_dir(tmp_path),
             warehouse_id="warehouse-1",
             target_schema="main.state",
+            max_parallel_tables=1,
             progress_interval_seconds=0,
         )
 
@@ -848,9 +1353,52 @@ def test_dumper_writer_logs_progress_between_batches_of_a_long_table(
     ]
 
 
+def test_dumper_writer_logs_progress_while_later_batches_are_still_running(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """Progress is logged as batches complete, not only once the whole table is in:
+    by the time the last batch runs, an earlier batch's progress line is out."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
+    state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
+    progress_seen_per_batch: list[int] = []
+    original = mock_workspace_client.statement_execution.execute_statement.side_effect
+
+    def _side_effect(*args, **kwargs):
+        statement = _normalize_sql_backticks(kwargs.get("statement", ""))
+        if statement.startswith("INSERT INTO main.state._tmp_securables "):
+            progress_seen_per_batch.append(
+                len(_progress_lines(caplog, "main.state.securables"))
+            )
+        return original(*args, **kwargs)
+
+    mock_workspace_client.statement_execution.execute_statement.side_effect = (
+        _side_effect
+    )
+    with (
+        patch(
+            "uc_declarative_abac.dumper.writer.fetch_actual_state", return_value=state
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        dump_state(
+            mock_workspace_client,
+            config_dir=_build_minimal_config_dir(tmp_path),
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            max_parallel_tables=1,
+            progress_interval_seconds=0,
+        )
+
+    assert len(progress_seen_per_batch) == 3
+    assert progress_seen_per_batch[-1] >= 1
+
+
 def test_dumper_writer_logs_no_progress_for_a_table_written_within_the_interval(
     mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
 ) -> None:
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(mock_workspace_client)  # All tables exist
     state = _state_with_securables(2 * INSERT_MAX_ROWS + 500)
     with (
         patch(
@@ -1000,3 +1548,310 @@ def test_dumper_writer_builds_context_with_run_date_for_timezone(
     assert captured_run_date == expected_run_date, (
         f"Expected run_date to be {expected_run_date}, got {captured_run_date}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Schema evolution and replace_tables flag tests
+# ---------------------------------------------------------------------------
+
+
+def test_dumper_writer_uses_schema_evolution_by_default(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state uses schema evolution in the swap statement by default."""
+    _mark_all_tables_as_existing(mock_workspace_client)
+    _dump(mock_workspace_client, tmp_path, _state_with_securables(10))
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    # Expected SQL format: INSERT WITH SCHEMA EVOLUTION OVERWRITE
+    swap_with_evolution = [
+        s
+        for s in statements
+        if "INSERT" in s.upper()
+        and "WITH SCHEMA EVOLUTION" in s.upper()
+        and "OVERWRITE" in s.upper()
+        and "BY NAME" in s.upper()
+    ]
+    assert len(swap_with_evolution) > 0, (
+        "Should use schema evolution in swap by default"
+    )
+
+
+def test_dumper_writer_replace_tables_flag_skips_schema_evolution(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state with replace_tables=True skips schema evolution."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(
+        mock_workspace_client
+    )  # Tables exist but should be ignored
+    with patch(
+        "uc_declarative_abac.dumper.writer.fetch_actual_state",
+        return_value=_state_with_securables(10),
+    ):
+        dump_state(
+            mock_workspace_client,
+            config_dir=_build_minimal_config_dir(tmp_path),
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            replace_tables=True,
+            max_parallel_tables=1,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    # Should not have schema evolution in swap
+    swap_with_evolution = [
+        s
+        for s in statements
+        if "INSERT" in s.upper()
+        and "WITH SCHEMA EVOLUTION" in s.upper()
+        and "OVERWRITE" in s.upper()
+    ]
+    assert len(swap_with_evolution) == 0, (
+        "Should not use schema evolution when replace_tables=True"
+    )
+
+    # Should still have swaps (just without schema evolution)
+    swap_statements = [
+        s
+        for s in statements
+        if "INSERT OVERWRITE" in s.upper() and "BY NAME" in s.upper()
+    ]
+    assert len(swap_statements) > 0, (
+        "Should still have swap statements, just without schema evolution"
+    )
+
+
+def test_dumper_writer_replace_tables_uses_create_replace_for_swap(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state with replace_tables=True creates target and inserts without evolution."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _mark_all_tables_as_existing(
+        mock_workspace_client
+    )  # Tables exist but should be ignored
+    with patch(
+        "uc_declarative_abac.dumper.writer.fetch_actual_state",
+        return_value=_state_with_securables(10),
+    ):
+        dump_state(
+            mock_workspace_client,
+            config_dir=_build_minimal_config_dir(tmp_path),
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            replace_tables=True,
+            max_parallel_tables=1,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    # Should have INSERT OVERWRITE without schema evolution
+    target_overwrites = [
+        s
+        for s in statements
+        if "INSERT OVERWRITE main.state.securables" in s and "BY NAME" in s
+    ]
+    # At least one for securables
+    assert len(target_overwrites) > 0, (
+        "Should have INSERT OVERWRITE for target without schema evolution"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dry run tests with staging behavior
+# ---------------------------------------------------------------------------
+
+
+def test_dumper_writer_dry_run_logs_staging_create(
+    mock_workspace_client: MagicMock, tmp_path: Path, caplog: Any
+) -> None:
+    """dump_state with dry_run logs staging table creation at DEBUG level."""
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    mock_workspace_client.tables.list.return_value = []  # No tables exist
+
+    with patch("uc_declarative_abac.dumper.writer.fetch_actual_state") as mock_fetch:
+        mock_fetch.return_value = _state_with_securables(10)
+
+        with caplog.at_level(logging.DEBUG):
+            dump_state(
+                mock_workspace_client,
+                config_dir=config_dir,
+                warehouse_id="warehouse-1",
+                target_schema="main.state",
+                dry_run=True,
+            )
+
+    log_text = caplog.text
+    # log_statement logs at DEBUG level, so check for staging table creation statements
+    assert "_tmp_securables" in log_text, (
+        f"Expected dry run to log staging table creation, got: {log_text}"
+    )
+    assert len(mock_workspace_client.executed_sql) == 0, "Dry run should execute no SQL"
+
+
+# ---------------------------------------------------------------------------
+# Concurrent batch execution tests
+# ---------------------------------------------------------------------------
+
+
+_STAGING_SECURABLES_INSERT = "INSERT INTO main.state._tmp_securables "
+
+
+def _track_peak_in_flight(
+    mock_workspace_client: MagicMock, predicate, *, seconds: float = 0.02
+) -> list[int]:
+    """Hold every statement matching ``predicate`` for ``seconds`` and track how many
+    are in flight at once; returns a one-item list holding the peak."""
+    original = mock_workspace_client.statement_execution.execute_statement.side_effect
+    lock = threading.Lock()
+    in_flight = [0]
+    peak = [0]
+
+    def _side_effect(*args: Any, **kwargs: Any) -> MagicMock:
+        if not predicate(_normalize_sql_backticks(kwargs.get("statement", ""))):
+            return original(*args, **kwargs)
+        with lock:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+        time.sleep(seconds)
+        with lock:
+            in_flight[0] -= 1
+        return original(*args, **kwargs)
+
+    mock_workspace_client.statement_execution.execute_statement.side_effect = (
+        _side_effect
+    )
+    return peak
+
+
+def test_dumper_writer_runs_a_tables_batches_concurrently(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state runs one table's INSERT batches concurrently, up to the limit."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    peak = _track_peak_in_flight(
+        mock_workspace_client, lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT)
+    )
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=4,
+    )
+
+    assert 1 < peak[0] <= 4
+
+
+def test_dumper_writer_caps_statements_in_flight_across_tables(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state never has more than max_parallel_tables statements in flight across
+    every table and batch, and reaches that cap."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    peak = _track_peak_in_flight(mock_workspace_client, lambda sql: True)
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=2,
+    )
+
+    assert peak[0] == 2
+
+
+def test_dumper_writer_runs_sequentially_with_one_worker(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state with max_parallel_tables=1 runs one statement at a time."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    peak = _track_peak_in_flight(mock_workspace_client, lambda sql: True, seconds=0.005)
+
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 3),
+        max_parallel_tables=1,
+    )
+
+    assert peak[0] == 1
+
+
+def test_dumper_writer_executes_every_batch_when_parallel(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state executes every batch INSERT exactly once when batches run in
+    parallel."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _dump(
+        mock_workspace_client,
+        tmp_path,
+        _state_with_securables(INSERT_MAX_ROWS * 6),
+        max_parallel_tables=4,
+    )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    inserts = [s for s in statements if s.startswith(_STAGING_SECURABLES_INSERT)]
+    assert len(inserts) == 6
+    assert len(set(inserts)) == 6
+
+
+def test_dumper_writer_does_not_swap_when_a_parallel_batch_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state fails a table whose parallel batch fails: the target is never
+    touched and the staging table is still dropped."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT) and "'c1'" in sql,
+        message="batch failed",
+    )
+
+    with pytest.raises(ExecutionBatchError, match="batch failed"):
+        _dump(
+            mock_workspace_client,
+            tmp_path,
+            _state_with_securables(INSERT_MAX_ROWS * 4),
+            max_parallel_tables=4,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    assert not any("main.state.securables " in s for s in statements)
+    assert "DROP TABLE IF EXISTS main.state._tmp_securables" in statements
+
+
+def test_dumper_writer_skips_remaining_batches_after_a_batch_fails(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state stops submitting a table's batches once one has failed."""
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+    _fail_statements_matching(
+        mock_workspace_client,
+        lambda sql: sql.startswith(_STAGING_SECURABLES_INSERT),
+        message="batch failed",
+    )
+
+    with pytest.raises(ExecutionBatchError):
+        _dump(
+            mock_workspace_client,
+            tmp_path,
+            _state_with_securables(INSERT_MAX_ROWS * 4),
+            max_parallel_tables=1,
+        )
+
+    statements = [
+        _normalize_sql_backticks(s) for s in mock_workspace_client.executed_sql
+    ]
+    assert len([s for s in statements if s.startswith(_STAGING_SECURABLES_INSERT)]) == 1

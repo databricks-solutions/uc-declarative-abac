@@ -205,7 +205,7 @@ adding fat that restates or over-explains is a regression, not an improvement.
 
 See `docs/implementation_design.md` for the full implementation plan.
 
-This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Development (BDD)** with a three-agent pattern. **All implementation plans must follow TDD/BDD** — when creating a new plan, structure it around the TDD/BDD cycle (stubs → tester agent → RED → implementer agent → GREEN → refactor).
+This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Development (BDD)** with a four-agent pattern. **All implementation plans must follow TDD/BDD** — when creating a new plan, structure it around the TDD/BDD cycle (stubs → tester agent → RED → implementer agent → GREEN → refactor).
 
 ### Agent roles
 
@@ -230,19 +230,26 @@ This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Developme
   - The test output showing the failure
   - It must NOT modify tests or refactor
 
+- **Isaac Review** (CLI, run by the manager) — reviews the completed feature, suggesting improvements:
+  - Run `isaac review --uncommitted -f markdown -o <file>`. With no arguments it diffs against `master`, so on this repo pass `--base origin/main` to review the whole branch
+  - It takes several minutes; run it in the background and read the output file when it finishes
+  - Validate each finding before acting on it; don't apply suggestions that contradict a design decision the user made
+
 ### TDD/BDD cycle per module
 
 ```
-For each test case in the module:
-  1. Spawn Tester agent → writes one test
-  2. Run pytest → confirm RED (test fails against stub)
-  3. Spawn Implementer agent → implements just enough to pass
-  4. Run pytest → confirm GREEN (test passes)
-  5. Repeat for next test case
+For each behaviour in the module:
+  1. Spawn Tester agent → writes test cases
+  2. Review test cases, correcting them or adding missing edge case tests
+  3. Run pytest → confirm RED (test fails against stub)
+  4. Spawn Implementer agent → implements just enough to pass
+  5. Run pytest → confirm GREEN (test passes)
+  6. Repeat for next test case
 
 Once all tests for the module are green:
-  6. Review implementation and REFACTOR if needed
-  7. Run pytest → confirm all tests still green after refactor
+  7. Review implementation and REFACTOR if needed
+  8. Run Isaac Review (`isaac review --uncommitted`) and action any important feedback
+  9. Run pytest → confirm all tests still green after refactor
 ```
 
-You may run tester and implementer agents in parallel for independent test cases where there are no dependencies between them.
+You may run tester and implementer agents in parallel for independent behaviours where there are no dependencies between them.

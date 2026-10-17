@@ -9,7 +9,9 @@ from uc_declarative_abac.dumper.sql import (
     build_create_table_sql,
     build_insert_batches,
     build_insert_statements,
+    build_overwrite_from_sql,
     render_sql_literal,
+    staging_table_name,
 )
 from uc_declarative_abac.dumper.tables import (
     TABLE_SPECS,
@@ -43,7 +45,9 @@ __all__ = [
     "build_dump_context",
     "build_insert_batches",
     "build_insert_statements",
+    "build_overwrite_from_sql",
     "dump_state",
     "render_sql_literal",
     "split_securable_name",
+    "staging_table_name",
 ]

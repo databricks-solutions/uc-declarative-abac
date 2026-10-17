@@ -136,6 +136,13 @@ class DumpLogger:
         )
         self._table_results[table_full_name] = row_count
 
+    def log_table_recreating(self, table_full_name: str, exception: Exception) -> None:
+        """Warn that the atomic swap into a table failed, so it is being recreated."""
+        self._logger.warning(
+            f"  ~ Swap into {table_full_name} failed ({exception}); recreating the "
+            "table instead"
+        )
+
     def log_table_failed(self, table_full_name: str, exception: Exception) -> None:
         """Log a table failure and record it as failed."""
         self.log_error(ExecutionError(context=table_full_name, exception=exception))

@@ -30,7 +30,8 @@ to (so a schema-level policy's ``securable_name`` is the schema), whereas
 policies; it also has no ``table_name``, since a policy's securable is never a column.
 
 Principal-valued columns hold canonical identifiers (username, group display name, or
-service principal application id), matching the system tables.
+service principal application id), matching the system tables. Each has an ``*_id``
+or ``*_ids`` companion column holding internal ids.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from uc_declarative_abac.configs import (
     ResourcesConfig,
     iter_policy_configs,
 )
+from uc_declarative_abac.domains import Domain
 from uc_declarative_abac.dumper.attribution import ConfigPaths, build_config_paths
 from uc_declarative_abac.governed_tags import GovernedTag, collect_referenced_tag_keys
 from uc_declarative_abac.orchestrator import ActualState
@@ -60,7 +62,7 @@ from uc_declarative_abac.securables import (
 from uc_declarative_abac.types import PolicyType, PrincipalType, SecurableType
 from uc_declarative_abac.utils import is_account_users_group
 
-RowValue = str | int | bool | tuple[str, ...] | None
+RowValue = str | int | bool | tuple[str | None, ...] | None
 Row = dict[str, RowValue]
 
 _REPLACED_NOTE = "Fully replaced by every uc-abac dump run."
@@ -172,6 +174,20 @@ def _sorted_identifiers(
     return tuple(sorted(_identifiers(principals)))
 
 
+def _principal_id(identifier: str, context: DumpContext) -> str | None:
+    """Internal ID of a principal by identifier, or None if unknown."""
+    resolved = context.principals_by_identifier.get(identifier)
+    return resolved.internal_id if resolved else None
+
+
+def _principal_ids(
+    identifiers: Iterable[str], context: DumpContext
+) -> tuple[str | None, ...]:
+    """Internal IDs aligned positionally with identifiers, None for unresolved or
+    principals without an internal_id."""
+    return tuple(_principal_id(ident, context) for ident in identifiers)
+
+
 def _column_name(column: Column, table: Table) -> str:
     """Return a column's name for the ``securables.columns`` array.
 
@@ -211,6 +227,7 @@ def _securable_row(
         "securable_name": securable_name,
         "securable_type": securable.securable_type.value,
         "owner": owner.identifier if owner else None,
+        "owner_id": _principal_id(owner.identifier, context) if owner else None,
         "comment": _securable_comment(securable, attributes),
         "table_type": securable.table_type if is_table else None,
         "columns": tuple(_column_name(c, securable) for c in securable.columns)
@@ -320,6 +337,7 @@ def _securable_privileges_rows(state: ActualState, context: DumpContext) -> list
             {
                 "config_file_path": context.config_paths.privilege(privilege),
                 "grantee": grantee,
+                "grantee_id": _principal_id(grantee, context),
                 "grantee_type": _principal_type_of(grantee, context),
                 "catalog_name": catalog_name,
                 "schema_name": schema_name,
@@ -351,6 +369,8 @@ def _abac_policy_row(policy: Policy, context: DumpContext) -> Row:
     catalog_name, schema_name, _, securable_name = split_securable_name(
         policy.securable_type, policy.securable_full_name
     )
+    to_principals = _identifiers(policy.to_principals)
+    except_principals = _identifiers(policy.except_principals)
     return {
         "config_file_path": context.config_paths.policy(
             policy.securable_type, policy.securable_full_name, policy.name
@@ -361,8 +381,10 @@ def _abac_policy_row(policy: Policy, context: DumpContext) -> Row:
         "schema_name": schema_name,
         "securable_name": securable_name,
         "on_securable_type": policy.securable_type.value,
-        "to_principals": _identifiers(policy.to_principals),
-        "except_principals": _identifiers(policy.except_principals),
+        "to_principals": to_principals,
+        "to_principal_ids": _principal_ids(to_principals, context),
+        "except_principals": except_principals,
+        "except_principal_ids": _principal_ids(except_principals, context),
         "for_securable_type": policy.for_securable_type.value,
         "privileges": None,
         "when_condition": policy.when_condition,
@@ -396,15 +418,17 @@ def _pseudo_policy_row(
 ) -> Row:
     """One pseudo_policies row; config display names in ``to`` are written as
     canonical identifiers via ``principals`` (keyed by display name), or as-is when
-    they don't resolve."""
+    they don't resolve; ``to_principal_ids`` holds their internal ids (None when
+    unresolved)."""
     attached_type = policy.parent_securable_type
     catalog_name, schema_name, _, securable_name = split_securable_name(
         attached_type, policy.parent_full_name
     )
+    resolved = [principals.get(name) for name in policy.to]
     to_principals = tuple(
-        principal.identifier if (principal := principals.get(name)) else name
-        for name in policy.to
+        p.identifier if p else name for p, name in zip(resolved, policy.to, strict=True)
     )
+    to_principal_ids = tuple(p.internal_id if p else None for p in resolved)
     return {
         "config_file_path": policy.file_path.as_posix() if policy.file_path else None,
         "policy_name": policy.name,
@@ -414,7 +438,9 @@ def _pseudo_policy_row(
         "securable_name": securable_name,
         "on_securable_type": attached_type.value,
         "to_principals": to_principals,
+        "to_principal_ids": to_principal_ids,
         "except_principals": None,
+        "except_principal_ids": None,
         "for_securable_type": policy.for_securable_type.value
         if policy.for_securable_type
         else None,
@@ -491,22 +517,31 @@ def _governed_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
     return sorted(rows, key=lambda r: _sort_key(r["tag_key"]))
 
 
+def _domain_row(domain: Domain, context: DumpContext) -> Row:
+    business_owners = _sorted_identifiers(domain.business_owners)
+    technical_owners = _sorted_identifiers(domain.technical_owners)
+    return {
+        "config_file_path": context.config_paths.domain(domain.tag_key),
+        "tag_key": domain.tag_key,
+        "description": domain.description or None,
+        "subtitle": domain.subtitle,
+        "draft": domain.draft,
+        "icon_name": (domain.icon.name or None) if domain.icon else None,
+        "icon_color": (domain.icon.color or None) if domain.icon else None,
+        "business_owners": business_owners,
+        "business_owner_ids": _principal_ids(business_owners, context)
+        if business_owners is not None
+        else None,
+        "technical_owners": technical_owners,
+        "technical_owner_ids": _principal_ids(technical_owners, context)
+        if technical_owners is not None
+        else None,
+        "parent_tag_key": domain.parent_tag_key or None,
+    }
+
+
 def _domains_rows(state: ActualState, context: DumpContext) -> list[Row]:
-    rows: list[Row] = [
-        {
-            "config_file_path": context.config_paths.domain(domain.tag_key),
-            "tag_key": domain.tag_key,
-            "description": domain.description or None,
-            "subtitle": domain.subtitle,
-            "draft": domain.draft,
-            "icon_name": (domain.icon.name or None) if domain.icon else None,
-            "icon_color": (domain.icon.color or None) if domain.icon else None,
-            "business_owners": _sorted_identifiers(domain.business_owners),
-            "technical_owners": _sorted_identifiers(domain.technical_owners),
-            "parent_tag_key": domain.parent_tag_key or None,
-        }
-        for domain in state.domains
-    ]
+    rows = [_domain_row(domain, context) for domain in state.domains]
     return sorted(rows, key=lambda r: _sort_key(r["tag_key"]))
 
 
@@ -664,10 +699,23 @@ _POLICY_COLUMNS: tuple[ColumnSpec, ...] = (
         f"Principals the policy applies to, {_IDENTIFIER_NOTE}.",
     ),
     ColumnSpec(
+        "to_principal_ids",
+        "ARRAY<STRING>",
+        "Internal IDs of the principals in to_principals, in the same order (NULL where "
+        f"unknown); join to principals.principal_id. {_EXTENSION_NOTE}",
+    ),
+    ColumnSpec(
         "except_principals",
         "ARRAY<STRING>",
         f"Principals exempted from the policy, {_IDENTIFIER_NOTE}. NULL for grant "
         "policies.",
+    ),
+    ColumnSpec(
+        "except_principal_ids",
+        "ARRAY<STRING>",
+        "Internal IDs of the principals in except_principals, in the same order (NULL "
+        "where unknown); join to principals.principal_id. NULL for grant policies. "
+        f"{_EXTENSION_NOTE}",
     ),
     ColumnSpec(
         "for_securable_type",
@@ -747,6 +795,12 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 f"Owner of the securable, {_IDENTIFIER_NOTE}.",
             ),
             ColumnSpec(
+                "owner_id",
+                "STRING",
+                "Internal ID of the owner; joins to principals.principal_id. NULL when "
+                f"unknown. {_EXTENSION_NOTE}",
+            ),
+            ColumnSpec(
                 "comment",
                 "STRING",
                 "Comment on the securable. NULL when unset.",
@@ -816,6 +870,12 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 "grantee",
                 "STRING",
                 f"Principal holding the privilege, {_IDENTIFIER_NOTE}.",
+            ),
+            ColumnSpec(
+                "grantee_id",
+                "STRING",
+                "Internal ID of the grantee; joins to principals.principal_id. NULL when "
+                f"unknown. {_EXTENSION_NOTE}",
             ),
             ColumnSpec(
                 "grantee_type",
@@ -950,9 +1010,23 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 f"Business owners of the domain, {_IDENTIFIER_NOTE}.",
             ),
             ColumnSpec(
+                "business_owner_ids",
+                "ARRAY<STRING>",
+                "Internal IDs of the business owners, in the same order as "
+                f"business_owners (NULL where unknown); join to principals.principal_id. "
+                f"{_EXTENSION_NOTE}",
+            ),
+            ColumnSpec(
                 "technical_owners",
                 "ARRAY<STRING>",
                 f"Technical owners of the domain, {_IDENTIFIER_NOTE}.",
+            ),
+            ColumnSpec(
+                "technical_owner_ids",
+                "ARRAY<STRING>",
+                "Internal IDs of the technical owners, in the same order as "
+                f"technical_owners (NULL where unknown); join to principals.principal_id. "
+                f"{_EXTENSION_NOTE}",
             ),
             ColumnSpec(
                 "parent_tag_key",

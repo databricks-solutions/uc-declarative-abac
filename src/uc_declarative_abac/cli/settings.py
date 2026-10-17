@@ -71,6 +71,7 @@ _ENV_FIELD_MAP: dict[str, str] = {
     "force": "FORCE",
     "ref_override_strategy": "REF_OVERRIDE_STRATEGY",
     "max_parallel_changes": "MAX_PARALLEL_CHANGES",
+    "replace_tables": "REPLACE_TABLES",
 }
 
 
@@ -128,6 +129,7 @@ class RunSettings(BaseModel):
     force: bool = False
     ref_override_strategy: Literal["merge", "replace"] = "merge"
     max_parallel_changes: int = Field(default=8, ge=1)
+    replace_tables: bool = False
 
     @field_validator("timezone")
     @classmethod

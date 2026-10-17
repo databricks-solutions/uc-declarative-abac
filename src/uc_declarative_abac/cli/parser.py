@@ -617,14 +617,26 @@ def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
     _add_timezone(parser)
     _add_max_parallel_changes(
         parser,
-        "Maximum number of tables written concurrently [default: 8]. Set to 1 to "
-        "write tables sequentially.",
+        "Maximum number of SQL statements run concurrently while writing tables, "
+        "across all tables and their insert batches [default: 8]. Set to 1 to write "
+        "sequentially.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         default=argparse.SUPPRESS,
         help="Print the statements that would be executed without executing them.",
+    )
+    parser.add_argument(
+        "--replace-tables",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Recreate each table (CREATE OR REPLACE) before loading it, so new columns "
+            "land in spec order rather than at the end, at the cost of a brief window "
+            "where the table is empty. By default each table's rows are swapped in "
+            "atomically."
+        ),
     )
 
 

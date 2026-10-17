@@ -500,6 +500,7 @@ def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
         ref_override_strategy=settings.ref_override_strategy,
         max_parallel_tables=settings.max_parallel_changes,
         dry_run=dry_run,
+        replace_tables=settings.replace_tables,
     )
     return EXIT_SUCCESS
 

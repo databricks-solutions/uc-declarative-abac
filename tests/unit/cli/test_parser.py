@@ -430,6 +430,44 @@ def test_parser_accepts_timezone_for_dump_invocations(args):
     assert namespace.timezone == "Pacific/Kiritimati"
 
 
+def test_parser_dump_accepts_replace_tables_flag():
+    namespace = parse_cli_args(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--replace-tables",
+        ]
+    )
+    assert namespace.replace_tables is True
+
+
+def test_parser_dump_help_includes_replace_tables_flag(capsys):
+    output = _help_output(["dump", "--help"], capsys)
+    assert "--replace-tables" in output
+
+
+def test_parser_deploy_does_not_accept_replace_tables_flag(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(
+            [
+                "deploy",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--replace-tables",
+            ]
+        )
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "replace-tables" in error or "unrecognized arguments" in error
+
+
 def test_parser_accepts_securable_modification_scopes():
     namespace = parse_cli_args(
         [

@@ -1178,3 +1178,56 @@ def test_commands_dump_defaults_timezone_to_utc(monkeypatch, tmp_path: Path):
 
     assert exit_code == 0
     assert captured["timezone"] == "UTC"
+
+
+def test_commands_dump_passes_replace_tables_true(monkeypatch, tmp_path: Path):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--replace-tables",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["replace_tables"] is True
+
+
+def test_commands_dump_defaults_replace_tables_to_false(monkeypatch, tmp_path: Path):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["replace_tables"] is False

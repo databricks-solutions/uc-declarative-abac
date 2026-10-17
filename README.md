@@ -81,7 +81,7 @@ Global flags: `--version`, `--verbose`, `--quiet`, `--settings-file <path>`.
 uc-abac dump --config-dir ./configs --warehouse-id <warehouse-id> --target-schema main.uc_abac_state
 ```
 
-Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--timezone` (run date for grant-policy expiry, default UTC), `--max-parallel-changes` (tables written concurrently, default 8), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table, and each table and column carries a comment describing it. A table that fails to load part-way is left empty rather than partially filled, and the run exits non-zero.
+Flags: `--config-dir`, `--warehouse-id`, `--target-schema <catalog>.<schema>` (also `UC_ABAC_TARGET_SCHEMA` or `target_schema` in `uc_abac.yml`), plus the optional `--profile`, `--system-catalog`, `--timezone` (run date for grant-policy expiry, default UTC), `--max-parallel-changes` (SQL statements run concurrently while writing tables, default 8), `--replace-tables` (recreate each table before loading it; see below), and `--dry-run` (log what would be written without executing anything). The target schema is created (with a comment describing it) if it doesn't exist. Every run fully replaces each table's rows, and each table and column carries a comment describing it. Rows are loaded into a `_tmp_<table>` staging table first and then swapped into the table in one atomic step, so readers never see an empty or partly loaded table; a table that fails to load keeps its previous contents, and the run exits non-zero. When a new version adds columns to an existing table, they are appended at the end; column comments are kept up to date either way. A table that doesn't exist yet (e.g. on the first run) is created. An existing table that can't be updated in place (e.g. after an incompatible column type change) is recreated instead, with a warning. Pass `--replace-tables` to always recreate each table, so its columns are in spec order. A recreated table is briefly empty while it reloads, and is left empty if that reload fails.
 
 | Table | Contents | Based on |
 |---|---|---|
@@ -275,7 +275,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/deploy@v0.12.2
+      - uses: liamperritt/uc-declarative-abac/deploy@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
@@ -316,7 +316,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/validate@v0.12.2
+      - uses: liamperritt/uc-declarative-abac/validate@<tag>
         with:
           config-dir: configs/
 ```
@@ -336,7 +336,8 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` (see [Dumping 
 | `timezone` | no | `''` | IANA timezone for the run date that decides which grant policies have expired; omit to use UTC |
 | `profile` | no | `''` | Databricks CLI profile; omit to use unified auth via the step's `env` |
 | `dry-run` | no | `'false'` | Log the statements that would run without executing them |
-| `max-parallel-changes` | no | `'8'` | Maximum number of tables written concurrently |
+| `replace-tables` | no | `'false'` | Recreate each table before loading it, so its columns are in spec order (brief empty window), instead of swapping rows in atomically |
+| `max-parallel-changes` | no | `'8'` | Maximum number of SQL statements run concurrently while writing tables |
 
 **Example** (`.github/workflows/dump-uc-abac-state.yml`):
 
@@ -355,7 +356,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: liamperritt/uc-declarative-abac/dump@v0.11.6
+      - uses: liamperritt/uc-declarative-abac/dump@<tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}

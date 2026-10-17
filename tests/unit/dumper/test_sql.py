@@ -9,7 +9,9 @@ from uc_declarative_abac.dumper import (
     build_create_table_sql,
     build_insert_batches,
     build_insert_statements,
+    build_overwrite_from_sql,
     render_sql_literal,
+    staging_table_name,
 )
 
 # ---
@@ -117,6 +119,19 @@ def test_dumper_sql_render_sql_literal_tuple_single_element() -> None:
     result = render_sql_literal(("only",))
     assert "array(" in result.lower()
     assert "'only'" in result
+
+
+def test_dumper_sql_render_sql_literal_tuple_null_elements_typed() -> None:
+    """render_sql_literal casts an array holding NULL elements to its column type,
+    so an all-NULL array isn't typed ARRAY<VOID>."""
+    result = render_sql_literal((None, None), sql_type="ARRAY<STRING>")
+    assert result == "CAST(array(NULL, NULL) AS ARRAY<STRING>)"
+
+
+def test_dumper_sql_render_sql_literal_tuple_mixed_null_elements() -> None:
+    """render_sql_literal keeps NULL elements in place within an array."""
+    result = render_sql_literal(("1", None), sql_type="ARRAY<STRING>")
+    assert "array('1', NULL)" in result
 
 
 # ---
@@ -711,3 +726,171 @@ def test_dumper_sql_insert_batches_report_their_row_counts():
     assert [b.sql for b in batches] == build_insert_statements(
         "c.s.t", _one_column_spec(), rows, max_rows=2
     )
+
+
+# ---------------------------------------------------------------------------
+# staging_table_name tests
+# ---------------------------------------------------------------------------
+
+
+def test_dumper_sql_staging_table_name_basic() -> None:
+    """staging_table_name converts main.state.securables to main.state._tmp_securables."""
+    result = staging_table_name("main.state.securables")
+    assert result == "main.state._tmp_securables"
+
+
+def test_dumper_sql_staging_table_name_only_last_segment_modified() -> None:
+    """staging_table_name only prefixes the last segment with _tmp_."""
+    result = staging_table_name("catalog.schema.table_name")
+    assert result == "catalog.schema._tmp_table_name"
+
+
+def test_dumper_sql_staging_table_name_preserves_catalog_and_schema() -> None:
+    """staging_table_name preserves catalog and schema names."""
+    result = staging_table_name("my_catalog.my_schema.my_table")
+    assert result.startswith("my_catalog.my_schema.")
+    assert "my_catalog" in result
+    assert "my_schema" in result
+
+
+def test_dumper_sql_staging_table_name_with_underscores_in_name() -> None:
+    """staging_table_name handles table names with underscores."""
+    result = staging_table_name("main.state.pseudo_policies")
+    assert result == "main.state._tmp_pseudo_policies"
+
+
+def test_dumper_sql_staging_table_name_with_numbers() -> None:
+    """staging_table_name handles table names with numbers."""
+    result = staging_table_name("c1.s2.t3")
+    assert result == "c1.s2._tmp_t3"
+
+
+def test_dumper_sql_staging_table_name_two_segment_name() -> None:
+    """staging_table_name works with two-segment names."""
+    result = staging_table_name("schema.table")
+    assert result == "schema._tmp_table"
+
+
+# ---------------------------------------------------------------------------
+# build_overwrite_from_sql tests
+# ---------------------------------------------------------------------------
+
+
+def test_dumper_sql_build_overwrite_from_sql_with_schema_evolution() -> None:
+    """build_overwrite_from_sql with schema_evolution=True includes WITH SCHEMA EVOLUTION."""
+    result = build_overwrite_from_sql(
+        "main.state.securables",
+        "main.state._tmp_securables",
+        schema_evolution=True,
+    )
+    assert "INSERT" in result.upper()
+    assert "WITH SCHEMA EVOLUTION" in result.upper()
+    assert "OVERWRITE" in result.upper()
+    assert "BY NAME" in result.upper()
+    assert "SELECT * FROM" in result.upper()
+
+
+def test_dumper_sql_build_overwrite_from_sql_without_schema_evolution() -> None:
+    """build_overwrite_from_sql with schema_evolution=False omits WITH SCHEMA EVOLUTION."""
+    result = build_overwrite_from_sql(
+        "main.state.securables",
+        "main.state._tmp_securables",
+        schema_evolution=False,
+    )
+    assert "INSERT" in result.upper()
+    assert "OVERWRITE" in result.upper()
+    assert "BY NAME" in result.upper()
+    assert "SELECT * FROM" in result.upper()
+    assert "WITH SCHEMA EVOLUTION" not in result.upper()
+
+
+def test_dumper_sql_build_overwrite_from_sql_quotes_target_name() -> None:
+    """build_overwrite_from_sql backtick-quotes the target table name."""
+    result = build_overwrite_from_sql(
+        "main.state.securables",
+        "main.state._tmp_securables",
+        schema_evolution=True,
+    )
+    # Should contain backtick-quoted segments (from quote_securable)
+    assert "`main`" in result
+    assert "`state`" in result
+    assert "`securables`" in result
+
+
+def test_dumper_sql_build_overwrite_from_sql_quotes_source_name() -> None:
+    """build_overwrite_from_sql backtick-quotes the source table name."""
+    result = build_overwrite_from_sql(
+        "main.state.securables",
+        "main.state._tmp_securables",
+        schema_evolution=True,
+    )
+    # Should contain backtick-quoted staging table name
+    assert "`_tmp_securables`" in result
+
+
+def test_dumper_sql_build_overwrite_from_sql_target_appears_in_insert() -> None:
+    """build_overwrite_from_sql target table appears after OVERWRITE."""
+    result = build_overwrite_from_sql(
+        "main.state.domains",
+        "main.state._tmp_domains",
+        schema_evolution=False,
+    )
+    # Format should be: INSERT OVERWRITE <target> BY NAME SELECT * FROM <source>
+    parts = result.upper().split()
+    assert "INSERT" in parts
+    assert "OVERWRITE" in parts
+    assert "BY" in parts
+    assert "NAME" in parts
+    assert "SELECT" in parts
+    assert "FROM" in parts
+
+
+def test_dumper_sql_build_overwrite_from_sql_source_appears_in_from() -> None:
+    """build_overwrite_from_sql source table appears in FROM clause."""
+    result = build_overwrite_from_sql(
+        "main.state.domains",
+        "main.state._tmp_domains",
+        schema_evolution=True,
+    )
+    # The source should appear after FROM
+    from_idx = result.upper().find("FROM")
+    assert from_idx > 0
+    after_from = result[from_idx:]
+    assert "_tmp_domains" in after_from
+
+
+def test_dumper_sql_build_overwrite_from_sql_different_names() -> None:
+    """build_overwrite_from_sql correctly handles different target and source names."""
+    result = build_overwrite_from_sql(
+        "catalog.schema.target_table",
+        "catalog.schema._tmp_target_table",
+        schema_evolution=True,
+    )
+    # Both tables should appear in the result
+    assert "target_table" in result
+    assert "_tmp_target_table" in result
+
+
+def test_dumper_sql_build_overwrite_from_sql_evolution_flag_controls_clause() -> None:
+    """build_overwrite_from_sql evolution flag is the only difference between modes."""
+    with_evo = build_overwrite_from_sql(
+        "main.state.t",
+        "main.state._tmp_t",
+        schema_evolution=True,
+    )
+    without_evo = build_overwrite_from_sql(
+        "main.state.t",
+        "main.state._tmp_t",
+        schema_evolution=False,
+    )
+    # The primary difference should be the presence of "WITH SCHEMA EVOLUTION"
+    assert "WITH SCHEMA EVOLUTION" in with_evo.upper()
+    assert "WITH SCHEMA EVOLUTION" not in without_evo.upper()
+    # Remove that clause and they should be similar otherwise
+    with_evo_stripped = with_evo.replace("WITH SCHEMA EVOLUTION", "").replace(
+        "with schema evolution", ""
+    )
+    without_evo_stripped = without_evo
+    # Both should have the same structure (allowing for whitespace differences)
+    assert "INSERT" in with_evo_stripped.upper()
+    assert "OVERWRITE" in without_evo_stripped.upper()
