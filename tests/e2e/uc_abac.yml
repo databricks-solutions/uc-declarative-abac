@@ -1,8 +1,0 @@
-config_dir: ./configs
-tag_management_scopes: '*'
-privilege_management_scopes: '*'
-securable_modification_scopes: '*'
-policy_deletion_scopes: '*'
-governed_tag_deletion_scopes: 'uc_gov_*'
-profile: field-eng-east
-timezone: Australia/Melbourne

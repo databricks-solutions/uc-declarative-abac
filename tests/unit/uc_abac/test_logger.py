@@ -898,7 +898,7 @@ def test_logger_securable_replace_without_old_state_falls_back_to_bare_message()
 
 
 def _make_logger_policy(**overrides) -> Policy:
-    """Factory matching tests/unit/policies/test_differ.py: principals are
+    """Factory matching tests/unit/uc_abac/policies/test_differ.py: principals are
     `Principal` instances so `_format_principal_delta` can read `.name`."""
     analysts = Principal(PrincipalType.GROUP, identifier="analysts", name="analysts")
     base = {
