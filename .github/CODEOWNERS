@@ -1,1 +1,9 @@
-* @liamperritt
+# Require approval from repo admins for shared files
+* @liamperritt @PremRajendran @bryn-baritompa-db
+
+# Require approval from @liamperritt for uc_abac package changes
+src/uc_abac/        @liamperritt
+tests/*/uc_abac/    @liamperritt
+deploy/             @liamperritt
+dump/               @liamperritt
+validate/           @liamperritt
