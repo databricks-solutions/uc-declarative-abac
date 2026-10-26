@@ -7,8 +7,8 @@ pinned, hash-verified third-party code:
 - every external action is pinned to a full commit SHA (including in documented examples);
 - every ``setup-uv`` step installs one exact, identical uv version;
 - the workflow's token is read-only and never persisted into the checkout;
-- pull requests run on GitHub-hosted runners against public PyPI, leaving the protected
-  runner group and the internal PyPI proxy to pushes of reviewed code to main;
+- fork pull requests run on GitHub-hosted runners against public PyPI; everything else
+  runs on the hardened protected runner group against the internal PyPI proxy;
 - only pushes to main save the uv cache;
 - the composite actions install only hash-verified packages and never build the project
   with an unpinned, isolated build backend;
@@ -41,9 +41,16 @@ _EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _DOCS_USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
 _ASDF_UV_INSTALL = re.compile(r"^asdf install uv (\S+)$")
 _PUBLIC_PYPI_URL = re.compile(r"https://(pypi\.org|files\.pythonhosted\.org)/")
-_PULL_REQUEST_ROUTING = re.compile(
-    r"^\$\{\{ github\.event_name == 'pull_request' && '([^']+)' \|\| (.+) \}\}$"
+_FORK_ROUTING = re.compile(
+    r"^\$\{\{ github\.event_name == 'pull_request'"
+    r" && github\.event\.pull_request\.head\.repo\.full_name != github\.repository"
+    r" && '([^']+)' \|\| (.+) \}\}$"
 )
+_PROTECTED_RUNNER = (
+    'fromJSON(\'{"group":"databricks-solutions-protected-runner-group",'
+    '"labels":"linux-ubuntu-latest"}\')'
+)
+_INTERNAL_PYPI_PROXY = "'https://pypi-proxy.cloud.databricks.com/simple/'"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -102,33 +109,69 @@ def test_ci_workflow_grants_read_only_token_permissions():
     assert _load_yaml(_CI_WORKFLOW)["permissions"] == {"contents": "read"}
 
 
-def _pull_request_choice(expression: str) -> str | None:
-    """Return the value ``expression`` picks for pull requests, or None if it doesn't match."""
-    match = _PULL_REQUEST_ROUTING.match(expression)
-    return match.group(1) if match else None
+def _fork_routing(expression: str) -> tuple[str, str] | None:
+    """Return the (fork PR, everything else) choices of ``expression``, or None if unrouted."""
+    match = _FORK_ROUTING.match(expression)
+    return (match.group(1), match.group(2)) if match else None
 
 
-def test_ci_workflow_runs_every_pull_request_on_github_hosted_runners():
+def _job_routings(field: str) -> dict[str, tuple[str, str] | None]:
+    """Return each CI job's fork routing for ``runs-on`` or an ``env`` variable."""
     jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
+    return {
+        name: _fork_routing(
+            job["runs-on"] if field == "runs-on" else job.get("env", {}).get(field, "")
+        )
+        for name, job in jobs.items()
+    }
+
+
+def test_ci_workflow_runs_fork_pull_requests_on_github_hosted_runners():
+    routings = _job_routings("runs-on")
     offenders = [
         name
-        for name, job in jobs.items()
-        if _pull_request_choice(job["runs-on"]) != "ubuntu-latest"
+        for name, routing in routings.items()
+        if not routing or routing[0] != "ubuntu-latest"
     ]
     assert not offenders, (
-        f"Jobs that do not route every PR to ubuntu-latest: {offenders}"
+        f"Jobs that do not route fork PRs to ubuntu-latest: {offenders}"
     )
 
 
-def test_ci_workflow_installs_from_public_pypi_for_every_pull_request():
-    jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
+def test_ci_workflow_runs_everything_else_on_the_protected_runner_group():
+    routings = _job_routings("runs-on")
     offenders = [
         name
-        for name, job in jobs.items()
-        if _pull_request_choice(job.get("env", {}).get("UV_DEFAULT_INDEX", ""))
-        != "https://pypi.org/simple"
+        for name, routing in routings.items()
+        if not routing or routing[1] != _PROTECTED_RUNNER
     ]
-    assert not offenders, f"Jobs that do not install PRs from public PyPI: {offenders}"
+    assert not offenders, (
+        f"Jobs that do not run non-fork events on the protected runner group: {offenders}"
+    )
+
+
+def test_ci_workflow_installs_fork_pull_requests_from_public_pypi():
+    routings = _job_routings("UV_DEFAULT_INDEX")
+    offenders = [
+        name
+        for name, routing in routings.items()
+        if not routing or routing[0] != "https://pypi.org/simple"
+    ]
+    assert not offenders, (
+        f"Jobs that do not install fork PRs from public PyPI: {offenders}"
+    )
+
+
+def test_ci_workflow_installs_everything_else_from_the_internal_pypi_proxy():
+    routings = _job_routings("UV_DEFAULT_INDEX")
+    offenders = [
+        name
+        for name, routing in routings.items()
+        if not routing or routing[1] != _INTERNAL_PYPI_PROXY
+    ]
+    assert not offenders, (
+        f"Jobs that do not install non-fork events from the internal proxy: {offenders}"
+    )
 
 
 def test_ci_workflow_saves_the_uv_cache_only_on_push():
