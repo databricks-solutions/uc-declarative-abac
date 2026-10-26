@@ -7,10 +7,14 @@ pinned, hash-verified third-party code:
 - every external action is pinned to a full commit SHA (including in documented examples);
 - every ``setup-uv`` step installs one exact, identical uv version;
 - the workflow's token is read-only and never persisted into the checkout;
-- fork pull requests run on GitHub-hosted runners rather than the protected runner group;
+- pull requests run on GitHub-hosted runners against public PyPI, leaving the protected
+  runner group and the internal PyPI proxy to pushes of reviewed code to main;
+- only pushes to main save the uv cache;
 - the composite actions install only hash-verified packages and never build the project
   with an unpinned, isolated build backend;
-- Dependabot watches every directory that holds actions;
+- Dependabot watches every directory that holds actions, checks monthly, proposes only
+  versions released at least a month ago, and opens no uv updates;
+- uv.lock resolves only from the internal PyPI proxy (Dependabot would rewrite it to PyPI);
 - Read the Docs installs the same pinned uv as CI and only hash-verified packages.
 
 The checks parse the YAML files directly; nothing is executed.
@@ -28,12 +32,18 @@ _DEPENDABOT_CONFIG = _REPO_ROOT / ".github" / "dependabot.yml"
 _COMPOSITE_ACTIONS = sorted(_REPO_ROOT.glob("*/action.yml"))
 _ACTIONS_DOCS = _REPO_ROOT / "docs" / "deploying" / "github-actions.md"
 _READTHEDOCS_CONFIG = _REPO_ROOT / ".readthedocs.yaml"
+_UV_LOCK = _REPO_ROOT / "uv.lock"
+_MIN_RELEASE_AGE_DAYS = 30
 
 _SHA_PINNED_REF = re.compile(r"@[0-9a-f]{40}$")
 _PLACEHOLDER_REF = re.compile(r"@<[^>]+>$")
 _EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _DOCS_USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
 _ASDF_UV_INSTALL = re.compile(r"^asdf install uv (\S+)$")
+_PUBLIC_PYPI_URL = re.compile(r"https://(pypi\.org|files\.pythonhosted\.org)/")
+_PULL_REQUEST_ROUTING = re.compile(
+    r"^\$\{\{ github\.event_name == 'pull_request' && '([^']+)' \|\| (.+) \}\}$"
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -92,20 +102,43 @@ def test_ci_workflow_grants_read_only_token_permissions():
     assert _load_yaml(_CI_WORKFLOW)["permissions"] == {"contents": "read"}
 
 
-def test_ci_workflow_runs_fork_pull_requests_on_github_hosted_runners():
+def _pull_request_choice(expression: str) -> str | None:
+    """Return the value ``expression`` picks for pull requests, or None if it doesn't match."""
+    match = _PULL_REQUEST_ROUTING.match(expression)
+    return match.group(1) if match else None
+
+
+def test_ci_workflow_runs_every_pull_request_on_github_hosted_runners():
     jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
     offenders = [
         name
         for name, job in jobs.items()
-        if not (
-            isinstance(job["runs-on"], str)
-            and "head.repo.full_name" in job["runs-on"]
-            and "ubuntu-latest" in job["runs-on"]
-        )
+        if _pull_request_choice(job["runs-on"]) != "ubuntu-latest"
     ]
     assert not offenders, (
-        f"Jobs that do not route fork PRs to ubuntu-latest: {offenders}"
+        f"Jobs that do not route every PR to ubuntu-latest: {offenders}"
     )
+
+
+def test_ci_workflow_installs_from_public_pypi_for_every_pull_request():
+    jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
+    offenders = [
+        name
+        for name, job in jobs.items()
+        if _pull_request_choice(job.get("env", {}).get("UV_DEFAULT_INDEX", ""))
+        != "https://pypi.org/simple"
+    ]
+    assert not offenders, f"Jobs that do not install PRs from public PyPI: {offenders}"
+
+
+def test_ci_workflow_saves_the_uv_cache_only_on_push():
+    offenders = [
+        step["uses"]
+        for step in _steps_using(_workflow_steps(), "astral-sh/setup-uv")
+        if step.get("with", {}).get("save-cache")
+        != "${{ github.event_name == 'push' }}"
+    ]
+    assert not offenders, f"setup-uv steps that save the cache from PRs: {offenders}"
 
 
 def test_github_actions_checkout_steps_do_not_persist_credentials():
@@ -168,6 +201,38 @@ def test_dependabot_config_covers_every_action_directory():
     }
     expected = {"/"} | {f"/{path.parent.name}" for path in _COMPOSITE_ACTIONS}
     assert expected <= covered
+
+
+def test_dependabot_config_checks_for_updates_monthly():
+    updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
+    assert all(update["schedule"]["interval"] == "monthly" for update in updates)
+
+
+def test_dependabot_config_proposes_only_versions_released_a_month_ago():
+    updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
+    assert all(
+        int(update["cooldown"]["default-days"]) >= _MIN_RELEASE_AGE_DAYS
+        for update in updates
+    )
+
+
+def test_dependabot_config_opens_no_uv_updates():
+    updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
+    assert all(update["package-ecosystem"] != "uv" for update in updates)
+
+
+# ---
+# uv lock
+# ---
+
+
+def test_uv_lock_resolves_only_from_the_internal_pypi_proxy():
+    lines = _UV_LOCK.read_text(encoding="utf-8").splitlines()
+    offenders = [n for n, line in enumerate(lines, 1) if _PUBLIC_PYPI_URL.search(line)]
+    assert not offenders, (
+        "uv.lock has public PyPI URLs; re-run `uv lock` on VPN to restore the internal "
+        f"proxy URLs (lines {offenders[:5]})"
+    )
 
 
 # ---
