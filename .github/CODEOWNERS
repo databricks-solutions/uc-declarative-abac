@@ -1,13 +1,11 @@
-# Require approval from repo admins for shared files
+# Require approval from repo admins by default
 *                       @liamperritt @PremRajendran @bryn-baritompa-db
+
+# Require approval from repo admins for security-sensitive files
 .github/                @liamperritt @PremRajendran @bryn-baritompa-db
 pyproject.toml          @liamperritt @PremRajendran @bryn-baritompa-db
 uv.lock                 @liamperritt @PremRajendran @bryn-baritompa-db
 .readthedocs.yaml       @liamperritt @PremRajendran @bryn-baritompa-db
-
-# Require approval from @liamperritt for uc_abac package changes
-src/uc_abac/        @liamperritt
-tests/*/uc_abac/    @liamperritt
-deploy/             @liamperritt
-dump/               @liamperritt
-validate/           @liamperritt
+deploy/                 @liamperritt @PremRajendran @bryn-baritompa-db
+dump/                   @liamperritt @PremRajendran @bryn-baritompa-db
+validate/               @liamperritt @PremRajendran @bryn-baritompa-db
