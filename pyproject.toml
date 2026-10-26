@@ -39,6 +39,11 @@ docs = [
     "sphinx-copybutton>=0.5",
 ]
 
+[dependency-groups]
+build = [
+    "hatchling",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 pythonpath = ["src"]

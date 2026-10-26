@@ -6,7 +6,7 @@
 
 The repo ships a composite GitHub Action at `deploy/action.yml` so any repository that stores its governance YAML in Git can reconcile Unity Catalog on every push, pull request, or schedule without installing the package or scripting a Python run. Reference it as `databricks-solutions/uc-declarative-abac/deploy@<ref>` (where `<ref>` is a tag, branch, or commit SHA).
 
-Pinning to an immutable ref (for example, a commit SHA or a signed tag) is recommended over `@main`.
+Pin to a full commit SHA, with the release tag in a trailing comment, rather than a tag or `@main`.
 
 ### Core inputs
 
@@ -225,8 +225,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: databricks-solutions/uc-declarative-abac/deploy@<tag>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: databricks-solutions/uc-declarative-abac/deploy@<commit-sha>  # <tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
@@ -281,8 +283,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: databricks-solutions/uc-declarative-abac/validate@<tag>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: databricks-solutions/uc-declarative-abac/validate@<commit-sha>  # <tag>
         with:
           config-dir: configs/
 ```
@@ -357,8 +361,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: databricks-solutions/uc-declarative-abac/dump@<tag>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: databricks-solutions/uc-declarative-abac/dump@<commit-sha>  # <tag>
         with:
           config-dir: configs/
           warehouse-id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}

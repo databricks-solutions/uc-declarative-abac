@@ -36,6 +36,12 @@ uv sync --extra docs
 
 Open `docs/_build/html/index.html` in your browser to preview.
 
+Read the Docs installs from the hash-pinned `docs/requirements.txt`. After changing the `docs` extra (or relocking), regenerate it; CI fails if it drifts from `uv.lock`:
+
+```bash
+uv export --frozen --no-emit-project --no-header --extra docs --format requirements.txt --output-file docs/requirements.txt
+```
+
 ## Documentation rules
 
 - **Customer-facing only.** Document observable behaviour and configuration, not engine
