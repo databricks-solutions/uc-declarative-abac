@@ -9,53 +9,55 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --frozen --extra dev
 
       - name: Lint
-        run: ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Format check
-        run: ruff format --check src tests
+        run: uv run ruff format --check src tests
 
       - name: Unit tests
-        run: pytest tests/unit -q
+        run: uv run pytest tests/unit -q
 
       - name: Validate example project
-        run: uc-abac validate --config-dir examples/finance_demo/configs
+        run: uv run uc-abac validate --config-dir examples/finance_demo/configs
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           python-version: "3.12"
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[docs]"
+        run: uv sync --frozen --extra docs
 
       - name: Build docs
-        run: sphinx-build -W --keep-going -n -b html docs docs/_build/html
+        run: uv run sphinx-build -W --keep-going -n -b html docs docs/_build/html
 
       - name: Check links
         continue-on-error: true
-        run: sphinx-build -b linkcheck docs docs/_build/linkcheck
+        run: uv run sphinx-build -b linkcheck docs docs/_build/linkcheck
