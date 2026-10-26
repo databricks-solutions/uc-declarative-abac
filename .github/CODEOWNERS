@@ -1,11 +1,11 @@
 # Require approval from repo admins by default
-*   @liamperritt @PremRajendran @bryn-baritompa-db
+* @liamperritt @PremRajendran @bryn-baritompa-db
 
 # Require approval from repo admins for security-sensitive files
-.github/                @liamperritt @PremRajendran @bryn-baritompa-db
-pyproject.toml          @liamperritt @PremRajendran @bryn-baritompa-db
-uv.lock                 @liamperritt @PremRajendran @bryn-baritompa-db
-.readthedocs.yaml       @liamperritt @PremRajendran @bryn-baritompa-db
-deploy/                 @liamperritt @PremRajendran @bryn-baritompa-db
-dump/                   @liamperritt @PremRajendran @bryn-baritompa-db
-validate/               @liamperritt @PremRajendran @bryn-baritompa-db
+.github/            @liamperritt @PremRajendran @bryn-baritompa-db
+pyproject.toml      @liamperritt @PremRajendran @bryn-baritompa-db
+uv.lock             @liamperritt @PremRajendran @bryn-baritompa-db
+.readthedocs.yaml   @liamperritt @PremRajendran @bryn-baritompa-db
+deploy/             @liamperritt @PremRajendran @bryn-baritompa-db
+dump/               @liamperritt @PremRajendran @bryn-baritompa-db
+validate/           @liamperritt @PremRajendran @bryn-baritompa-db
