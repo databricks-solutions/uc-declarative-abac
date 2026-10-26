@@ -1,4 +1,4 @@
-"""Supply chain guardrails for the repo's GitHub Actions workflow and composite actions.
+"""Supply chain guardrails for the repo's CI: GitHub Actions and the Read the Docs build.
 
 The CI workflow runs pull requests from public forks, and the composite actions run inside
 consumers' deploy jobs alongside their Databricks credentials, so both must only execute
@@ -10,7 +10,8 @@ pinned, hash-verified third-party code:
 - fork pull requests run on GitHub-hosted runners rather than the protected runner group;
 - the composite actions install only hash-verified packages and never build the project
   with an unpinned, isolated build backend;
-- Dependabot watches every directory that holds actions.
+- Dependabot watches every directory that holds actions;
+- Read the Docs installs the same pinned uv as CI and only hash-verified packages.
 
 The checks parse the YAML files directly; nothing is executed.
 """
@@ -26,11 +27,13 @@ _CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 _DEPENDABOT_CONFIG = _REPO_ROOT / ".github" / "dependabot.yml"
 _COMPOSITE_ACTIONS = sorted(_REPO_ROOT.glob("*/action.yml"))
 _ACTIONS_DOCS = _REPO_ROOT / "docs" / "deploying" / "github-actions.md"
+_READTHEDOCS_CONFIG = _REPO_ROOT / ".readthedocs.yaml"
 
 _SHA_PINNED_REF = re.compile(r"@[0-9a-f]{40}$")
 _PLACEHOLDER_REF = re.compile(r"@<[^>]+>$")
 _EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _DOCS_USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
+_ASDF_UV_INSTALL = re.compile(r"^asdf install uv (\S+)$")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -165,3 +168,35 @@ def test_dependabot_config_covers_every_action_directory():
     }
     expected = {"/"} | {f"/{path.parent.name}" for path in _COMPOSITE_ACTIONS}
     assert expected <= covered
+
+
+# ---
+# read the docs config
+# ---
+
+
+def _readthedocs_commands() -> list[str]:
+    """Return every command of every Read the Docs build job."""
+    jobs = _load_yaml(_READTHEDOCS_CONFIG)["build"]["jobs"]
+    return [command for commands in jobs.values() for command in commands]
+
+
+def test_readthedocs_config_installs_the_same_uv_version_as_ci():
+    setup_uv_steps = _steps_using(_workflow_steps(), "astral-sh/setup-uv")
+    ci_versions = {step["with"]["version"] for step in setup_uv_steps}
+    rtd_versions = {
+        match.group(1)
+        for command in _readthedocs_commands()
+        if (match := _ASDF_UV_INSTALL.match(command))
+    }
+    assert rtd_versions == ci_versions
+
+
+def test_readthedocs_config_installs_only_hash_verified_packages():
+    config = _load_yaml(_READTHEDOCS_CONFIG)
+    installs = [
+        command for command in _readthedocs_commands() if "pip install" in command
+    ]
+    assert "install" not in config.get("python", {})
+    assert installs
+    assert all("--require-hashes" in command for command in installs)

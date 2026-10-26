@@ -42,12 +42,6 @@ Run the test suite before and after your change:
   uv sync --extra docs
   .venv/bin/sphinx-build -W --keep-going -n -b html docs docs/_build/html
   ```
-
-  Read the Docs installs from the hash-pinned `docs/requirements.txt`, so after changing the `docs` extra (or relocking), regenerate it; CI fails if it drifts from `uv.lock`:
-
-  ```bash
-  uv export --frozen --no-emit-project --no-header --extra docs --format requirements.txt --output-file docs/requirements.txt
-  ```
 - **Describe your change** clearly in the PR description: what changed, why, and how you verified it.
 
 **ProTip:** It's frustrating to have a contribution pushed back over a process nobody told you about. If you hit such a case, please open an issue so we can document it here and lower the barrier for the next person.

@@ -1,13 +1,19 @@
 version: 2
 
+# Docs dependencies are installed from uv.lock with hash verification. The export emits no index
+# URL, so Read the Docs resolves from public PyPI against the locked hashes.
 build:
   os: ubuntu-24.04
   tools:
     python: "3.12"
-
-python:
-  install:
-    - requirements: docs/requirements.txt
+  jobs:
+    pre_create_environment:
+      - asdf plugin add uv
+      - asdf install uv 0.12.17
+      - asdf global uv 0.12.17
+    install:
+      - uv export --frozen --no-emit-project --extra docs --format requirements.txt --output-file /tmp/docs-requirements.txt
+      - uv pip install --python "${READTHEDOCS_VIRTUALENV_PATH}/bin/python" --require-hashes -r /tmp/docs-requirements.txt
 
 sphinx:
   configuration: docs/conf.py
