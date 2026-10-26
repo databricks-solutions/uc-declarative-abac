@@ -1,5 +1,5 @@
 # Require approval from repo admins by default
-*                       @liamperritt @PremRajendran @bryn-baritompa-db
+*   @liamperritt @PremRajendran @bryn-baritompa-db
 
 # Require approval from repo admins for security-sensitive files
 .github/                @liamperritt @PremRajendran @bryn-baritompa-db
