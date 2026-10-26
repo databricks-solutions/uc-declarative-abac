@@ -358,6 +358,7 @@ runs:
     - name: Install uv
       uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       with:
+        version: "0.12.17"
         python-version: '3.13'
         enable-cache: true
         cache-dependency-glob: ${{ github.action_path }}/../uv.lock
@@ -370,11 +371,11 @@ runs:
         project="${ACTION_PATH}/.."
         venv="${RUNNER_TEMP}/uc-abac-venv"
         reqs="${RUNNER_TEMP}/uc-abac-requirements.txt"
-        uv export --frozen --no-dev --no-emit-project --format requirements.txt \
+        uv export --frozen --no-dev --group build --no-emit-project --format requirements.txt \
           --output-file "${reqs}" --project "${project}"
         uv venv --python 3.13 "${venv}"
         uv pip install --python "${venv}/bin/python" --require-hashes -r "${reqs}"
-        uv pip install --python "${venv}/bin/python" --no-deps "${project}"
+        uv pip install --python "${venv}/bin/python" --no-deps --no-build-isolation "${project}"
         echo "${venv}/bin" >> "${GITHUB_PATH}"
 
     - name: Run uc-abac

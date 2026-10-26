@@ -7,41 +7,59 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# Pull requests from forks run on GitHub-hosted runners and install from public PyPI; everything
+# else runs on the protected runner group and installs via the internal PyPI proxy. Installs are
+# hash-verified against uv.lock either way, so both indexes must serve identical artifacts.
 jobs:
   test:
-    runs-on:
-      group: databricks-solutions-protected-runner-group
-      labels: linux-ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    env:
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
+          version: "0.12.17"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          reqs="${RUNNER_TEMP}/requirements.txt"
+          uv export --quiet --frozen --no-emit-project --extra dev --format requirements.txt \
+            --output-file "${reqs}"
+          uv venv --python "${PYTHON_VERSION}"
+          uv pip install --require-hashes -r "${reqs}"
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run --no-sync ruff check src tests
 
       - name: Format check
-        run: uv run ruff format --check src tests
+        run: uv run --no-sync ruff format --check src tests
 
       - name: Unit tests
-        run: uv run pytest tests/unit -q
+        run: uv run --no-sync pytest tests/unit -q
 
   validate-examples:
-    runs-on:
-      group: databricks-solutions-protected-runner-group
-      labels: linux-ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    env:
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Validate Finance Demo example project
         uses: ./validate
@@ -49,24 +67,32 @@ jobs:
           config-dir: examples/finance_demo/configs
 
   docs:
-    runs-on:
-      group: databricks-solutions-protected-runner-group
-      labels: linux-ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    env:
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
+          version: "0.12.17"
           python-version: "3.12"
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --extra docs
+        run: |
+          reqs="${RUNNER_TEMP}/requirements.txt"
+          uv export --quiet --frozen --no-emit-project --extra docs --format requirements.txt \
+            --output-file "${reqs}"
+          uv venv --python 3.12
+          uv pip install --require-hashes -r "${reqs}"
 
       - name: Build docs
-        run: uv run sphinx-build -W --keep-going -n -b html docs docs/_build/html
+        run: uv run --no-sync sphinx-build -W --keep-going -n -b html docs docs/_build/html
 
       - name: Check links
         continue-on-error: true
-        run: uv run sphinx-build -b linkcheck docs docs/_build/linkcheck
+        run: uv run --no-sync sphinx-build -b linkcheck docs docs/_build/linkcheck
