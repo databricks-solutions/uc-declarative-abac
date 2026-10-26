@@ -355,18 +355,27 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       with:
         python-version: '3.13'
+        enable-cache: true
+        cache-dependency-glob: ${{ github.action_path }}/../uv.lock
 
     - name: Install uc-declarative-abac
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install "$ACTION_PATH/.."
+        project="${ACTION_PATH}/.."
+        venv="${RUNNER_TEMP}/uc-abac-venv"
+        reqs="${RUNNER_TEMP}/uc-abac-requirements.txt"
+        uv export --frozen --no-dev --no-emit-project --format requirements.txt \
+          --output-file "${reqs}" --project "${project}"
+        uv venv --python 3.13 "${venv}"
+        uv pip install --python "${venv}/bin/python" --require-hashes -r "${reqs}"
+        uv pip install --python "${venv}/bin/python" --no-deps "${project}"
+        echo "${venv}/bin" >> "${GITHUB_PATH}"
 
     - name: Run uc-abac
       shell: bash
@@ -422,139 +431,139 @@ runs:
       run: |
         args=(
           "deploy"
-          --config-dir "$CONFIG_DIR"
-          --warehouse-id "$WAREHOUSE_ID"
-          --system-catalog "$SYSTEM_CATALOG"
+          --config-dir "${CONFIG_DIR}"
+          --warehouse-id "${WAREHOUSE_ID}"
+          --system-catalog "${SYSTEM_CATALOG}"
         )
-        if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "${DRY_RUN}" == "true" ]]; then
           args+=(--dry-run)
         fi
-        if [[ -n "$TIMEZONE" ]]; then
-          args+=(--timezone "$TIMEZONE")
+        if [[ -n "${TIMEZONE}" ]]; then
+          args+=(--timezone "${TIMEZONE}")
         fi
-        if [[ -n "$PROFILE" ]]; then
-          args+=(--profile "$PROFILE")
+        if [[ -n "${PROFILE}" ]]; then
+          args+=(--profile "${PROFILE}")
         fi
-        if [[ "$USE_WORKSPACE_SCIM" == "true" ]]; then
+        if [[ "${USE_WORKSPACE_SCIM}" == "true" ]]; then
           args+=(--use-workspace-scim)
         fi
-        if [[ "$ENABLE_TAG_MANAGEMENT" == "true" ]]; then
+        if [[ "${ENABLE_TAG_MANAGEMENT}" == "true" ]]; then
           args+=(--enable-tag-management)
         fi
-        if [[ "$ENABLE_PRIVILEGE_MANAGEMENT" == "true" ]]; then
+        if [[ "${ENABLE_PRIVILEGE_MANAGEMENT}" == "true" ]]; then
           args+=(--enable-privilege-management)
         fi
-        if [[ "$ENABLE_TAGGABLE_MANAGEMENT" == "true" ]]; then
+        if [[ "${ENABLE_TAGGABLE_MANAGEMENT}" == "true" ]]; then
           args+=(--enable-taggable-management)
         fi
-        if [[ "$ENABLE_TAGGABLE_CREATION" == "true" ]]; then
+        if [[ "${ENABLE_TAGGABLE_CREATION}" == "true" ]]; then
           args+=(--enable-taggable-creation)
         fi
-        if [[ -n "$MANAGE_TAGS_FOR_NAMESPACES" ]]; then
-          args+=(--manage-tags-for-namespaces "$MANAGE_TAGS_FOR_NAMESPACES")
+        if [[ -n "${MANAGE_TAGS_FOR_NAMESPACES}" ]]; then
+          args+=(--manage-tags-for-namespaces "${MANAGE_TAGS_FOR_NAMESPACES}")
         fi
-        if [[ -n "$MANAGE_PRIVILEGES_FOR_NAMESPACES" ]]; then
-          args+=(--manage-privileges-for-namespaces "$MANAGE_PRIVILEGES_FOR_NAMESPACES")
+        if [[ -n "${MANAGE_PRIVILEGES_FOR_NAMESPACES}" ]]; then
+          args+=(--manage-privileges-for-namespaces "${MANAGE_PRIVILEGES_FOR_NAMESPACES}")
         fi
-        if [[ -n "$MANAGE_TAGGABLES_FOR_NAMESPACES" ]]; then
-          args+=(--manage-taggables-for-namespaces "$MANAGE_TAGGABLES_FOR_NAMESPACES")
+        if [[ -n "${MANAGE_TAGGABLES_FOR_NAMESPACES}" ]]; then
+          args+=(--manage-taggables-for-namespaces "${MANAGE_TAGGABLES_FOR_NAMESPACES}")
         fi
-        if [[ -n "$CREATE_TAGGABLES_FOR_NAMESPACES" ]]; then
-          args+=(--create-taggables-for-namespaces "$CREATE_TAGGABLES_FOR_NAMESPACES")
+        if [[ -n "${CREATE_TAGGABLES_FOR_NAMESPACES}" ]]; then
+          args+=(--create-taggables-for-namespaces "${CREATE_TAGGABLES_FOR_NAMESPACES}")
         fi
-        if [[ -n "$DELETE_POLICIES_FOR_NAMESPACES" ]]; then
-          args+=(--delete-policies-for-namespaces "$DELETE_POLICIES_FOR_NAMESPACES")
+        if [[ -n "${DELETE_POLICIES_FOR_NAMESPACES}" ]]; then
+          args+=(--delete-policies-for-namespaces "${DELETE_POLICIES_FOR_NAMESPACES}")
         fi
-        if [[ -n "$MANAGE_TAGS_FOR_CATALOGS" ]]; then
-          args+=(--manage-tags-for-catalogs "$MANAGE_TAGS_FOR_CATALOGS")
+        if [[ -n "${MANAGE_TAGS_FOR_CATALOGS}" ]]; then
+          args+=(--manage-tags-for-catalogs "${MANAGE_TAGS_FOR_CATALOGS}")
         fi
-        if [[ -n "$MANAGE_PRIVILEGES_FOR_CATALOGS" ]]; then
-          args+=(--manage-privileges-for-catalogs "$MANAGE_PRIVILEGES_FOR_CATALOGS")
+        if [[ -n "${MANAGE_PRIVILEGES_FOR_CATALOGS}" ]]; then
+          args+=(--manage-privileges-for-catalogs "${MANAGE_PRIVILEGES_FOR_CATALOGS}")
         fi
-        if [[ -n "$MANAGE_TAGGABLES_FOR_CATALOGS" ]]; then
-          args+=(--manage-taggables-for-catalogs "$MANAGE_TAGGABLES_FOR_CATALOGS")
+        if [[ -n "${MANAGE_TAGGABLES_FOR_CATALOGS}" ]]; then
+          args+=(--manage-taggables-for-catalogs "${MANAGE_TAGGABLES_FOR_CATALOGS}")
         fi
-        if [[ -n "$CREATE_TAGGABLES_FOR_CATALOGS" ]]; then
-          args+=(--create-taggables-for-catalogs "$CREATE_TAGGABLES_FOR_CATALOGS")
+        if [[ -n "${CREATE_TAGGABLES_FOR_CATALOGS}" ]]; then
+          args+=(--create-taggables-for-catalogs "${CREATE_TAGGABLES_FOR_CATALOGS}")
         fi
-        if [[ -n "$TAG_MANAGEMENT_SCOPES" ]]; then
-          args+=(--tag-management-scopes "$TAG_MANAGEMENT_SCOPES")
+        if [[ -n "${TAG_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--tag-management-scopes "${TAG_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$TAG_ASSIGNMENT_SCOPES" ]]; then
-          args+=(--tag-assignment-scopes "$TAG_ASSIGNMENT_SCOPES")
+        if [[ -n "${TAG_ASSIGNMENT_SCOPES}" ]]; then
+          args+=(--tag-assignment-scopes "${TAG_ASSIGNMENT_SCOPES}")
         fi
-        if [[ -n "$PRIVILEGE_MANAGEMENT_SCOPES" ]]; then
-          args+=(--privilege-management-scopes "$PRIVILEGE_MANAGEMENT_SCOPES")
+        if [[ -n "${PRIVILEGE_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--privilege-management-scopes "${PRIVILEGE_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$SECURABLE_MODIFICATION_SCOPES" ]]; then
-          args+=(--securable-modification-scopes "$SECURABLE_MODIFICATION_SCOPES")
+        if [[ -n "${SECURABLE_MODIFICATION_SCOPES}" ]]; then
+          args+=(--securable-modification-scopes "${SECURABLE_MODIFICATION_SCOPES}")
         fi
-        if [[ -n "$SECURABLE_MANAGEMENT_SCOPES" ]]; then
-          args+=(--securable-management-scopes "$SECURABLE_MANAGEMENT_SCOPES")
+        if [[ -n "${SECURABLE_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--securable-management-scopes "${SECURABLE_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$SECURABLE_CREATION_SCOPES" ]]; then
-          args+=(--securable-creation-scopes "$SECURABLE_CREATION_SCOPES")
+        if [[ -n "${SECURABLE_CREATION_SCOPES}" ]]; then
+          args+=(--securable-creation-scopes "${SECURABLE_CREATION_SCOPES}")
         fi
-        if [[ -n "$TAGGABLE_MANAGEMENT_SCOPES" ]]; then
-          args+=(--taggable-management-scopes "$TAGGABLE_MANAGEMENT_SCOPES")
+        if [[ -n "${TAGGABLE_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--taggable-management-scopes "${TAGGABLE_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$TAGGABLE_CREATION_SCOPES" ]]; then
-          args+=(--taggable-creation-scopes "$TAGGABLE_CREATION_SCOPES")
+        if [[ -n "${TAGGABLE_CREATION_SCOPES}" ]]; then
+          args+=(--taggable-creation-scopes "${TAGGABLE_CREATION_SCOPES}")
         fi
-        if [[ -n "$POLICY_DELETION_SCOPES" ]]; then
-          args+=(--policy-deletion-scopes "$POLICY_DELETION_SCOPES")
+        if [[ -n "${POLICY_DELETION_SCOPES}" ]]; then
+          args+=(--policy-deletion-scopes "${POLICY_DELETION_SCOPES}")
         fi
-        if [[ -n "$GROUP_CREATION_SCOPES" ]]; then
-          args+=(--group-creation-scopes "$GROUP_CREATION_SCOPES")
+        if [[ -n "${GROUP_CREATION_SCOPES}" ]]; then
+          args+=(--group-creation-scopes "${GROUP_CREATION_SCOPES}")
         fi
-        if [[ -n "$GROUP_MODIFICATION_SCOPES" ]]; then
-          args+=(--group-modification-scopes "$GROUP_MODIFICATION_SCOPES")
+        if [[ -n "${GROUP_MODIFICATION_SCOPES}" ]]; then
+          args+=(--group-modification-scopes "${GROUP_MODIFICATION_SCOPES}")
         fi
-        if [[ -n "$GROUP_MANAGEMENT_SCOPES" ]]; then
-          args+=(--group-management-scopes "$GROUP_MANAGEMENT_SCOPES")
+        if [[ -n "${GROUP_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--group-management-scopes "${GROUP_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$GROUP_DELETION_SCOPES" ]]; then
-          args+=(--group-deletion-scopes "$GROUP_DELETION_SCOPES")
+        if [[ -n "${GROUP_DELETION_SCOPES}" ]]; then
+          args+=(--group-deletion-scopes "${GROUP_DELETION_SCOPES}")
         fi
-        if [[ -n "$GOVERNED_TAG_DELETION_SCOPES" ]]; then
-          args+=(--governed-tag-deletion-scopes "$GOVERNED_TAG_DELETION_SCOPES")
+        if [[ -n "${GOVERNED_TAG_DELETION_SCOPES}" ]]; then
+          args+=(--governed-tag-deletion-scopes "${GOVERNED_TAG_DELETION_SCOPES}")
         fi
-        if [[ -n "$DOMAIN_CREATION_SCOPES" ]]; then
-          args+=(--domain-creation-scopes "$DOMAIN_CREATION_SCOPES")
+        if [[ -n "${DOMAIN_CREATION_SCOPES}" ]]; then
+          args+=(--domain-creation-scopes "${DOMAIN_CREATION_SCOPES}")
         fi
-        if [[ -n "$DOMAIN_MODIFICATION_SCOPES" ]]; then
-          args+=(--domain-modification-scopes "$DOMAIN_MODIFICATION_SCOPES")
+        if [[ -n "${DOMAIN_MODIFICATION_SCOPES}" ]]; then
+          args+=(--domain-modification-scopes "${DOMAIN_MODIFICATION_SCOPES}")
         fi
-        if [[ -n "$DOMAIN_MANAGEMENT_SCOPES" ]]; then
-          args+=(--domain-management-scopes "$DOMAIN_MANAGEMENT_SCOPES")
+        if [[ -n "${DOMAIN_MANAGEMENT_SCOPES}" ]]; then
+          args+=(--domain-management-scopes "${DOMAIN_MANAGEMENT_SCOPES}")
         fi
-        if [[ -n "$DOMAIN_DELETION_SCOPES" ]]; then
-          args+=(--domain-deletion-scopes "$DOMAIN_DELETION_SCOPES")
+        if [[ -n "${DOMAIN_DELETION_SCOPES}" ]]; then
+          args+=(--domain-deletion-scopes "${DOMAIN_DELETION_SCOPES}")
         fi
-        args+=(--retain-tag-prefixes "$RETAIN_TAG_PREFIXES")
-        if [[ "$ENABLE_GOVERNED_TAG_DELETION" == "true" ]]; then
+        args+=(--retain-tag-prefixes "${RETAIN_TAG_PREFIXES}")
+        if [[ "${ENABLE_GOVERNED_TAG_DELETION}" == "true" ]]; then
           args+=(--enable-governed-tag-deletion)
         fi
-        if [[ "$ENABLE_POLICY_DELETION" == "true" ]]; then
+        if [[ "${ENABLE_POLICY_DELETION}" == "true" ]]; then
           args+=(--enable-policy-deletion)
         fi
-        if [[ "$SKIP_USERS_FETCH" == "true" ]]; then
+        if [[ "${SKIP_USERS_FETCH}" == "true" ]]; then
           args+=(--skip-users-fetch)
         fi
-        if [[ "$ENABLE_GROUP_CREATION" == "true" ]]; then
+        if [[ "${ENABLE_GROUP_CREATION}" == "true" ]]; then
           args+=(--enable-group-creation)
         fi
-        if [[ "$ENABLE_GROUP_MANAGEMENT" == "true" ]]; then
+        if [[ "${ENABLE_GROUP_MANAGEMENT}" == "true" ]]; then
           args+=(--enable-group-management)
         fi
-        if [[ "$ENABLE_GROUP_DELETION" == "true" ]]; then
+        if [[ "${ENABLE_GROUP_DELETION}" == "true" ]]; then
           args+=(--enable-group-deletion)
         fi
-        if [[ -n "$IGNORE_UNRESOLVABLE_PRINCIPALS" ]]; then
-          args+=(--ignore-unresolvable-principals "$IGNORE_UNRESOLVABLE_PRINCIPALS")
+        if [[ -n "${IGNORE_UNRESOLVABLE_PRINCIPALS}" ]]; then
+          args+=(--ignore-unresolvable-principals "${IGNORE_UNRESOLVABLE_PRINCIPALS}")
         fi
-        if [[ "$FORCE" == "true" ]]; then
+        if [[ "${FORCE}" == "true" ]]; then
           args+=(--force)
         fi
-        args+=(--max-parallel-changes "$MAX_PARALLEL_CHANGES")
+        args+=(--max-parallel-changes "${MAX_PARALLEL_CHANGES}")
         uc-abac "${args[@]}"
