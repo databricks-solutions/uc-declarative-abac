@@ -10,15 +10,15 @@ on:
 permissions:
   contents: read
 
-# All pull requests (forks, same-repo branches and Dependabot) run on GitHub-hosted runners and
-# install from public PyPI; only pushes to main run on the protected runner group and install via
-# the internal PyPI proxy. Installs are hash-verified against uv.lock either way, so both indexes
-# must serve identical artifacts. Only main writes the uv cache.
+# Pull requests from forks run on GitHub-hosted runners and install from public PyPI; everything
+# else runs on the protected runner group and installs via the internal PyPI proxy. Installs are
+# hash-verified against uv.lock either way, so both indexes must serve identical artifacts. Only
+# pushes to main write the uv cache.
 jobs:
   test:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
     env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -55,9 +55,9 @@ jobs:
         run: uv run --no-sync pytest tests/unit -q
 
   validate-examples:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
     env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -69,9 +69,9 @@ jobs:
           config-dir: examples/finance_demo/configs
 
   docs:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
     env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
