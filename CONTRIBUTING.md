@@ -59,11 +59,11 @@ When in doubt, match the style of the surrounding code.
 
 ## Updating dependencies (maintainers)
 
-`uv.lock` is locked against the internal Databricks PyPI proxy, and every install in CI and the GitHub Actions is hash-verified against it. Dependabot cannot reach the proxy, so it does not open `uv` update PRs; it only raises Dependabot alerts (enable email notifications for them) for vulnerable Python packages.
+Every install in CI, the GitHub Actions, and Read the Docs is exported from `uv.lock` with no index URL and hash-verified against it, so packages can come from public PyPI or the internal Databricks PyPI proxy interchangeably.
 
-- **Upgrade on VPN.** Run `uv lock --upgrade-package <package>` (or `uv lock --upgrade` for a sweep), then run the tests and open a PR as usual.
-- **Keep the proxy URLs.** CI fails if `uv.lock` contains `pypi.org` or `files.pythonhosted.org` URLs. If a PR (for example from an external contributor) changes the lock against public PyPI, re-run `uv lock` on VPN to restore the proxy URLs; the hashes do not change.
-- **Let new releases settle.** Only adopt versions that have been public for at least a month, unless the upgrade fixes a vulnerability. Dependabot applies the same rule to GitHub Actions updates.
+- **Dependabot opens monthly `uv` PRs.** Updates are grouped into one PR and resolved against public PyPI.
+- **Keep internal URLs out of the lock.** CI fails if `uv.lock` contains any `databricks.com` URL. Locking against the internal proxy (for example `uv lock` on a laptop configured for it) writes proxy URLs, so lock against public PyPI instead, or let Dependabot make the upgrade.
+- **Let new releases settle.** Only adopt versions that have been public for at least a week, unless the upgrade fixes a vulnerability. Dependabot applies the same rule to GitHub Actions and `uv` updates.
 
 ## Code of Conduct
 
