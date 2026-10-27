@@ -19,8 +19,8 @@ updates:
     schedule:
       interval: monthly
     # Only propose versions that have been public for at least a week.
-    # cooldown:
-    #   default-days: 7
+    cooldown:
+      default-days: 7
     groups:
       python:
         patterns: ["*"]
