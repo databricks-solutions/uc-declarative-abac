@@ -7,15 +7,15 @@ pinned, hash-verified third-party code:
 - every external action is pinned to a full commit SHA (including in documented examples);
 - every ``setup-uv`` step installs one exact, identical uv version;
 - the workflow's token is read-only and never persisted into the checkout;
-- fork pull requests run on GitHub-hosted runners against public PyPI; everything else
-  runs on the hardened protected runner group against the internal PyPI proxy;
+- every job runs on GitHub-hosted runners and installs from the default (public) index;
+- CI installs only the locked packages, straight from uv.lock;
 - only pushes to main save the uv cache;
 - the composite actions install only hash-verified packages and never build the project
   with an unpinned, isolated build backend;
-- Dependabot watches every directory that holds actions, checks monthly, proposes only
-  versions released at least a month ago, and opens no uv updates;
-- uv.lock resolves only from the internal PyPI proxy (Dependabot would rewrite it to PyPI);
-- Read the Docs installs the same pinned uv as CI and only hash-verified packages.
+- Dependabot watches every directory that holds actions and the uv dependencies, checks
+  monthly, and proposes only versions released at least a week ago;
+- uv.lock resolves from no internal Databricks index, so it is installable from anywhere;
+- Read the Docs installs the same pinned uv as CI and only the locked packages.
 
 The checks parse the YAML files directly; nothing is executed.
 """
@@ -33,24 +33,21 @@ _COMPOSITE_ACTIONS = sorted(_REPO_ROOT.glob("*/action.yml"))
 _ACTIONS_DOCS = _REPO_ROOT / "docs" / "deploying" / "github-actions.md"
 _READTHEDOCS_CONFIG = _REPO_ROOT / ".readthedocs.yaml"
 _UV_LOCK = _REPO_ROOT / "uv.lock"
-_MIN_RELEASE_AGE_DAYS = 30
+_MIN_RELEASE_AGE_DAYS = 7
 
 _SHA_PINNED_REF = re.compile(r"@[0-9a-f]{40}$")
 _PLACEHOLDER_REF = re.compile(r"@<[^>]+>$")
 _EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _DOCS_USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
 _ASDF_UV_INSTALL = re.compile(r"^asdf install uv (\S+)$")
-_PUBLIC_PYPI_URL = re.compile(r"https://(pypi\.org|files\.pythonhosted\.org)/")
-_FORK_ROUTING = re.compile(
-    r"^\$\{\{ github\.event_name == 'pull_request'"
-    r" && github\.event\.pull_request\.head\.repo\.full_name != github\.repository"
-    r" && '([^']+)' \|\| (.+) \}\}$"
-)
-_PROTECTED_RUNNER = (
-    'fromJSON(\'{"group":"databricks-solutions-protected-runner-group",'
-    '"labels":"linux-ubuntu-latest"}\')'
-)
-_INTERNAL_PYPI_PROXY = "'https://pypi-proxy.cloud.databricks.com/simple/'"
+_DATABRICKS_URL = re.compile(r"https?://[^\s\"/]*databricks\.com\b")
+
+_INDEX_OVERRIDES = {
+    "UV_DEFAULT_INDEX",
+    "UV_INDEX_URL",
+    "UV_INDEX",
+    "UV_EXTRA_INDEX_URL",
+}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -78,9 +75,9 @@ def _steps_using(steps: list[dict[str, Any]], action: str) -> list[dict[str, Any
     return [step for step in steps if step.get("uses", "").startswith(f"{action}@")]
 
 
-def _composite_run_lines() -> list[str]:
-    """Return every logical shell line of every composite action ``run`` block."""
-    scripts = [step["run"] for step in _composite_steps() if "run" in step]
+def _run_lines(steps: list[dict[str, Any]]) -> list[str]:
+    """Return every logical shell line of every ``run`` block in ``steps``."""
+    scripts = [step["run"] for step in steps if "run" in step]
     return [
         line.strip()
         for script in scripts
@@ -109,69 +106,29 @@ def test_ci_workflow_grants_read_only_token_permissions():
     assert _load_yaml(_CI_WORKFLOW)["permissions"] == {"contents": "read"}
 
 
-def _fork_routing(expression: str) -> tuple[str, str] | None:
-    """Return the (fork PR, everything else) choices of ``expression``, or None if unrouted."""
-    match = _FORK_ROUTING.match(expression)
-    return (match.group(1), match.group(2)) if match else None
-
-
-def _job_routings(field: str) -> dict[str, tuple[str, str] | None]:
-    """Return each CI job's fork routing for ``runs-on`` or an ``env`` variable."""
+def test_ci_workflow_runs_every_job_on_github_hosted_runners():
     jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
-    return {
-        name: _fork_routing(
-            job["runs-on"] if field == "runs-on" else job.get("env", {}).get(field, "")
-        )
-        for name, job in jobs.items()
-    }
-
-
-def test_ci_workflow_runs_fork_pull_requests_on_github_hosted_runners():
-    routings = _job_routings("runs-on")
     offenders = [
-        name
-        for name, routing in routings.items()
-        if not routing or routing[0] != "ubuntu-latest"
+        name for name, job in jobs.items() if job["runs-on"] != "ubuntu-latest"
     ]
-    assert not offenders, (
-        f"Jobs that do not route fork PRs to ubuntu-latest: {offenders}"
-    )
+    assert not offenders, f"Jobs that do not run on ubuntu-latest: {offenders}"
 
 
-def test_ci_workflow_runs_everything_else_on_the_protected_runner_group():
-    routings = _job_routings("runs-on")
-    offenders = [
-        name
-        for name, routing in routings.items()
-        if not routing or routing[1] != _PROTECTED_RUNNER
+def test_ci_workflow_installs_from_the_default_index():
+    jobs = _load_yaml(_CI_WORKFLOW)["jobs"]
+    envs = [job.get("env", {}) for job in jobs.values()] + [
+        step.get("env", {}) for step in _workflow_steps()
     ]
-    assert not offenders, (
-        f"Jobs that do not run non-fork events on the protected runner group: {offenders}"
-    )
+    overrides = {name for env in envs for name in env if name in _INDEX_OVERRIDES}
+    assert not overrides, f"CI overrides the package index with: {overrides}"
 
 
-def test_ci_workflow_installs_fork_pull_requests_from_public_pypi():
-    routings = _job_routings("UV_DEFAULT_INDEX")
-    offenders = [
-        name
-        for name, routing in routings.items()
-        if not routing or routing[0] != "https://pypi.org/simple"
-    ]
-    assert not offenders, (
-        f"Jobs that do not install fork PRs from public PyPI: {offenders}"
-    )
-
-
-def test_ci_workflow_installs_everything_else_from_the_internal_pypi_proxy():
-    routings = _job_routings("UV_DEFAULT_INDEX")
-    offenders = [
-        name
-        for name, routing in routings.items()
-        if not routing or routing[1] != _INTERNAL_PYPI_PROXY
-    ]
-    assert not offenders, (
-        f"Jobs that do not install non-fork events from the internal proxy: {offenders}"
-    )
+def test_ci_workflow_installs_only_locked_packages():
+    lines = _run_lines(_workflow_steps())
+    syncs = [line for line in lines if line.startswith("uv sync")]
+    assert syncs
+    assert all("--frozen" in line for line in syncs)
+    assert not [line for line in lines if "uv export" in line or "pip install" in line]
 
 
 def test_ci_workflow_saves_the_uv_cache_only_on_push():
@@ -216,7 +173,9 @@ def test_github_actions_external_actions_are_sha_pinned():
 
 def test_composite_actions_install_only_hash_verified_packages():
     installs = [
-        line for line in _composite_run_lines() if line.startswith("uv pip install")
+        line
+        for line in _run_lines(_composite_steps())
+        if line.startswith("uv pip install")
     ]
     requirement_installs = [line for line in installs if " -r " in line]
     project_installs = [line for line in installs if " -r " not in line]
@@ -251,7 +210,7 @@ def test_dependabot_config_checks_for_updates_monthly():
     assert all(update["schedule"]["interval"] == "monthly" for update in updates)
 
 
-def test_dependabot_config_proposes_only_versions_released_a_month_ago():
+def test_dependabot_config_proposes_only_versions_released_a_week_ago():
     updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
     assert all(
         int(update["cooldown"]["default-days"]) >= _MIN_RELEASE_AGE_DAYS
@@ -259,9 +218,12 @@ def test_dependabot_config_proposes_only_versions_released_a_month_ago():
     )
 
 
-def test_dependabot_config_opens_no_uv_updates():
+def test_dependabot_config_covers_uv_dependencies():
     updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
-    assert all(update["package-ecosystem"] != "uv" for update in updates)
+    assert any(
+        update["package-ecosystem"] == "uv" and update.get("directory") == "/"
+        for update in updates
+    )
 
 
 # ---
@@ -269,12 +231,12 @@ def test_dependabot_config_opens_no_uv_updates():
 # ---
 
 
-def test_uv_lock_resolves_only_from_the_internal_pypi_proxy():
+def test_uv_lock_resolves_from_no_internal_databricks_index():
     lines = _UV_LOCK.read_text(encoding="utf-8").splitlines()
-    offenders = [n for n, line in enumerate(lines, 1) if _PUBLIC_PYPI_URL.search(line)]
+    offenders = [n for n, line in enumerate(lines, 1) if _DATABRICKS_URL.search(line)]
     assert not offenders, (
-        "uv.lock has public PyPI URLs; re-run `uv lock` on VPN to restore the internal "
-        f"proxy URLs (lines {offenders[:5]})"
+        "uv.lock has internal Databricks index URLs; re-lock against public PyPI "
+        f"(lines {offenders[:5]})"
     )
 
 
@@ -300,11 +262,15 @@ def test_readthedocs_config_installs_the_same_uv_version_as_ci():
     assert rtd_versions == ci_versions
 
 
-def test_readthedocs_config_installs_only_hash_verified_packages():
+def test_readthedocs_config_installs_only_locked_packages():
     config = _load_yaml(_READTHEDOCS_CONFIG)
-    installs = [
-        command for command in _readthedocs_commands() if "pip install" in command
-    ]
+    commands = _readthedocs_commands()
+    syncs = [command for command in commands if "uv sync" in command]
     assert "install" not in config.get("python", {})
-    assert installs
-    assert all("--require-hashes" in command for command in installs)
+    assert syncs
+    assert all("--frozen" in command for command in syncs)
+    assert not [
+        command
+        for command in commands
+        if "uv export" in command or "pip install" in command
+    ]

@@ -10,15 +10,11 @@ on:
 permissions:
   contents: read
 
-# Pull requests from forks run on GitHub-hosted runners and install from public PyPI; everything
-# else runs on the protected runner group and installs via the internal PyPI proxy. Installs are
-# hash-verified against uv.lock either way, so both indexes must serve identical artifacts. Only
-# pushes to main write the uv cache.
+# Every job runs on GitHub-hosted runners and installs from public PyPI, hash-verified against
+# uv.lock. Only pushes to main write the uv cache.
 jobs:
   test:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
-    env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -36,14 +32,7 @@ jobs:
           save-cache: ${{ github.event_name == 'push' }}
 
       - name: Install dependencies
-        env:
-          PYTHON_VERSION: ${{ matrix.python-version }}
-        run: |
-          reqs="${RUNNER_TEMP}/requirements.txt"
-          uv export --quiet --frozen --no-emit-project --extra dev --format requirements.txt \
-            --output-file "${reqs}"
-          uv venv --python "${PYTHON_VERSION}"
-          uv pip install --require-hashes -r "${reqs}"
+        run: uv sync --frozen --no-install-project --extra dev
 
       - name: Lint
         run: uv run --no-sync ruff check src tests
@@ -55,9 +44,7 @@ jobs:
         run: uv run --no-sync pytest tests/unit -q
 
   validate-examples:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
-    env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -69,9 +56,7 @@ jobs:
           config-dir: examples/finance_demo/configs
 
   docs:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('{"group":"databricks-solutions-protected-runner-group","labels":"linux-ubuntu-latest"}') }}
-    env:
-      UV_DEFAULT_INDEX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'https://pypi.org/simple' || 'https://pypi-proxy.cloud.databricks.com/simple/' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -86,12 +71,7 @@ jobs:
           save-cache: ${{ github.event_name == 'push' }}
 
       - name: Install dependencies
-        run: |
-          reqs="${RUNNER_TEMP}/requirements.txt"
-          uv export --quiet --frozen --no-emit-project --extra docs --format requirements.txt \
-            --output-file "${reqs}"
-          uv venv --python 3.12
-          uv pip install --require-hashes -r "${reqs}"
+        run: uv sync --frozen --no-install-project --extra docs
 
       - name: Build docs
         run: uv run --no-sync sphinx-build -W --keep-going -n -b html docs docs/_build/html
