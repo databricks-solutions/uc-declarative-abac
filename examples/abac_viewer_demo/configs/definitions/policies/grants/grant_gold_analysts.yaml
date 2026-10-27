@@ -1,0 +1,18 @@
+# Catalog-level grant policy: gold-zone securables are readable by the parent
+# analysts group (subgroups inherit). Matches sales.customers and sales.orders
+# (table-level abac_demo_zone=gold tags); the use privileges cascade upward
+# (USE_SCHEMA on sales, USE_CATALOG on abac_viz_demo). No `for:` — the use
+# abstraction is rejected when pinned to tables (validation quirk, see NOTES).
+definitions:
+  policies:
+    grants|grant_gold_analysts:
+      name: grant_gold_analysts
+      comment: Analysts read gold-zone datasets
+      type: grant
+      has_tags:
+        abac_demo_zone: gold
+      privileges:
+        - use
+        - read
+      to:
+        - abac_demo_analysts

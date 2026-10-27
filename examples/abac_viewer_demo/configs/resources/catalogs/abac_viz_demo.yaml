@@ -1,0 +1,4 @@
+resources:
+  catalogs:
+    abac_viz_demo:
+      $ref: $defs/catalogs/abac_viz_demo

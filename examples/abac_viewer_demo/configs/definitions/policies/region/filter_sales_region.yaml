@@ -1,0 +1,28 @@
+# Schema-level row filter (attached to abac_viz_demo.sales): tables with a column
+# tagged abac_demo_filter_col only show rows whose region matches the caller's
+# regional analyst subgroup. Members of only the PARENT abac_demo_analysts group
+# (e.g. abac_demo_sp_lead_1) match neither branch and see zero rows.
+# abac_demo_data_platform is excepted and sees every region.
+definitions:
+  policies:
+    region|filter_sales_region:
+      name: filter_sales_region
+      comment: Regional analysts see only their region's rows in sales tables
+      type: filter
+      columns:
+        - alias: region
+          has_tags:
+            abac_demo_filter_col: '*'
+      function:
+        name: fn_filter_region
+        comment: Row predicate matching the caller's regional analyst subgroup
+        parameters:
+          - name: region
+            type: string
+        return: >-
+          (is_account_group_member('abac_demo_analysts_emea') AND region = 'EMEA')
+          OR (is_account_group_member('abac_demo_analysts_amer') AND region = 'AMER')
+      to:
+        - account users
+      except:
+        - abac_demo_data_platform

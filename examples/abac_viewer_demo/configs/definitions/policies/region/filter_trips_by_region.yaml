@@ -1,0 +1,40 @@
+# Schema-level row filter for high-sensitivity trips. A row is visible when
+# either endpoint belongs to one of the caller's regional analyst groups.
+# Data-platform members are excepted so the demo can also explain a
+# targeted-but-not-applied filter policy.
+definitions:
+  policies:
+    region|filter_trips_by_region:
+      name: filter_trips_by_region
+      comment: Users can only see high sensitivity trips to or from their region
+      type: filter
+      has_tags:
+        abac_demo_trips: '*'
+        abac_demo_sensitivity: high
+      columns:
+        - alias: from_region
+          has_tags:
+            abac_demo_from_region: '*'
+        - alias: to_region
+          has_tags:
+            abac_demo_to_region: '*'
+      function:
+        name: fn_filter_trips_by_region
+        comment: Show a trip when either endpoint matches the caller's region
+        parameters:
+          - name: from_region
+            type: string
+          - name: to_region
+            type: string
+        return: |-
+          (
+            (from_region = 'EMEA' AND is_account_group_member('abac_demo_analysts_emea'))
+            OR (from_region = 'AMER' AND is_account_group_member('abac_demo_analysts_amer'))
+          ) OR (
+            (to_region = 'EMEA' AND is_account_group_member('abac_demo_analysts_emea'))
+            OR (to_region = 'AMER' AND is_account_group_member('abac_demo_analysts_amer'))
+          )
+      to:
+        - account users
+      except:
+        - abac_demo_data_platform

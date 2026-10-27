@@ -1,0 +1,24 @@
+# Catalog-level mask: any column tagged abac_demo_pii (name/email/phone/address)
+# is replaced by a constant for everyone except the data platform group.
+# Constant mask (not a partial one), so masked values are easy to recognise.
+definitions:
+  policies:
+    pii|mask_pii_contact:
+      name: mask_pii_contact
+      comment: Mask contact PII columns for all but abac_demo_data_platform
+      type: mask
+      columns:
+        - alias: pii
+          has_tags:
+            abac_demo_pii: '*'
+      function:
+        name: fn_mask_contact
+        comment: Constant-masks a contact PII string
+        parameters:
+          - name: pii
+            type: string
+        return: "'***MASKED***'"
+      to:
+        - account users
+      except:
+        - abac_demo_data_platform

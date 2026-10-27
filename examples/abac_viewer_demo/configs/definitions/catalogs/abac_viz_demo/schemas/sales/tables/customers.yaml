@@ -1,0 +1,29 @@
+definitions:
+  tables:
+    abac_viz_demo|sales|customers:
+      name: customers
+      comment: Customer master with contact PII and a region filter column
+      tags:
+        abac_demo_sensitivity: confidential
+        abac_demo_zone: gold
+      columns:
+        - name: customer_id
+          type: long
+        - name: full_name
+          type: string
+          tags:
+            abac_demo_pii: name
+        - name: email
+          type: string
+          tags:
+            abac_demo_pii: email
+        - name: phone
+          type: string
+          tags:
+            abac_demo_pii: phone
+        - name: region
+          type: string
+          tags:
+            abac_demo_filter_col: region
+        - name: segment
+          type: string

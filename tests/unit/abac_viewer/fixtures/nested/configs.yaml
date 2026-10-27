@@ -1,0 +1,108 @@
+# Synthetic test fixture: nested groups, mixed policies, tag variety.
+# Exercises: subgroup closure, tag-driven grants (wildcard + exact), catalog-
+# and schema-level policies, mask with except, filter, tagless direct grant.
+resources:
+  governed_tags:
+    pii:
+      allowed_values: [email, phone, name]
+    zone:
+      allowed_values: [bronze, silver, gold]
+    team:
+      allowed_values: [sales, hr]
+
+  groups:
+    analysts:
+      members: [analysts_emea, analysts_apac]
+    analysts_emea:
+      members: [sp_alice, sp_bob]
+    analysts_apac:
+      members: [sp_carol]
+    data_platform:
+      members: [engineers, sp_dave]
+    engineers:
+      members: [sp_erin]
+    auditors:
+      members: [sp_frank]
+
+  catalogs:
+    acme:
+      schemas:
+        - name: sales
+          tags: {team: sales}
+          tables:
+            - name: orders
+              tags: {zone: gold}
+              columns:
+                - name: order_id
+                  type: LONG
+                - name: customer_email
+                  type: STRING
+                  tags: {pii: email}
+                - name: amount
+                  type: DECIMAL(10,2)
+            - name: leads
+              tags: {zone: bronze}
+              columns:
+                - name: lead_id
+                  type: LONG
+                - name: contact_phone
+                  type: STRING
+                  tags: {pii: phone}
+        - name: hr
+          tags: {team: hr}
+          tables:
+            - name: employees
+              tags: {zone: gold}
+              columns:
+                - name: emp_id
+                  type: LONG
+                - name: full_name
+                  type: STRING
+                  tags: {pii: name}
+      policies:
+        # catalog-level, tag-driven grant: any gold table readable by analysts
+        - name: grant_gold_read
+          type: grant
+          has_tags: {zone: gold}
+          privileges: [use, select]
+          to: [analysts]
+        # catalog-level mask on any pii-tagged column, auditors exempt
+        - name: mask_pii
+          type: mask
+          has_tags: {zone: '*'}
+          function:
+            name: fn_mask
+            return: "'***'"
+          column:
+            alias: pii_col
+            has_tags: {pii: '*'}
+          except: [auditors]
+
+  policies:
+    # schema-level filter on gold sales tables for analysts (not platform)
+    filter_gold_rows:
+      name: filter_gold_rows
+      type: filter
+      catalog_name: acme
+      schema_name: sales
+      has_tags: {zone: gold}
+      function:
+        name: fn_region_filter
+        return: "true"
+      to: [analysts]
+    # tagless direct grant on the sales schema itself
+    grant_platform_schema:
+      name: grant_platform_schema
+      type: grant
+      catalog_name: acme
+      schema_name: sales
+      privileges: [use, select]
+      to: [data_platform]
+    # catalog-level traverse for the platform team (a schema-attached policy
+    # cannot reach up to grant use_catalog — mirrors the tool's scope rule)
+    grant_platform_traverse:
+      name: grant_platform_traverse
+      type: grant
+      catalog_name: acme
+      privileges: [use_catalog]
+      to: [data_platform]

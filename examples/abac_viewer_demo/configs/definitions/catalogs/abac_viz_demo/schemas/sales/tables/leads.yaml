@@ -1,0 +1,25 @@
+definitions:
+  tables:
+    abac_viz_demo|sales|leads:
+      name: leads
+      comment: Raw inbound leads — bronze zone, platform-only (analysts get gold only)
+      tags:
+        abac_demo_sensitivity: internal
+        abac_demo_zone: bronze
+      columns:
+        - name: lead_id
+          type: long
+        - name: contact_name
+          type: string
+          tags:
+            abac_demo_pii: name
+        - name: contact_email
+          type: string
+          tags:
+            abac_demo_pii: email
+        - name: region
+          type: string
+          tags:
+            abac_demo_filter_col: region
+        - name: source
+          type: string

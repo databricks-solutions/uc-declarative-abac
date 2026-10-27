@@ -1,0 +1,29 @@
+# A grant policy restricted with `for: tables` on a scope where the schema itself
+# also carries the matched tag: only the tables may receive the grant.
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [gold]
+
+  catalogs:
+    acme:
+      schemas:
+        - name: sales
+          tags: {zone: gold}
+          tables:
+            - name: orders
+              tags: {zone: gold}
+              columns:
+                - name: order_id
+                  type: LONG
+            - name: leads
+              columns:
+                - name: lead_id
+                  type: LONG
+      policies:
+        - name: grant_gold_tables
+          type: grant
+          has_tags: {zone: gold}
+          privileges: [select]
+          for: tables
+          to: [sp_reader]

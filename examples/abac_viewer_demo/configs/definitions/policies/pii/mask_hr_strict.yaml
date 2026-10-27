@@ -1,0 +1,23 @@
+# Schema-level mask (attached to abac_viz_demo.hr): ssn/dob columns tagged
+# abac_demo_pii_strict are fully redacted outside HR admins.
+definitions:
+  policies:
+    pii|mask_hr_strict:
+      name: mask_hr_strict
+      comment: Redact strict PII (ssn, dob) outside abac_demo_hr_admins
+      type: mask
+      columns:
+        - alias: strict_pii
+          has_tags:
+            abac_demo_pii_strict: '*'
+      function:
+        name: fn_mask_strict
+        comment: Fully redacts a strict-PII string
+        parameters:
+          - name: strict_pii
+            type: string
+        return: "'REDACTED'"
+      to:
+        - account users
+      except:
+        - abac_demo_hr_admins

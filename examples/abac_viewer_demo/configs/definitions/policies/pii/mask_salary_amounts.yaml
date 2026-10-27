@@ -1,0 +1,26 @@
+# TABLE-level mask (attached to abac_viz_demo.hr.salaries): numeric compensation
+# columns tagged abac_demo_financial are masked to -1 outside HR admins.
+# Demonstrates a numeric mask function and a table-attached policy.
+definitions:
+  policies:
+    pii|mask_salary_amounts:
+      name: mask_salary_amounts
+      comment: Mask compensation amounts to -1 outside abac_demo_hr_admins
+      type: mask
+      columns:
+        - alias: amount
+          has_tags:
+            abac_demo_financial: '*'
+      function:
+        name: fn_mask_amount
+        comment: Masks a compensation amount to -1
+        # DOUBLE, not decimal(p,s): precision is lost on the actual-state fetch
+        # and would make every run replace this function (see salaries.yaml).
+        parameters:
+          - name: amount
+            type: double
+        return: "CAST(-1 AS DOUBLE)"
+      to:
+        - account users
+      except:
+        - abac_demo_hr_admins

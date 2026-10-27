@@ -1,0 +1,20 @@
+definitions:
+  tables:
+    abac_viz_demo|finance|invoices:
+      name: invoices
+      comment: Vendor invoices — internal; no PII, unfiltered
+      tags:
+        abac_demo_sensitivity: internal
+      columns:
+        - name: invoice_id
+          type: long
+        - name: vendor_id
+          type: long
+        - name: amount
+          type: decimal(12,2)
+        - name: currency
+          type: string
+        - name: region
+          type: string
+        - name: status
+          type: string

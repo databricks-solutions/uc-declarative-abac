@@ -1,0 +1,15 @@
+# Schema-level grant policy (attached to abac_viz_demo.hr): restricted HR securables
+# (hr.salaries) are readable ONLY by the HR admins subgroup.
+definitions:
+  policies:
+    grants|grant_hr_restricted:
+      name: grant_hr_restricted
+      comment: Only HR admins read restricted HR datasets
+      type: grant
+      has_tags:
+        abac_demo_sensitivity: restricted
+      privileges:
+        - use
+        - read
+      to:
+        - abac_demo_hr_admins

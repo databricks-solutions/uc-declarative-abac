@@ -55,6 +55,32 @@ jobs:
         with:
           config-dir: examples/finance_demo/configs
 
+      - name: Validate ABAC Policy Explorer demo project
+        uses: ./validate
+        with:
+          config-dir: examples/abac_viewer_demo/configs
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bunx tsc --noEmit -p tsconfig.json
+
+      - name: Unit tests
+        run: |
+          bun run test:unified-graph
+          bun run test:url-state
+
   docs:
     runs-on: ubuntu-latest
     steps:

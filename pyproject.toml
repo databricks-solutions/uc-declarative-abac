@@ -23,10 +23,20 @@ uc-abac = "uc_abac.cli:main"
 uc-declarative-abac = "uc_abac.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/uc_abac"]
+packages = ["src/uc_abac", "src/abac_viewer"]
+# The built UI is gitignored but must ship in the wheel.
+artifacts = ["src/abac_viewer/__dist__"]
+exclude = ["src/abac_viewer/ui"]
 
 [project.optional-dependencies]
+viewer = [
+    "fastapi>=0.119.0",
+    "pydantic-settings>=2.11.0",
+    "python-dotenv>=1.0",
+    "uvicorn>=0.37.0",
+]
 dev = [
+    "httpx2>=2.5.0",
     "pytest>=8.0",
     "pytest-cov>=7.0",
     "sqlglot>=20.0",
@@ -43,12 +53,24 @@ docs = [
 build = [
     "hatchling",
 ]
+# uv's default group, so a plain `uv run` (as used by apx) gets the test and viewer deps.
+dev = ["uc-declarative-abac[dev,viewer]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 pythonpath = ["src"]
-addopts = "--cov=uc_abac --cov-report=term-missing"
+addopts = "--cov=uc_abac --cov=abac_viewer --cov-report=term-missing"
 
 [tool.ruff]
 target-version = "py311"
 src = ["src", "tests"]
+
+[tool.apx.metadata]
+app-name = "ABAC Policy Explorer"
+app-slug = "abac_viewer"
+app-entrypoint = "abac_viewer.backend.app:app"
+api-prefix = "/api"
+metadata-path = "src/abac_viewer/_metadata.py"
+
+[tool.apx.ui]
+root = "src/abac_viewer/ui"

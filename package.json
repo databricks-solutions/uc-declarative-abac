@@ -1,0 +1,52 @@
+{
+    "name": "abac_viewer_ui",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "test:unified-all": "node tests/ui/unified-all-principals.mjs",
+        "test:unified-graph": "node --import tsx --test tests/ui/unified-graph.test.ts",
+        "test:url-state": "node --import tsx --test tests/ui/viewer-url-state.test.ts"
+    },
+    "dependencies": {
+        "@radix-ui/react-avatar": "1.1.11",
+        "@radix-ui/react-dialog": "^1.1.19",
+        "@radix-ui/react-scroll-area": "^1.2.14",
+        "@radix-ui/react-select": "^2.3.3",
+        "@radix-ui/react-separator": "^1.1.11",
+        "@radix-ui/react-slot": "^1.3.0",
+        "@radix-ui/react-switch": "^1.3.3",
+        "@radix-ui/react-tabs": "^1.1.17",
+        "@radix-ui/react-tooltip": "1.2.8",
+        "@tanstack/react-query": "5.90.16",
+        "@tanstack/react-router": "1.145.7",
+        "axios": "1.13.2",
+        "class-variance-authority": "0.7.1",
+        "clsx": "2.1.1",
+        "lucide-react": "0.562.0",
+        "motion": "12.24.10",
+        "react": "19.2.3",
+        "react-dom": "19.2.3",
+        "react-error-boundary": "6.0.2",
+        "sonner": "2.0.7",
+        "tailwind-merge": "3.4.0",
+        "tw-animate-css": "1.4.0"
+    },
+    "devDependencies": {
+        "@opentelemetry/api": "1.10.0-rc.0",
+        "@opentelemetry/api-logs": "^0.223.0",
+        "@opentelemetry/exporter-logs-otlp-http": "^0.300.0-rc.0",
+        "@opentelemetry/resources": "^3.0.0-rc.0",
+        "@opentelemetry/sdk-logs": "^3.0.0-rc.0",
+        "@tailwindcss/vite": "^4.3.3",
+        "@tanstack/router-generator": "^1.167.45",
+        "@tanstack/router-plugin": "^1.168.47",
+        "@types/node": "25.0.3",
+        "@types/react": "19.2.7",
+        "@types/react-dom": "19.2.3",
+        "@vitejs/plugin-react": "^6.1.2",
+        "smol-toml": "1.6.0",
+        "tsx": "^4",
+        "typescript": "5.9.3",
+        "vite": "^8.3.4"
+    }
+}

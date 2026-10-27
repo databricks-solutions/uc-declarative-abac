@@ -34,3 +34,14 @@ See the [finance_demo README](https://github.com/databricks-solutions/uc-declara
 ### Adapt it for your use case
 
 The README also explains [how to use it as a starting point](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/finance_demo#use-it-as-a-starting-point): copy the entire `finance_demo/` folder into a new repository, delete what you don't need, rename the `uc_abac_finance` catalog and prefixes to yours, configure your warehouse, and iterate locally with `validate`.
+
+## ABAC Policy Explorer Demo
+
+The [abac_viewer_demo](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/abac_viewer_demo) deploys a small catalog (`abac_viz_demo`) with three schemas, nested groups of demo service principals, governed tags, and grant, mask, and filter policies, then makes a few privilege changes by hand so the deployed access diverges from the config (a manual grant and drift), dumps its state, and deploys the {ref}`policy-explorer` to explore it. One script runs every step:
+
+```bash
+cd examples/abac_viewer_demo
+./deploy_demo.sh <profile> <catalog>.<schema> [warehouse-id]
+```
+
+It creates account-level groups and service principals, so run it in a sandbox, as an account admin. See its [README](https://github.com/databricks-solutions/uc-declarative-abac/tree/main/examples/abac_viewer_demo#readme) for details.

@@ -46,3 +46,12 @@ scratch/
 
 # Docs
 docs/_build/
+
+# ABAC Policy Explorer (apx)
+node_modules/
+.tanstack/
+.apx/
+.build/
+.databricks/
+src/abac_viewer/__dist__/
+src/abac_viewer/_version.py

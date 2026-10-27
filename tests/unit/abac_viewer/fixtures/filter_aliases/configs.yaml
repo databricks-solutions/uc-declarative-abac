@@ -1,0 +1,39 @@
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [gold]
+    geo:
+      allowed_values: [region]
+    sensitivity:
+      allowed_values: [restricted]
+
+  catalogs:
+    edge:
+      schemas:
+        - name: sales
+          tables:
+            - name: complete
+              tags: {zone: gold}
+              columns:
+                - name: region
+                  type: STRING
+                  tags: {geo: region}
+                - name: classification
+                  type: STRING
+                  tags: {sensitivity: restricted}
+            - name: missing_alias
+              tags: {zone: gold}
+              columns:
+                - name: region
+                  type: STRING
+                  tags: {geo: region}
+      policies:
+        - name: filter_with_aliases
+          type: filter
+          has_tags: {zone: gold}
+          function: edge.default.filter_rows
+          columns:
+            - alias: region_column
+              has_tags: {geo: region}
+            - alias: sensitivity_column
+              has_tags: {sensitivity: restricted}

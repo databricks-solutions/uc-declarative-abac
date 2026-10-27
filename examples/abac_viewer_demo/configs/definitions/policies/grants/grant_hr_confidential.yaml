@@ -1,0 +1,15 @@
+# Schema-level grant policy (attached to abac_viz_demo.hr): confidential HR
+# securables (hr.employees) are readable by the whole HR group.
+definitions:
+  policies:
+    grants|grant_hr_confidential:
+      name: grant_hr_confidential
+      comment: HR staff read confidential HR datasets
+      type: grant
+      has_tags:
+        abac_demo_sensitivity: confidential
+      privileges:
+        - use
+        - read
+      to:
+        - abac_demo_hr

@@ -1,0 +1,63 @@
+# Account-level groups for the ABAC demo fixture, with nested subgroups.
+#
+# This file is BOTH:
+#   - the source of truth ABAC Policy Explorer reads membership from
+#     (users -> subgroups -> parent groups), and
+#   - the input the abac_demo_setup_principals job parses to create the groups
+#     (via the account SCIM proxy) — uc-declarative-abac itself treats
+#     resources.groups as inert unless --enable-group-creation/-management
+#     are passed, so pre-creating them via the job is equivalent and lets the
+#     tool resolve them as policy principals.
+#
+# Membership graph:
+#   abac_demo_analysts        ⊃ abac_demo_analysts_emea, abac_demo_analysts_amer, sp_lead_1
+#   abac_demo_analysts_emea   = sp_ana_emea_1, sp_ana_emea_2, sp_multi_1
+#   abac_demo_analysts_amer   = sp_ana_amer_1
+#   abac_demo_data_platform   ⊃ abac_demo_engineers
+#   abac_demo_engineers       = sp_eng_1, sp_eng_2
+#   abac_demo_hr              ⊃ abac_demo_hr_admins, sp_hr_1
+#   abac_demo_hr_admins       = sp_hr_admin_1
+#   abac_demo_finance_readers = sp_fin_1, sp_multi_1, sp_eng_1
+# (sp_multi_1 and sp_eng_1 each belong to two groups.)
+resources:
+  groups:
+    abac_demo_analysts:
+      name: abac_demo_analysts
+      members:
+        - abac_demo_analysts_emea
+        - abac_demo_analysts_amer
+        - abac_demo_sp_lead_1
+    abac_demo_analysts_emea:
+      name: abac_demo_analysts_emea
+      members:
+        - abac_demo_sp_ana_emea_1
+        - abac_demo_sp_ana_emea_2
+        - abac_demo_sp_multi_1
+    abac_demo_analysts_amer:
+      name: abac_demo_analysts_amer
+      members:
+        - abac_demo_sp_ana_amer_1
+    abac_demo_data_platform:
+      name: abac_demo_data_platform
+      members:
+        - abac_demo_engineers
+    abac_demo_engineers:
+      name: abac_demo_engineers
+      members:
+        - abac_demo_sp_eng_1
+        - abac_demo_sp_eng_2
+    abac_demo_hr:
+      name: abac_demo_hr
+      members:
+        - abac_demo_hr_admins
+        - abac_demo_sp_hr_1
+    abac_demo_hr_admins:
+      name: abac_demo_hr_admins
+      members:
+        - abac_demo_sp_hr_admin_1
+    abac_demo_finance_readers:
+      name: abac_demo_finance_readers
+      members:
+        - abac_demo_sp_fin_1
+        - abac_demo_sp_multi_1
+        - abac_demo_sp_eng_1
