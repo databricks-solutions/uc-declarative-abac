@@ -76,6 +76,8 @@ Keep the target schema outside the catalogs your config manages with `--privileg
 
 The bundle grants the app `CAN USE` on the warehouse.
 
+The build writes the app's command and settings (from the bundle variables) into an `app.yml` in the uploaded source, so redeploying from the app's **Deploy** button in the workspace starts it the same way. To change a setting, redeploy with `databricks bundle deploy` and the new variables.
+
 ## Bundle variables
 
 ```{list-table}
