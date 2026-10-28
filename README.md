@@ -10,7 +10,7 @@
 UC Declarative ABAC lets you define your Databricks Unity Catalog Attribute-Based Access Control
 (ABAC) governance model in declarative YAML files. The engine reads your configs, queries Unity
 Catalog for the current state, computes the difference, and applies only the changes needed.
-Run it from the `uc-abac` CLI or as a GitHub Action from the repository that holds your YAML.
+Run it from the `uc-abac` CLI or as a GitHub Action from the repository that holds your YAML
 
 **Documentation: [uc-declarative-abac.readthedocs.io](https://uc-declarative-abac.readthedocs.io/)**
 
