@@ -165,5 +165,3 @@ definitions:
 - Because binding is local to the writer, a parent cannot widen a child's variable contract via an override.
 - A multi-level template forwards a variable to a child `$ref` by using `${placeholder}` as the child's `$vars` value, except a definition's own body-root `$ref` (an extends), where a variable forwards into the base by name.
 - Every placeholder must be bound (by an argument or a default) and every supplied argument must be used. A missing, unused, incomplete-signature, non-string, malformed, or resource-placeholder case fails config validation.
-
-For the full specification, see the proposal in {issue}`18`.
