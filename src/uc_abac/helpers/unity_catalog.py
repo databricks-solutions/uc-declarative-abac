@@ -607,22 +607,24 @@ def _build_policy_securables_query(
 
     A bare predicate like ``substring(schema_name, 1, 2) != '__'`` or
     ``schema_name != 'information_schema'`` evaluates to NULL (not TRUE) when
-    schema_name is NULL, causing the row to be silently dropped. Therefore,
-    every predicate that references a nullable name column is wrapped as
-    ``(<col> IS NULL OR <predicate on col>)``. This guards catalog-level policies
-    from being filtered out by schema predicates, and schema-level policies from
-    being filtered out by securable predicates. ``catalog_name`` is always
-    non-NULL, so its ``__``-prefix predicate needs no guard (built via the shared
-    ``_build_double_underscore_filter`` with ``null_safe=False``); ``schema_name``
-    and ``securable_name`` use the same helper with ``null_safe=True``.
+    schema_name is NULL, causing the row to be silently dropped. Predicates on
+    nullable name columns are therefore made NULL-safe, so catalog-level policies
+    survive schema predicates and schema-level policies survive securable
+    predicates. ``catalog_name`` is always non-NULL, so its ``__``-prefix
+    predicate needs no guard (``_build_double_underscore_filter`` with
+    ``null_safe=False``); ``securable_name`` uses the same helper with
+    ``null_safe=True`` (an ``IS NULL OR`` guard). ``schema_name`` predicates
+    instead wrap the column as ``coalesce(schema_name, '')``, which passes both
+    checks for NULL, because DBSQL fails with INTERNAL_ERROR on any bare
+    predicate on that column of this view (issue #24).
     ``ROW_FILTER``/``COLUMN_MASK`` are the system-table spellings — distinct from
     the SDK's ``POLICY_TYPE_*`` used in ``_normalise_policy_info``.
     """
     in_clause = _build_catalog_in_clause(catalog_names)
-    hidden_filter = _build_double_underscore_filter(
-        ["catalog_name"]
-    ) + _build_double_underscore_filter(
-        ["schema_name", "securable_name"], null_safe=True
+    hidden_filter = (
+        _build_double_underscore_filter(["catalog_name"])
+        + " AND substring(coalesce(schema_name, ''), 1, 2) != '__'"
+        + _build_double_underscore_filter(["securable_name"], null_safe=True)
     )
     return (
         "SELECT DISTINCT "
@@ -636,8 +638,7 @@ def _build_policy_securables_query(
         "WHERE catalog_name IN " + in_clause + " "
         "  AND policy_type IN ('ROW_FILTER', 'COLUMN_MASK') "
         "  AND on_securable_type IN ('CATALOG', 'SCHEMA', 'TABLE') "
-        "  AND (schema_name IS NULL OR schema_name != 'information_schema')"
-        + hidden_filter
+        "  AND coalesce(schema_name, '') != 'information_schema'" + hidden_filter
     )
 
 

@@ -2328,18 +2328,87 @@ def test_build_policy_securables_query_filters_to_mask_and_filter_types():
     assert "'MODEL'" not in sql, "Should not contain 'MODEL' in query"
 
 
-def test_build_policy_securables_query_null_guards_schema_and_securable_predicates():
-    """The query string contains schema_name IS NULL and securable_name IS NULL (NULL-safety guards)."""
+def test_build_policy_securables_query_null_guards_securable_predicates():
+    """The query string contains a securable_name IS NULL guard so schema- and catalog-level policies (securable_name NULL) aren't dropped."""
     from uc_abac.helpers.unity_catalog import _build_policy_securables_query
 
     sql = _build_policy_securables_query(["cat"])
     sql_lower = sql.lower()
 
-    # Both NULL guards must be present
-    assert "schema_name is null" in sql_lower, "Expected 'schema_name IS NULL' in query"
     assert "securable_name is null" in sql_lower, (
         "Expected 'securable_name IS NULL' in query"
     )
+
+
+def test_build_policy_securables_query_wraps_every_schema_name_predicate_in_coalesce():
+    """Every schema_name reference in the WHERE clause sits inside coalesce(...).
+
+    DBSQL fails with INTERNAL_ERROR on any WHERE predicate referencing the bare
+    schema_name column of abac_policy_definitions, while coalesce-wrapped
+    predicates work (GitHub issue #24).
+    """
+    from uc_abac.helpers.unity_catalog import _build_policy_securables_query
+
+    sql = _build_policy_securables_query(["cat"])
+    stmt = _parse_sql(sql)
+    where = stmt.args.get("where")
+    assert where is not None, "Expected a WHERE clause in query"
+
+    schema_name_columns = [
+        col for col in where.find_all(sqlglot.exp.Column) if col.name == "schema_name"
+    ]
+    assert schema_name_columns, "Expected at least one schema_name predicate in WHERE"
+
+    bare = [
+        col.parent.sql(dialect=DATABRICKS_DIALECT)
+        for col in schema_name_columns
+        if col.find_ancestor(sqlglot.exp.Coalesce) is None
+    ]
+    assert not bare, f"schema_name referenced outside coalesce() in WHERE: {bare}"
+
+
+def test_build_policy_securables_query_keeps_null_schema_rows_and_excludes_hidden_securables():
+    """Executing the query keeps catalog/schema/table-level mask & filter policies and drops
+    information_schema, ``__``-prefixed, non-mask/filter, and out-of-scope rows."""
+    from sqlglot.executor import execute
+
+    from uc_abac.helpers.unity_catalog import _build_policy_securables_query
+
+    def row(catalog, schema, securable, policy_type, on_securable_type):
+        return {
+            "catalog_name": catalog,
+            "schema_name": schema,
+            "securable_name": securable,
+            "policy_type": policy_type,
+            "on_securable_type": on_securable_type,
+        }
+
+    rows = [
+        # Kept
+        row("cat", None, None, "ROW_FILTER", "CATALOG"),
+        row("cat", "s", None, "COLUMN_MASK", "SCHEMA"),
+        row("cat", "s", "t", "ROW_FILTER", "TABLE"),
+        # Excluded
+        row("cat", "information_schema", "tables", "ROW_FILTER", "TABLE"),
+        row("cat", "__hidden_schema", "t", "ROW_FILTER", "TABLE"),
+        row("cat", "s", "__hidden_table", "COLUMN_MASK", "TABLE"),
+        row("__hidden_cat", "s", "t", "ROW_FILTER", "TABLE"),
+        row("cat", "s", "granted", "GRANT", "TABLE"),
+        row("other_cat", "s", "t", "ROW_FILTER", "TABLE"),
+    ]
+
+    sql = _build_policy_securables_query(["cat", "__hidden_cat"])
+    result = execute(
+        sql,
+        dialect=DATABRICKS_DIALECT,
+        tables={"system": {"information_schema": {"abac_policy_definitions": rows}}},
+    )
+
+    assert set(result.rows) == {
+        ("CATALOG", "cat"),
+        ("SCHEMA", "cat.s"),
+        ("TABLE", "cat.s.t"),
+    }
 
 
 def test_build_policy_securables_query_scopes_to_given_catalogs():
