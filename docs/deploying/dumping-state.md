@@ -2,7 +2,7 @@
 
 # Dumping current state
 
-The `uc-abac dump` command reads the current Unity Catalog governance state behind a config and writes it as queryable tables into a target schema, so you can report on or audit what is deployed without running a deploy.
+The `uc-abac dump` command reads the current Unity Catalog governance state behind a config and writes it as queryable tables into a target schema, so you can report on or audit what is deployed without running a deploy. The {ref}`policy-explorer` app visualises these tables.
 
 ## Command
 

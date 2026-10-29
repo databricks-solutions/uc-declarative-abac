@@ -1,0 +1,62 @@
+# Overlapping mask policies and a principal nested under both `to` and `except`.
+resources:
+  governed_tags:
+    pii:
+      allowed_values: [email]
+    sensitivity:
+      allowed_values: [restricted]
+    zone:
+      allowed_values: [gold]
+
+  groups:
+    analysts:
+      members: [regulars, dual_role]
+    regulars:
+      members: [sp_regular]
+    admins:
+      members: [dual_role]
+    dual_role:
+      members: [sp_dual]
+
+  catalogs:
+    edge:
+      schemas:
+        - name: sales
+          tables:
+            - name: orders
+              tags: {zone: gold}
+              columns:
+                - name: order_id
+                  type: LONG
+                - name: customer_email
+                  type: STRING
+                  tags: {pii: email, sensitivity: restricted}
+      policies:
+        - name: grant_gold_read
+          type: grant
+          has_tags: {zone: gold}
+          privileges: [use, select]
+          to: [analysts]
+        - name: mask_general_pii
+          type: mask
+          has_tags: {zone: gold}
+          function: edge.default.fn_mask_general
+          column:
+            alias: pii_column
+            has_tags: {pii: '*'}
+          to: [analysts]
+          except: [admins]
+        - name: mask_restricted
+          type: mask
+          has_tags: {zone: gold}
+          function: edge.default.fn_mask_restricted
+          column:
+            alias: restricted_column
+            has_tags: {sensitivity: restricted}
+          to: [analysts]
+        - name: filter_gold_rows
+          type: filter
+          has_tags: {zone: gold}
+          function: edge.default.fn_filter_gold
+          to: [analysts]
+          except: [admins]

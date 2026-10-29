@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="700" viewBox="0 0 1000 700" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="title">ABAC Policy Explorer architecture</title>
+  <desc id="desc">uc-abac deploy applies the YAML configs to Unity Catalog and uc-abac dump writes the deployed state to dump tables. The ABAC Policy Explorer app reads those tables through a SQL warehouse, rebuilds and caches a model, and serves verdicts and graphs to a React UI over a REST API. The UI links back to the config files on GitHub.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#1b3139"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#5a6b72"/>
+    </marker>
+    <style>
+      .title { font-size: 14px; font-weight: 600; fill: #1b3139; }
+      .sub { font-size: 11px; fill: #4a5a61; }
+      .code { font-size: 11px; fill: #4a5a61; font-family: SFMono-Regular, Menlo, Consolas, monospace; }
+      .label { font-size: 11px; fill: #1b3139; }
+      .step { font-size: 11px; font-weight: 700; fill: #ffffff; }
+      .group { font-size: 13px; font-weight: 700; fill: #1b3139; }
+      .box { fill: #ffffff; stroke: #1b3139; stroke-width: 1.5; }
+      .ext { fill: #eef2f3; stroke: #1b3139; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #1b3139; stroke-width: 1.6; }
+      .link { fill: none; stroke: #5a6b72; stroke-width: 1.4; stroke-dasharray: 5 4; }
+    </style>
+  </defs>
+
+  <rect width="1000" height="700" fill="#ffffff"/>
+
+  <!-- Governance pipeline: outside the app -->
+  <text class="group" x="20" y="26">Governance pipeline (uc-abac)</text>
+
+  <rect class="ext" x="20" y="44" width="150" height="70" rx="8"/>
+  <text class="title" x="95" y="74" text-anchor="middle">YAML configs</text>
+  <text class="sub" x="95" y="94" text-anchor="middle">Git repository</text>
+
+  <rect class="ext" x="215" y="44" width="150" height="70" rx="8"/>
+  <text class="title" x="290" y="74" text-anchor="middle">uc-abac deploy</text>
+  <text class="sub" x="290" y="94" text-anchor="middle">applies the configs</text>
+
+  <rect class="ext" x="410" y="44" width="190" height="70" rx="8"/>
+  <text class="title" x="505" y="74" text-anchor="middle">Unity Catalog</text>
+  <text class="sub" x="505" y="94" text-anchor="middle">tags, grants, policies, groups</text>
+
+  <rect class="ext" x="645" y="44" width="140" height="70" rx="8"/>
+  <text class="title" x="715" y="74" text-anchor="middle">uc-abac dump</text>
+  <text class="sub" x="715" y="94" text-anchor="middle">reads deployed state</text>
+
+  <rect class="ext" x="830" y="44" width="150" height="70" rx="8"/>
+  <text class="title" x="905" y="74" text-anchor="middle">Dump tables</text>
+  <text class="sub" x="905" y="94" text-anchor="middle">target schema</text>
+
+  <path class="flow" d="M170 79 H211" marker-end="url(#arrow)"/>
+  <path class="flow" d="M365 79 H406" marker-end="url(#arrow)"/>
+  <path class="flow" d="M600 79 H641" marker-end="url(#arrow)"/>
+  <path class="flow" d="M785 79 H826" marker-end="url(#arrow)"/>
+
+  <circle cx="388" cy="64" r="9" fill="#ff3621"/><text class="step" x="388" y="68" text-anchor="middle">1</text>
+  <circle cx="808" cy="64" r="9" fill="#ff3621"/><text class="step" x="808" y="68" text-anchor="middle">2</text>
+
+  <!-- SQL warehouse -->
+  <rect class="ext" x="830" y="200" width="150" height="64" rx="8"/>
+  <text class="title" x="905" y="227" text-anchor="middle">SQL warehouse</text>
+  <text class="sub" x="905" y="246" text-anchor="middle">Statement Execution API</text>
+  <path class="flow" d="M905 114 V196" marker-end="url(#arrow)"/>
+  <text class="label" x="914" y="160">SELECT *</text>
+
+  <!-- App boundary -->
+  <rect x="20" y="150" width="790" height="490" rx="12" fill="#fff6f5" stroke="#ff3621" stroke-width="2"/>
+  <text class="group" x="140" y="176">Databricks App: ABAC Policy Explorer</text>
+  <text class="sub" x="140" y="193">runs as the app's service principal (SELECT on the dump schema, CAN USE on the warehouse)</text>
+
+  <!-- UI -->
+  <rect x="40" y="210" width="190" height="410" rx="10" fill="#f4f6f7" stroke="#1b3139" stroke-width="1.2"/>
+  <text class="group" x="135" y="234" text-anchor="middle">UI (React)</text>
+  <text class="code" x="135" y="251" text-anchor="middle">src/abac_viewer/ui</text>
+
+  <rect class="box" x="58" y="272" width="154" height="54" rx="6"/>
+  <text class="title" x="135" y="296" text-anchor="middle">Explorer and tree</text>
+  <text class="sub" x="135" y="313" text-anchor="middle">access by principal</text>
+
+  <rect class="box" x="58" y="342" width="154" height="54" rx="6"/>
+  <text class="title" x="135" y="366" text-anchor="middle">Access graphs</text>
+  <text class="sub" x="135" y="383" text-anchor="middle">policies, manual, drift</text>
+
+  <rect class="box" x="58" y="412" width="154" height="54" rx="6"/>
+  <text class="title" x="135" y="436" text-anchor="middle">Why panels</text>
+  <text class="sub" x="135" y="453" text-anchor="middle">grants, masks, filters</text>
+
+  <rect class="box" x="58" y="482" width="154" height="54" rx="6"/>
+  <text class="title" x="135" y="506" text-anchor="middle">Warnings</text>
+  <text class="sub" x="135" y="523" text-anchor="middle">drift links to the path</text>
+
+  <text class="sub" x="135" y="574" text-anchor="middle">served from the app,</text>
+  <text class="sub" x="135" y="590" text-anchor="middle">runs in the user's browser</text>
+
+  <!-- Backend -->
+  <rect x="250" y="210" width="540" height="410" rx="10" fill="#f4f6f7" stroke="#1b3139" stroke-width="1.2"/>
+  <text class="group" x="520" y="234" text-anchor="middle">Backend (FastAPI)</text>
+  <text class="code" x="520" y="251" text-anchor="middle">src/abac_viewer/backend</text>
+
+  <!-- Backend: data-in column -->
+  <rect class="box" x="550" y="272" width="220" height="64" rx="6"/>
+  <text class="title" x="660" y="298" text-anchor="middle">Dump reader</text>
+  <text class="code" x="660" y="318" text-anchor="middle">engine/warehouse.py</text>
+
+  <rect class="box" x="550" y="372" width="220" height="74" rx="6"/>
+  <text class="title" x="660" y="396" text-anchor="middle">Model loader</text>
+  <text class="code" x="660" y="415" text-anchor="middle">engine/dump.py, conditions.py</text>
+  <text class="code" x="660" y="431" text-anchor="middle">engine/dump_policies.py</text>
+
+  <rect class="box" x="550" y="482" width="220" height="80" rx="6"/>
+  <text class="title" x="660" y="506" text-anchor="middle">Matching and reconciliation</text>
+  <text class="code" x="660" y="525" text-anchor="middle">engine/matching.py</text>
+  <text class="sub" x="660" y="545" text-anchor="middle">attributed, manual grant, drift</text>
+
+  <!-- Backend: serving column -->
+  <rect class="box" x="270" y="272" width="220" height="64" rx="6"/>
+  <text class="title" x="380" y="298" text-anchor="middle">REST API  /api/*</text>
+  <text class="code" x="380" y="318" text-anchor="middle">router.py</text>
+
+  <rect class="box" x="270" y="372" width="220" height="74" rx="6"/>
+  <text class="title" x="380" y="396" text-anchor="middle">Verdicts and graphs</text>
+  <text class="code" x="380" y="415" text-anchor="middle">engine/verdict.py</text>
+  <text class="code" x="380" y="431" text-anchor="middle">engine/chain_graph.py</text>
+
+  <rect class="box" x="270" y="482" width="220" height="80" rx="6"/>
+  <text class="title" x="380" y="506" text-anchor="middle">Model store</text>
+  <text class="code" x="380" y="525" text-anchor="middle">engine/runtime.py</text>
+  <text class="sub" x="380" y="545" text-anchor="middle">cached model, reloaded on refresh</text>
+
+  <!-- Data flow inside the app -->
+  <path class="flow" d="M830 232 H800 V304 H774" marker-end="url(#arrow)"/>
+  <text class="label" x="742" y="262" text-anchor="end">result rows</text>
+  <circle cx="815" cy="304" r="9" fill="#ff3621"/><text class="step" x="815" y="308" text-anchor="middle">3</text>
+
+  <path class="flow" d="M660 336 V368" marker-end="url(#arrow)"/>
+  <text class="label" x="668" y="357">rows</text>
+  <path class="flow" d="M660 446 V478" marker-end="url(#arrow)"/>
+  <text class="label" x="652" y="467" text-anchor="end">policies, tags, privileges</text>
+
+  <path class="flow" d="M550 522 H494" marker-end="url(#arrow)"/>
+  <text class="label" x="522" y="514" text-anchor="middle">model</text>
+  <circle cx="522" cy="540" r="9" fill="#ff3621"/><text class="step" x="522" y="544" text-anchor="middle">4</text>
+
+  <path class="flow" d="M380 482 V450" marker-end="url(#arrow)"/>
+  <path class="flow" d="M380 372 V340" marker-end="url(#arrow)"/>
+
+  <path class="flow" d="M234 304 H266" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="label" x="250" y="296" text-anchor="middle">JSON</text>
+  <circle cx="250" cy="322" r="9" fill="#ff3621"/><text class="step" x="250" y="326" text-anchor="middle">5</text>
+
+  <!-- Code links back to the configs -->
+  <path class="link" d="M95 210 V118" marker-end="url(#arrow-muted)"/>
+  <text class="label" x="104" y="140">code links</text>
+  <circle cx="120" cy="158" r="9" fill="#5a6b72"/><text class="step" x="120" y="162" text-anchor="middle">6</text>
+
+  <!-- Legend -->
+  <path class="flow" d="M20 668 H60" marker-end="url(#arrow)"/>
+  <text class="label" x="68" y="672">data flow</text>
+  <path class="link" d="M150 668 H190" marker-end="url(#arrow-muted)"/>
+  <text class="label" x="198" y="672">link to the config on GitHub</text>
+  <rect x="380" y="660" width="16" height="16" rx="3" class="ext"/>
+  <text class="label" x="404" y="672">outside the app</text>
+  <rect x="510" y="660" width="16" height="16" rx="3" fill="#fff6f5" stroke="#ff3621" stroke-width="2"/>
+  <text class="label" x="534" y="672">the app</text>
+</svg>

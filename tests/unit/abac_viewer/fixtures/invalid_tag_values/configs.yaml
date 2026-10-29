@@ -1,0 +1,29 @@
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [gold]
+    pii:
+      allowed_values: [email]
+  catalogs:
+    invalid:
+      schemas:
+        - name: sales
+          tables:
+            - name: customers
+              tags: {zone: silver}
+              columns:
+                - name: email
+                  type: STRING
+                  tags: {pii: phone}
+      policies:
+        - name: invalid_grant
+          type: grant
+          has_tags: {zone: silver}
+          privileges: [use, select]
+          to: [direct_sp]
+        - name: invalid_mask
+          type: mask
+          function: invalid.default.mask_email
+          column:
+            alias: email_column
+            has_tags: {pii: phone}

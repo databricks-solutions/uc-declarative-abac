@@ -73,6 +73,7 @@ deploying/authentication
 deploying/settings
 deploying/github-actions
 deploying/dumping-state
+deploying/policy-explorer
 ```
 
 ```{toctree}

@@ -1,0 +1,26 @@
+definitions:
+  tables:
+    abac_viz_demo|sales|trips:
+      name: trips
+      comment: High-sensitivity travel with independent origin and destination filter inputs
+      tags:
+        abac_demo_trips: trip
+        abac_demo_sensitivity: high
+        abac_demo_zone: gold
+      columns:
+        - name: trip_id
+          type: long
+        - name: traveler_email
+          type: string
+          tags:
+            abac_demo_pii: email
+        - name: from_region
+          type: string
+          tags:
+            abac_demo_from_region: region
+        - name: to_region
+          type: string
+          tags:
+            abac_demo_to_region: region
+        - name: departure_date
+          type: date

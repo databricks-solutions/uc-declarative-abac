@@ -1,0 +1,63 @@
+# Databricks Asset Bundle for the ABAC Policy Explorer app (src/abac_viewer).
+#
+# The app reads the tables `uc-abac dump` writes into `target_schema`, through
+# `warehouse_id`, as its service principal. Grant that principal USE CATALOG,
+# USE SCHEMA, and SELECT on the target schema after the first deploy (see the
+# ABAC Policy Explorer page in docs/).
+#
+#   databricks bundle deploy -t dev --var target_schema=main.uc_abac_state \
+#     --var warehouse_id=<id>
+
+bundle:
+  name: abac-policy-explorer
+
+sync:
+  # Upload only the built app (gitignored, so it must be included explicitly).
+  paths:
+    - ./.build
+  include:
+    - .build/**
+
+variables:
+  target_schema:
+    description: "<catalog>.<schema> holding the uc-abac dump tables."
+  warehouse_id:
+    description: SQL warehouse the app queries the dump tables through.
+  app_name:
+    description: Name of the Databricks App.
+    default: abac-policy-explorer
+  repo_slug:
+    description: "GitHub <owner>/<repo> of the config repository, for source links (none: no links)."
+    default: none
+  repo_ref:
+    description: Git ref the source links pin to.
+    default: main
+  config_path_prefix:
+    description: Path from the repository root to the directory uc-abac dump ran in (. for the root).
+    default: .
+
+artifacts:
+  default:
+    # The build writes .build/app.yml (the app's command and settings) from these
+    # variables, so the app's Deploy button redeploys it the same way.
+    build: >-
+      bash scripts/build-viewer.sh "${var.target_schema}" "${var.repo_slug}"
+      "${var.repo_ref}" "${var.config_path_prefix}"
+
+resources:
+  apps:
+    abac_policy_explorer:
+      name: ${var.app_name}
+      description: ABAC Policy Explorer for uc-declarative-abac
+      # The command and environment are in .build/app.yml, written by the build.
+      source_code_path: ./.build
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+targets:
+  dev:
+    mode: development
+    default: true

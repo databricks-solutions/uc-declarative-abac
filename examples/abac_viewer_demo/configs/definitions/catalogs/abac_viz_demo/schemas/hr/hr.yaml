@@ -1,0 +1,18 @@
+# HR domain: schema itself tagged restricted; two schema-level grant policies
+# (confidential -> abac_demo_hr, restricted -> abac_demo_hr_admins) and a strict
+# mask policy that redacts ssn/dob for everyone except HR admins.
+definitions:
+  schemas:
+    abac_viz_demo|hr:
+      name: hr
+      comment: HR domain — restricted; salaries visible to HR admins only
+      tags:
+        abac_demo_team: hr
+        abac_demo_sensitivity: restricted
+      policies:
+        - $ref: $defs/policies/pii|mask_hr_strict
+        - $ref: $defs/policies/grants|grant_hr_confidential
+        - $ref: $defs/policies/grants|grant_hr_restricted
+      tables:
+        - $ref: $defs/tables/abac_viz_demo|hr|employees
+        - $ref: $defs/tables/abac_viz_demo|hr|salaries

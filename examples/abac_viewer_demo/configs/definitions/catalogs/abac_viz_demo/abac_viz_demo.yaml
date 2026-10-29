@@ -1,0 +1,18 @@
+# Fixture catalog: three domain schemas, four catalog-level policies.
+definitions:
+  catalogs:
+    abac_viz_demo:
+      name: abac_viz_demo
+      comment: Disposable ABAC demo fixture managed by uc-declarative-abac
+      tags:
+        abac_demo_sensitivity: internal
+      policies:
+        - $ref: $defs/policies/pii|mask_pii_contact
+        - $ref: $defs/policies/grants|grant_gold_analysts
+        - $ref: $defs/policies/grants|grant_finance_read
+        - $ref: $defs/policies/grants|grant_platform_zones
+        - $ref: $defs/policies/grants|grant_hr_use
+      schemas:
+        - $ref: $defs/schemas/abac_viz_demo|sales
+        - $ref: $defs/schemas/abac_viz_demo|hr
+        - $ref: $defs/schemas/abac_viz_demo|finance

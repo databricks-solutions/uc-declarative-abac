@@ -1,0 +1,18 @@
+# Catalog-level grant policy with a wildcard tag match: anything carrying ANY
+# abac_demo_zone value (bronze/silver/gold) is readable by the data platform
+# group — matches sales.customers, sales.orders, sales.leads (table tags) and
+# the finance schema (schema tag). HR carries no zone tag, so platform gets
+# no HR access.
+definitions:
+  policies:
+    grants|grant_platform_zones:
+      name: grant_platform_zones
+      comment: Data platform reads every zone-classified dataset
+      type: grant
+      has_tags:
+        abac_demo_zone: '*'
+      privileges:
+        - use
+        - read
+      to:
+        - abac_demo_data_platform

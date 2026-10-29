@@ -1,0 +1,36 @@
+resources:
+  governed_tags:
+    team:
+      allowed_values: [finance]
+    zone:
+      allowed_values: [silver]
+
+  groups:
+    finance_readers:
+      members: [sp_engineer]
+    data_platform:
+      members: [engineers]
+    engineers:
+      members: [sp_engineer]
+
+  catalogs:
+    acme:
+      schemas:
+        - name: finance
+          tags: {team: finance, zone: silver}
+          tables:
+            - name: budgets
+              columns:
+                - name: budget_id
+                  type: LONG
+      policies:
+        - name: grant_finance_read
+          type: grant
+          has_tags: {team: finance}
+          privileges: [use, read]
+          to: [finance_readers]
+        - name: grant_platform_zones
+          type: grant
+          has_tags: {zone: '*'}
+          privileges: [use, read]
+          to: [data_platform]

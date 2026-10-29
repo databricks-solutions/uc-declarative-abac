@@ -1,0 +1,16 @@
+# Sales domain: gold-zone tables readable by analysts, region-row-filtered.
+definitions:
+  schemas:
+    abac_viz_demo|sales:
+      name: sales
+      comment: Sales domain — analyst access is region-filtered
+      tags:
+        abac_demo_team: sales
+      policies:
+        - $ref: $defs/policies/region|filter_sales_region
+        - $ref: $defs/policies/region|filter_trips_by_region
+      tables:
+        - $ref: $defs/tables/abac_viz_demo|sales|customers
+        - $ref: $defs/tables/abac_viz_demo|sales|orders
+        - $ref: $defs/tables/abac_viz_demo|sales|leads
+        - $ref: $defs/tables/abac_viz_demo|sales|trips

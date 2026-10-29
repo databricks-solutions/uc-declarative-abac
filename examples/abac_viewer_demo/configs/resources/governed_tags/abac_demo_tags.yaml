@@ -1,0 +1,69 @@
+# Account-level governed tags for the ABAC demo fixture.
+# NOTE: governed tags live on the ACCOUNT, not the workspace — keys are
+# abac_demo_-prefixed so they are identifiable/cleanable in a shared account.
+resources:
+  governed_tags:
+    abac_demo_pii:
+      name: abac_demo_pii
+      description: Contact PII on string columns (ABAC demo fixture)
+      allowed_values:
+        - name
+        - email
+        - phone
+        - address
+    abac_demo_pii_strict:
+      name: abac_demo_pii_strict
+      description: Strictly-protected PII, fully redacted outside HR admins
+      allowed_values:
+        - ssn
+        - dob
+    abac_demo_financial:
+      name: abac_demo_financial
+      description: Sensitive numeric compensation columns (ABAC demo fixture)
+      allowed_values:
+        - salary
+        - bonus
+    abac_demo_zone:
+      name: abac_demo_zone
+      description: Medallion zone of a dataset (ABAC demo fixture)
+      allowed_values:
+        - bronze
+        - silver
+        - gold
+    abac_demo_team:
+      name: abac_demo_team
+      description: Owning team/domain of a securable (ABAC demo fixture)
+      allowed_values:
+        - sales
+        - hr
+        - finance
+        - platform
+    abac_demo_sensitivity:
+      name: abac_demo_sensitivity
+      description: Sensitivity classification (ABAC demo fixture)
+      allowed_values:
+        - public
+        - internal
+        - confidential
+        - restricted
+        - high
+    abac_demo_filter_col:
+      name: abac_demo_filter_col
+      description: Marks the column a row-filter policy feeds to its predicate function
+      allowed_values:
+        - region
+    abac_demo_trips:
+      name: abac_demo_trips
+      description: Marks trip datasets that use the origin/destination row filter
+      allowed_values:
+        - trip
+    abac_demo_from_region:
+      name: abac_demo_from_region
+      description: Marks the origin-region input to a trip row filter
+      allowed_values:
+        - region
+    abac_demo_to_region:
+      name: abac_demo_to_region
+      description: Marks the destination-region input to a trip row filter
+      allowed_values:
+        - region

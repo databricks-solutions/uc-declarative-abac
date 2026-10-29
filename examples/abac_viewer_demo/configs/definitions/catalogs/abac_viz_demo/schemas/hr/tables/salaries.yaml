@@ -1,0 +1,28 @@
+# Salaries carries a TABLE-level mask policy (numeric mask on compensation
+# columns) in addition to the schema/catalog policies above it.
+definitions:
+  tables:
+    abac_viz_demo|hr|salaries:
+      name: salaries
+      comment: Compensation table — restricted; amounts masked to -1 outside HR admins
+      tags:
+        abac_demo_sensitivity: restricted
+      policies:
+        - $ref: $defs/policies/pii|mask_salary_amounts
+      columns:
+        - name: employee_id
+          type: long
+# NOTE: DOUBLE (not DECIMAL(p,s)) on purpose — the engine reads function
+# parameter types back from information_schema WITHOUT precision, so a
+# decimal(12,2) mask-function parameter shows up as DECIMAL and gets
+# "replaced" on every run, breaking idempotency. DOUBLE round-trips cleanly.
+        - name: base_salary
+          type: double
+          tags:
+            abac_demo_financial: salary
+        - name: bonus
+          type: double
+          tags:
+            abac_demo_financial: bonus
+        - name: currency
+          type: string

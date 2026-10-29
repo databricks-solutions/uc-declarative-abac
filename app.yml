@@ -1,0 +1,4 @@
+command:
+  - sh
+  - -c
+  - uvicorn abac_viewer.backend.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000} --workers 1

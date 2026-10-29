@@ -1,0 +1,16 @@
+definitions:
+  tables:
+    abac_viz_demo|finance|budgets:
+      name: budgets
+      comment: Departmental budgets — confidential
+      tags:
+        abac_demo_sensitivity: confidential
+      columns:
+        - name: budget_id
+          type: long
+        - name: department
+          type: string
+        - name: fiscal_year
+          type: int
+        - name: amount
+          type: decimal(14,2)

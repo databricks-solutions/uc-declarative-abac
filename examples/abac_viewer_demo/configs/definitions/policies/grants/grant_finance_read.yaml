@@ -1,0 +1,16 @@
+# Catalog-level grant policy with an expiry date: the finance schema (tagged
+# abac_demo_team=finance) is readable schema-wide by abac_demo_finance_readers.
+definitions:
+  policies:
+    grants|grant_finance_read:
+      name: grant_finance_read
+      comment: Finance readers get schema-wide read on team=finance securables until mid-2027
+      type: grant
+      has_tags:
+        abac_demo_team: finance
+      privileges:
+        - use
+        - read
+      to:
+        - abac_demo_finance_readers
+      expiry_date: 2027-06-30

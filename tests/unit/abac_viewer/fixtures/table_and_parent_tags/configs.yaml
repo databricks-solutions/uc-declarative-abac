@@ -1,0 +1,26 @@
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [silver]
+
+  groups:
+    readers:
+      members: [sp_reader]
+
+  catalogs:
+    acme:
+      schemas:
+        - name: finance
+          tags: {zone: silver}
+          tables:
+            - name: budgets
+              tags: {zone: silver}
+              columns:
+                - name: budget_id
+                  type: LONG
+      policies:
+        - name: grant_silver_read
+          type: grant
+          has_tags: {zone: silver}
+          privileges: [use, read]
+          to: [readers]

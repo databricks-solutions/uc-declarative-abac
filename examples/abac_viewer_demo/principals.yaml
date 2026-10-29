@@ -1,0 +1,27 @@
+# Service principals that stand in for demo users.
+#
+# Service principals are not a uc-declarative-abac config type, so this roster
+# lives outside configs/. The abac_demo_setup_principals job creates them, so
+# that uc-abac can then create the groups in configs/resources/groups with them
+# as members.
+service_principals:
+  abac_demo_sp_ana_emea_1:
+    comment: EMEA sales analyst persona 1
+  abac_demo_sp_ana_emea_2:
+    comment: EMEA sales analyst persona 2
+  abac_demo_sp_ana_amer_1:
+    comment: AMER sales analyst persona
+  abac_demo_sp_lead_1:
+    comment: Analytics lead persona — direct member of the parent abac_demo_analysts group, in no regional subgroup (so the region row filter shows them zero rows)
+  abac_demo_sp_eng_1:
+    comment: Data platform engineer persona 1 — also a finance reader (multi-group)
+  abac_demo_sp_eng_2:
+    comment: Data platform engineer persona 2
+  abac_demo_sp_hr_1:
+    comment: HR generalist persona — sees employees, not salaries; strict PII redacted
+  abac_demo_sp_hr_admin_1:
+    comment: HR administrator persona — sees salaries and unredacted strict PII
+  abac_demo_sp_fin_1:
+    comment: Finance reader persona
+  abac_demo_sp_multi_1:
+    comment: Cross-functional persona — EMEA analyst AND finance reader (multi-group)

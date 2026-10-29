@@ -15,6 +15,7 @@ pinned, hash-verified third-party code:
 - Dependabot watches every directory that holds actions and the uv dependencies, checks
   monthly, and proposes only versions released at least a week ago;
 - uv.lock resolves from no internal Databricks index, so it is installable from anywhere;
+- bun.lock (the ABAC Policy Explorer UI) resolves from no internal Databricks registry;
 - Read the Docs installs the same pinned uv as CI and only the locked packages.
 
 The checks parse the YAML files directly; nothing is executed.
@@ -33,6 +34,7 @@ _COMPOSITE_ACTIONS = sorted(_REPO_ROOT.glob("*/action.yml"))
 _ACTIONS_DOCS = _REPO_ROOT / "docs" / "deploying" / "github-actions.md"
 _READTHEDOCS_CONFIG = _REPO_ROOT / ".readthedocs.yaml"
 _UV_LOCK = _REPO_ROOT / "uv.lock"
+_BUN_LOCK = _REPO_ROOT / "bun.lock"
 _MIN_RELEASE_AGE_DAYS = 7
 
 _SHA_PINNED_REF = re.compile(r"@[0-9a-f]{40}$")
@@ -237,6 +239,15 @@ def test_uv_lock_resolves_from_no_internal_databricks_index():
     assert not offenders, (
         "uv.lock has internal Databricks index URLs; re-lock against public PyPI "
         f"(lines {offenders[:5]})"
+    )
+
+
+def test_bun_lock_resolves_from_no_internal_databricks_registry():
+    lines = _BUN_LOCK.read_text(encoding="utf-8").splitlines()
+    offenders = [n for n, line in enumerate(lines, 1) if _DATABRICKS_URL.search(line)]
+    assert not offenders, (
+        "bun.lock has internal Databricks registry URLs; re-lock against the public npm "
+        f"registry (lines {offenders[:5]})"
     )
 
 

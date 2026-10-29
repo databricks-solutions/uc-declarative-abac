@@ -1,0 +1,47 @@
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [gold]
+    pii:
+      allowed_values: [email]
+    geo:
+      allowed_values: [region]
+  catalogs:
+    arguments:
+      schemas:
+        - name: sales
+          tables:
+            - name: complete
+              tags: {zone: gold}
+              columns:
+                - name: email
+                  type: STRING
+                  tags: {pii: email}
+                - name: alternate_email
+                  type: STRING
+                  tags: {pii: email}
+                - name: region
+                  type: STRING
+                  tags: {geo: region}
+            - name: missing_using_column
+              tags: {zone: gold}
+              columns:
+                - name: email
+                  type: STRING
+                  tags: {pii: email}
+      policies:
+        - name: mask_with_arguments
+          type: mask
+          has_tags: {zone: gold}
+          function: arguments.default.mask_with_arguments
+          columns:
+            - alias: email_column
+              has_tags: {pii: email}
+            - alias: region_column
+              has_tags: {geo: region}
+            - constant: REDACTED
+            - constant: true
+            - constant: 7
+            - constant: 2.5
+            - constant: 2026-01-01
+            - constant: 2026-01-01T12:30:00

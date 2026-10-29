@@ -1,0 +1,30 @@
+definitions:
+  tables:
+    abac_viz_demo|hr|employees:
+      name: employees
+      comment: Employee master — contact PII masked broadly, ssn/dob redacted outside HR admins
+      tags:
+        abac_demo_sensitivity: confidential
+      columns:
+        - name: employee_id
+          type: long
+        - name: full_name
+          type: string
+          tags:
+            abac_demo_pii: name
+        - name: email
+          type: string
+          tags:
+            abac_demo_pii: email
+        - name: ssn
+          type: string
+          tags:
+            abac_demo_pii_strict: ssn
+        - name: dob
+          type: string
+          tags:
+            abac_demo_pii_strict: dob
+        - name: department
+          type: string
+        - name: cost_center
+          type: string

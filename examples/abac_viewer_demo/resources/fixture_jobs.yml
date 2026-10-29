@@ -1,0 +1,43 @@
+# Fixture jobs (both run on serverless compute, so there is no cluster block).
+#
+# Run order (see README.md and deploy_demo.sh):
+#   1. abac_demo_setup_principals: creates the demo service principals
+#   2. uc-abac deploy of configs/: groups, tags, catalog, tables, policies, grants
+#   3. abac_demo_seed_data: inserts demo rows (the tables must exist first)
+
+resources:
+  jobs:
+    abac_demo_setup_principals:
+      name: abac_demo_setup_principals
+      description: >
+        Creates the demo service principals listed in principals.yaml.
+        Idempotent: existing principals are left alone.
+      tags:
+        project: abac_demo_fixture
+        component: principals
+        managed_by: dab
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: setup_principals
+          notebook_task:
+            notebook_path: ../src/setup_principals.py
+            base_parameters:
+              principals_file: ${workspace.file_path}/principals.yaml
+
+    abac_demo_seed_data:
+      name: abac_demo_seed_data
+      description: >
+        Seeds the abac_viz_demo tables with small demo datasets. Requires the
+        uc-declarative-abac apply step to have created the tables first.
+        Idempotent: INSERT OVERWRITE with fixed literal rows.
+      tags:
+        project: abac_demo_fixture
+        component: seed_data
+        managed_by: dab
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: seed
+          notebook_task:
+            notebook_path: ../src/seed_data.py
+            base_parameters:
+              catalog: ${var.catalog}

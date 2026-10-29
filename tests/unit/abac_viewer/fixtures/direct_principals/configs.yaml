@@ -1,0 +1,34 @@
+resources:
+  governed_tags:
+    zone:
+      allowed_values: [gold]
+    pii:
+      allowed_values: [email]
+  groups:
+    readers:
+      members: [grouped_user]
+  catalogs:
+    direct:
+      schemas:
+        - name: sales
+          tables:
+            - name: customers
+              tags: {zone: gold}
+              columns:
+                - name: email
+                  type: STRING
+                  tags: {pii: email}
+      policies:
+        - name: grant_read
+          type: grant
+          has_tags: {zone: gold}
+          privileges: [use, select]
+          to: [readers, direct_sp, direct_viewer]
+        - name: mask_email
+          type: mask
+          has_tags: {zone: gold}
+          function: direct.default.mask_email
+          column:
+            alias: email_column
+            has_tags: {pii: email}
+          except: [direct_viewer]

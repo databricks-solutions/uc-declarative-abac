@@ -1,0 +1,18 @@
+definitions:
+  tables:
+    abac_viz_demo|finance|vendors:
+      name: vendors
+      comment: Vendor directory — public sensitivity but contact email is PII-masked
+      tags:
+        abac_demo_sensitivity: public
+      columns:
+        - name: vendor_id
+          type: long
+        - name: vendor_name
+          type: string
+        - name: contact_email
+          type: string
+          tags:
+            abac_demo_pii: email
+        - name: country
+          type: string

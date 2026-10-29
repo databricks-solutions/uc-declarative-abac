@@ -1,0 +1,16 @@
+# Catalog-level USE-only grant policy: securables tagged abac_demo_team=hr (the
+# hr schema) are traversable by the HR group. Needed because the schema-attached
+# HR grant policies cascade `use` only up to their attachment point (the hr
+# schema) — without this, HR principals would hold SELECT but no USE_CATALOG.
+definitions:
+  policies:
+    grants|grant_hr_use:
+      name: grant_hr_use
+      comment: HR staff can traverse to the HR schema
+      type: grant
+      has_tags:
+        abac_demo_team: hr
+      privileges:
+        - use
+      to:
+        - abac_demo_hr

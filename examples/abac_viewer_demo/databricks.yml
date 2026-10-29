@@ -1,0 +1,21 @@
+# Portable ABAC demo fixture. The CLI profile supplies the workspace host.
+
+bundle:
+  name: abac-demo-fixture
+
+sync:
+  exclude:
+    - "**/*.md"
+
+variables:
+  catalog:
+    description: Unity Catalog catalog the fixture creates/seeds.
+    default: abac_viz_demo
+
+include:
+  - resources/*.yml
+
+targets:
+  demo:
+    mode: development
+    default: true

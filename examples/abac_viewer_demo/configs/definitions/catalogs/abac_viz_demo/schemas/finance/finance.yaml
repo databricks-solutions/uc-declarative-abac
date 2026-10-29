@@ -1,0 +1,14 @@
+# Finance domain: silver zone, whole schema readable by abac_demo_finance_readers
+# via the catalog-level grant_finance_read policy (matches abac_demo_team=finance).
+definitions:
+  schemas:
+    abac_viz_demo|finance:
+      name: finance
+      comment: Finance domain — schema-wide read for finance readers
+      tags:
+        abac_demo_team: finance
+        abac_demo_zone: silver
+      tables:
+        - $ref: $defs/tables/abac_viz_demo|finance|invoices
+        - $ref: $defs/tables/abac_viz_demo|finance|budgets
+        - $ref: $defs/tables/abac_viz_demo|finance|vendors
