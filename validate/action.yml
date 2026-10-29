@@ -40,7 +40,7 @@ runs:
         reqs="${RUNNER_TEMP}/uc-abac-requirements.txt"
         uv export --frozen --no-dev --group build --no-emit-project --format requirements.txt \
           --output-file "${reqs}" --project "${project}"
-        uv venv --python 3.13 "${venv}"
+        uv venv --clear --python 3.13 "${venv}"
         uv pip install --python "${venv}/bin/python" --require-hashes -r "${reqs}"
         uv pip install --python "${venv}/bin/python" --no-deps --no-build-isolation "${project}"
         echo "${venv}/bin" >> "${GITHUB_PATH}"
