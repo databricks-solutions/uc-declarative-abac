@@ -42,6 +42,9 @@ When a new version adds columns to an existing table, they are appended at the e
 * - `securables`
   - One row per catalog, schema, table, volume, and function in the config, with owner, comment, table columns, and function definition and parameters
   - `information_schema` catalogs / schemata / tables / volumes / routines
+* - `function_rules`
+  - One row per {ref}`RLS mapping rule or filter condition rule <functions-rls-mapping-rules>` of each function in `securables`, with its grouping (`AND` for `match_rules`, `OR` for `match_any_of_rules`). Joins to `securables` on `catalog_name`, `schema_name`, `function_name` = `securable_name`, and `securable_type` = `'FUNCTION'`
+  - The config
 * - `securable_tags`
   - Tags assigned to securables (including columns) in the config's catalogs
   - `information_schema.*_tags`

@@ -41,9 +41,13 @@ from dataclasses import dataclass
 from datetime import date
 
 from uc_abac.configs import (
+    ConditionRuleConfig,
+    FunctionConfig,
     GrantPolicyConfig,
     ResourcesConfig,
+    RlsMappingRuleConfig,
     iter_policy_configs,
+    iter_securable_configs,
 )
 from uc_abac.domains import Domain
 from uc_abac.dumper.attribution import ConfigPaths, build_config_paths
@@ -62,7 +66,7 @@ from uc_abac.securables import (
 from uc_abac.types import PolicyType, PrincipalType, SecurableType
 from uc_abac.utils import is_account_users_group
 
-RowValue = str | int | bool | tuple[str | None, ...] | None
+RowValue = str | int | bool | tuple[str | None, ...] | dict[str, tuple[str, ...]] | None
 Row = dict[str, RowValue]
 
 _REPLACED_NOTE = "Fully replaced by every uc-abac dump run."
@@ -71,11 +75,11 @@ _IDENTIFIER_NOTE = "by canonical identifier (username, group name, or service pr
 
 TARGET_SCHEMA_COMMENT = (
     "Snapshot tables written by uc-abac dump: the current Unity Catalog and account "
-    "state behind a uc-abac declarative ABAC config (securables, tags, privileges, "
-    "policies, governed tags, domains, principals, and group memberships). Every "
-    "table is fully replaced by each uc-abac dump run; see each table's comment for "
-    "its grain and source. Each table's config_file_path column links rows back to the "
-    "uc-abac config file that declares them."
+    "state behind a uc-abac declarative ABAC config (securables, function filter "
+    "rules, tags, privileges, policies, governed tags, domains, principals, and group "
+    "memberships). Every table is fully replaced by each uc-abac dump run; see each "
+    "table's comment for its grain and source. Each table's config_file_path column "
+    "links rows back to the uc-abac config file that declares them."
 )
 
 
@@ -98,12 +102,16 @@ class DumpContext:
     tag keys the config references — the only tags whose assigners were fetched. ``config_paths`` maps each state object (securable, policy, privilege, etc.)
     back to its config file path. ``grant_policies`` holds the active grant policy configs,
     in config hierarchy order, used by the pseudo_policies table.
+    ``filter_rule_functions`` maps the full name of every config function whose body is
+    defined by filter rules (``match_rules`` / ``match_any_of_rules``) to its config,
+    used by the function_rules table.
     """
 
     principals_by_identifier: dict[str, Principal]
     referenced_tag_keys: frozenset[str]
     config_paths: ConfigPaths
     grant_policies: tuple[GrantPolicyConfig, ...]
+    filter_rule_functions: dict[str, FunctionConfig]
 
 
 @dataclass(frozen=True)
@@ -152,6 +160,11 @@ def build_dump_context(
         referenced_tag_keys=frozenset(collect_referenced_tag_keys(config)),
         config_paths=build_config_paths(config, state, run_date),
         grant_policies=grant_policies,
+        filter_rule_functions={
+            f.full_name: f
+            for f in iter_securable_configs(config)
+            if isinstance(f, FunctionConfig) and f.has_filter_rules
+        },
     )
 
 
@@ -255,6 +268,109 @@ def _securables_rows(state: ActualState, context: DumpContext) -> list[Row]:
             r["securable_type"],
         ),
     )
+
+
+def _rls_key_text(key: str | bool | float | date) -> str:
+    """Render an ``rls_mapping`` key as text for the MAP<STRING, ...> column.
+
+    Booleans render as SQL-style ``true`` / ``false`` (checked before numbers, since
+    ``bool`` is an ``int``); dates and timestamps (``datetime`` is a ``date``) as ISO
+    8601; other numbers via ``str``.
+    """
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    if isinstance(key, date):
+        return key.isoformat()
+    return str(key)
+
+
+def _rule_shape_fields(rule: ConditionRuleConfig | RlsMappingRuleConfig) -> Row:
+    """The rule-shape columns: ``condition`` for a condition rule, otherwise the RLS
+    mapping columns, with the other shape's columns NULL."""
+    if isinstance(rule, ConditionRuleConfig):
+        return {
+            "rule_type": "FILTER_CONDITION",
+            "condition": rule.condition,
+            "rls_mapping": None,
+            "parameter": None,
+            "operator": None,
+            "identity": None,
+        }
+    return {
+        "rule_type": "RLS_MAPPING",
+        "condition": None,
+        "rls_mapping": {
+            _rls_key_text(k): tuple(v) for k, v in rule.rls_mapping.items()
+        },
+        "parameter": rule.parameter,
+        "operator": rule.operator,
+        "identity": rule.identity,
+    }
+
+
+def _function_rule_row(
+    function: FunctionConfig,
+    rule: ConditionRuleConfig | RlsMappingRuleConfig,
+    rule_grouping: str,
+    context: DumpContext,
+) -> Row:
+    """One function_rules row. ``config_file_path`` is the file defining the rule,
+    falling back to the function's config file when the rule carries no path."""
+    catalog_name, schema_name, _, function_name = split_securable_name(
+        SecurableType.FUNCTION, function.full_name
+    )
+    config_path = (
+        rule.file_path.as_posix()
+        if rule.file_path
+        else context.config_paths.securable(SecurableType.FUNCTION, function.full_name)
+    )
+    return {
+        "config_file_path": config_path,
+        "catalog_name": catalog_name,
+        "schema_name": schema_name,
+        "function_name": function_name,
+        "rule_name": rule.name,
+        "rule_grouping": rule_grouping,
+        **_rule_shape_fields(rule),
+    }
+
+
+def _function_rule_rows(function: FunctionConfig, context: DumpContext) -> list[Row]:
+    """A function's rule rows: ``match_rules`` (AND) then ``match_any_of_rules`` (OR),
+    each in config order."""
+    grouped = [
+        *(("AND", rule) for rule in function.match_rules or ()),
+        *(("OR", rule) for rule in function.match_any_of_rules or ()),
+    ]
+    return [
+        _function_rule_row(function, rule, grouping, context)
+        for grouping, rule in grouped
+    ]
+
+
+def _function_rules_rows(state: ActualState, context: DumpContext) -> list[Row]:
+    """One row per filter rule of each dumped function defined by filter rules:
+    ``match_rules`` (AND) rules, then ``match_any_of_rules`` (OR) rules, each in config
+    order, read from config since UC state holds only the rendered body.
+
+    Functions are sorted by (catalog, schema, function name) before their rules are
+    expanded, so rule order within a function is preserved.
+    """
+    names = sorted(
+        (
+            s.full_name
+            for s in state.securables
+            if isinstance(s, Function) and s.full_name in context.filter_rule_functions
+        ),
+        key=lambda name: split_securable_name(SecurableType.FUNCTION, name),
+    )
+    return [
+        row
+        for name in names
+        for row in _function_rule_rows(context.filter_rule_functions[name], context)
+    ]
 
 
 def _securable_tags_rows(state: ActualState, context: DumpContext) -> list[Row]:
@@ -831,6 +947,77 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             ),
         ),
         rows=_securables_rows,
+    ),
+    TableSpec(
+        name="function_rules",
+        comment=(
+            "The filter rules (match_rules and match_any_of_rules) of each function in "
+            "securables whose body is defined by RLS mapping rules: one row per rule, "
+            "read from the uc-abac config. Joins to securables on catalog_name, "
+            "schema_name, and function_name = securable_name, where securable_type is "
+            f"FUNCTION. {_EXTENSION_NOTE} {_REPLACED_NOTE}"
+        ),
+        columns=(
+            _CONFIG_FILE_PATH,
+            ColumnSpec("catalog_name", "STRING", "Catalog containing the function."),
+            ColumnSpec("schema_name", "STRING", "Schema containing the function."),
+            ColumnSpec(
+                "function_name",
+                "STRING",
+                "The function's own name; joins to securables.securable_name.",
+            ),
+            ColumnSpec(
+                "rule_name",
+                "STRING",
+                "Name of the rule, unique within its function.",
+            ),
+            ColumnSpec(
+                "rule_type",
+                "STRING",
+                "Rule shape: FILTER_CONDITION (a raw boolean SQL condition) or "
+                "RLS_MAPPING (a mapping of parameter values to principals).",
+            ),
+            ColumnSpec(
+                "rule_grouping",
+                "STRING",
+                "How the rule combines with the function's other rules: AND for a "
+                "match_rules rule, OR for a match_any_of_rules rule. The AND and OR "
+                "groups combine with AND.",
+            ),
+            ColumnSpec(
+                "condition",
+                "STRING",
+                "The boolean SQL condition. NULL for RLS_MAPPING rules.",
+            ),
+            ColumnSpec(
+                "rls_mapping",
+                "MAP<STRING, ARRAY<STRING>>",
+                "Parameter value (as text; '*' matches every row) to the principals, by "
+                "config display name, allowed to see rows holding it. NULL for "
+                "FILTER_CONDITION rules.",
+            ),
+            ColumnSpec(
+                "parameter",
+                "STRING",
+                "Function parameter the rls_mapping keys are compared with. NULL for "
+                "FILTER_CONDITION rules and for a wildcard-only mapping on a function "
+                "with several parameters.",
+            ),
+            ColumnSpec(
+                "operator",
+                "STRING",
+                "Operator comparing the parameter with each key, e.g. = or "
+                "array_contains. NULL for FILTER_CONDITION rules.",
+            ),
+            ColumnSpec(
+                "identity",
+                "STRING",
+                "How the querying user is checked against a mapped principal: "
+                "is_account_group_member or current_user. NULL for FILTER_CONDITION "
+                "rules.",
+            ),
+        ),
+        rows=_function_rules_rows,
     ),
     TableSpec(
         name="securable_tags",
