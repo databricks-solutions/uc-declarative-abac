@@ -4,8 +4,10 @@
 
 ```{glossary}
 definition
-  A reusable, environment-agnostic template declared under `definitions:` (a catalog, schema,
-  table, volume, function, policy, or group). A definition is never deployed by itself; it takes
+  A reusable, environment-agnostic template declared under `definitions:`. Any part of a config
+  can be a definition: a catalog, schema, table, volume, function, or policy, or a smaller
+  fragment such as a tag map, column, parameter list, filter rule, or group. A definition is
+  never deployed by itself; it takes
   effect only when a {term}`resource` references it. See {ref}`definitions-and-resources`.
 
 resource

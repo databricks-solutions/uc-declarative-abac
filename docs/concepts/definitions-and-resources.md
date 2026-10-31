@@ -8,7 +8,7 @@ Your YAML configs contain two main object types:
 
 ### Definitions (reusable templates)
 
-Definitions are environment-agnostic templates that you can reference and reuse across multiple catalogs and environments:
+Definitions are environment-agnostic templates that you can reference and reuse across multiple catalogs and environments. Any part of a config can be a definition, under any type name you choose (see {ref}`references-and-overrides`). The most common are:
 
 - **Catalog definitions**: Top-level templates that list the schemas and policies a catalog should contain. Define the canonical shape of a catalog once, then have a catalog resource `$ref` the definition and override only what differs between environments.
 - **Schema definitions**: Schema templates listing their child tables, volumes, and functions.
@@ -17,6 +17,7 @@ Definitions are environment-agnostic templates that you can reference and reuse 
 - **Function definitions**: UDF definitions with parameters and return expressions.
 - **Rule definitions**: reusable {ref}`RLS mapping rules <functions-rls-mapping-rules>` for row filter functions, under `definitions: rules:`.
 - **Policy definitions**: ABAC policies for column masking, row filtering, and grants.
+- **Other reusable fragments**: anything else you repeat, such as tag maps, columns, function parameters, groups, governed tags, or domains.
 
 ### Resources (deployed UC objects)
 
@@ -78,11 +79,11 @@ These keys are the stable identity for each entity and let you reference entitie
 Strict keys: Config models reject unknown keys. A field that isn't part of the schema (a typo like `has_tag` for `has_tags`, `too` for `to`, or a key placed on the wrong object type) is a hard validation error, not silently ignored. Likewise, a duplicate mapping key anywhere in a YAML file (the same policy id or tag key written twice) is a hard parse-time error.
 ```
 
-Any definition type (catalogs, schemas, tables, volumes, functions, mask/filter policy) can be promoted to a concrete resource by placing it under `resources:` with a `$ref` / `$defs` reference to the definition. For catalogs this is the usual pattern. For leaf types (table, volume, function) you can also promote them directly when you need a single deployed instance outside of a catalog composition. These require `catalog_name` and `schema_name` to be set.
+A catalog, schema, table, volume, function, or mask/filter policy definition can be promoted to a concrete resource by placing it under `resources:` with a `$ref` / `$defs` reference to the definition. For catalogs this is the usual pattern. For leaf types (table, volume, function) you can also promote them directly when you need a single deployed instance outside of a catalog composition. These require `catalog_name` and `schema_name` to be set.
 
 ### Definitions
 
-Definition configs are reusable templates for every UC object type: catalogs, schemas, tables, volumes, functions, and policies. The recommended pattern is to structure your definitions like the UC catalog itself: one top-level `catalog` definition that composes the schemas, policies, tags, and other catalog-level metadata, and then nested schema, table, volume, and function definitions organized by catalog and schema. This keeps definitions close to the UC object they describe and makes the resource side of the config trivial, usually just a `$ref` to the catalog definition with a few overrides (for example, a name change between prod and test environments).
+Definition configs are reusable templates for any part of a config: every UC object type (catalogs, schemas, tables, volumes, functions, and policies) as well as smaller fragments such as tags, columns, parameters, and filter rules. The recommended pattern is to structure your definitions like the UC catalog itself: one top-level `catalog` definition that composes the schemas, policies, tags, and other catalog-level metadata, and then nested schema, table, volume, and function definitions organized by catalog and schema. This keeps definitions close to the UC object they describe and makes the resource side of the config trivial, usually just a `$ref` to the catalog definition with a few overrides (for example, a name change between prod and test environments).
 
 Cross-catalog reusable definitions (typically ABAC policies and shared functions) can live outside the catalog tree under `definitions/policies/` or `definitions/functions/` and be referenced from multiple catalogs.
 

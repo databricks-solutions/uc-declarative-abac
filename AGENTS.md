@@ -109,7 +109,7 @@ Keys use `|`-delimited segments by convention (e.g. `operations|sales|orders`), 
 
 ### $ref syntax
 
-`$ref: $defs/<type>/<key>` — inspired by JSON Schema's `$defs` and `$ref` keywords. The `<type>` is one of: `catalogs`, `schemas`, `tables`, `volumes`, `functions`, `policies`, `groups`. (The resolver is type-agnostic: it resolves `$defs/<type>/<key>` for any `<type>` present under `definitions:`.) A reference target inside a definition may itself contain `${placeholder}` tokens (e.g. `$ref: $defs/tables/base_${layer}`) — see Template variables below; the same applies to a bare inline `$defs/...` string value.
+`$ref: $defs/<type>/<key>` — inspired by JSON Schema's `$defs` and `$ref` keywords. The `<type>` is not a fixed list: the resolver is type-agnostic and resolves `$defs/<type>/<key>` for any `<type>` present under `definitions:`, so any config fragment (tags, columns, parameters, rules, groups, governed tags, domains, ...) can be a definition. A list-bodied definition must be referenced with the bare inline string form; a `$ref` object to one is not supported. A reference target inside a definition may itself contain `${placeholder}` tokens (e.g. `$ref: $defs/tables/base_${layer}`) — see Template variables below; the same applies to a bare inline `$defs/...` string value.
 
 ### Overrides
 
