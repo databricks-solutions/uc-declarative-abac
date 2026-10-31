@@ -32,4 +32,16 @@ governed tag
 principal
   A user, group, or service principal referenced as an owner, policy target, tag assigner, group
   member, or domain owner. See {ref}`principals`.
+
+filter rule
+  One entry of a function's `match_rules` or `match_any_of_rules` list: either a raw boolean
+  `condition` or an {term}`RLS mapping rule`. See {ref}`functions-rls-mapping-rules`.
+
+RLS mapping
+  The `rls_mapping` of an {term}`RLS mapping rule`: keys are values of a function parameter, and
+  each value is the principal, or list of principals, allowed to see rows holding that key.
+
+RLS mapping rule
+  A {term}`filter rule` that grants row visibility from an {term}`RLS mapping`, rendered by the
+  engine into the function body. See {ref}`functions-rls-mapping-rules`.
 ```

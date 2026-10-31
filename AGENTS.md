@@ -224,20 +224,21 @@ This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Developme
 
 - **Manager agent** (you, the main Claude agent) — orchestrates the TDD cycle:
   - Scaffolds models, dataclasses, stubs, and test infrastructure (Phase 1)
+  - Stubs must **never** raise `NotImplementedError` (or any other placeholder exception). Every stub returns a valid hard-coded value of its real return type (e.g. `""`, an empty tuple/set/list, `None` only where the type allows it, the input unchanged, `self` for an after-validator), so a RED test fails because the correct logic is missing, not because an exception was raised
   - Dispatches work to tester and implementer sub-agents
   - Runs `pytest` after each sub-agent to verify red/green status
   - Performs the **refactor** step once all tests for a module are green
   - Tracks progress and advances to the next module
 
-- **Tester agent** (sub-agent) — writes a single test case. Give it:
-  - The BDD-style test case name and description from the implementation design
+- **Tester agent** (sub-agent) — writes all the test cases for one module. Give it:
+  - The BDD-style test case names and descriptions for every behaviour in the module, from the implementation design
   - The public API signature of the function/method under test
   - The relevant state/model dataclasses
   - The test file path and any existing fixtures from `conftest.py`
   - It must NOT write any production code
 
-- **Implementer agent** (sub-agent) — implements just enough code to pass the failing test. Give it:
-  - The failing test (file path + test name)
+- **Implementer agent** (sub-agent) — implements just enough code to pass the module's failing tests. Give it:
+  - The failing tests (file paths + test names)
   - The stub file to implement in
   - The relevant models/dataclasses
   - The test output showing the failure
@@ -253,13 +254,12 @@ This project uses **Test-Driven Development (TDD)**/**Behaviour-Driven Developme
 ### TDD/BDD cycle per module
 
 ```
-For each behaviour in the module:
-  1. Spawn Tester agent → writes test cases
+For each module:
+  1. Spawn one Tester agent → writes the test cases for every behaviour in the module
   2. Review test cases, correcting them or adding missing edge case tests
-  3. Run pytest → confirm RED (test fails against stub)
-  4. Spawn Implementer agent → implements just enough to pass
-  5. Run pytest → confirm GREEN (test passes)
-  6. Repeat for next test case
+  3. Run pytest → confirm RED (tests fail on an assertion against the stub's hard-coded value, never on a stub exception)
+  4. Spawn one Implementer agent → implements just enough to pass the module's tests
+  5. Run pytest → confirm GREEN (tests pass)
 
 Once all tests for the module are green:
   7. Review implementation and REFACTOR if needed
@@ -267,4 +267,4 @@ Once all tests for the module are green:
   9. Run pytest → confirm all tests still green after refactor
 ```
 
-You may run tester and implementer agents in parallel for independent behaviours where there are no dependencies between them.
+You may run tester and implementer agents in parallel for independent modules where there are no dependencies between them (e.g. a module's tests can be written while a module it depends on is still being implemented).

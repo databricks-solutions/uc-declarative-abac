@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Literal, get_args
@@ -14,17 +15,26 @@ from pydantic import (
     AliasChoices,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     Strict,
     StrictBool,
     StrictFloat,
     StrictInt,
     StrictStr,
+    Tag,
     computed_field,
     field_validator,
     model_validator,
 )
 
+from uc_abac.configs.rules import (
+    RLS_WILDCARD,
+    RlsIdentity,
+    RlsOperator,
+    render_rls_key_literal,
+    rls_comparison_type,
+)
 from uc_abac.types import (
     ABSTRACT_PRIVILEGE_MAP,
     SECURABLE_TYPE_PRIVILEGE_MAP,
@@ -839,11 +849,294 @@ class BaseTaggableConfig(BaseSecurableConfig, ABC):
         return _coerce_null_tag_values(v)
 
 
+# An rls_mapping key as written in YAML. Strict so Pydantic never coerces between
+# scalar types (an unquoted YAML ``NO`` must stay a bool to be reported as one), with
+# datetime before date because datetime is a date subclass.
+_RlsMappingKey = (
+    StrictStr
+    | StrictBool
+    | StrictInt
+    | StrictFloat
+    | Annotated[datetime, Strict()]
+    | Annotated[date, Strict()]
+)
+
+
+def _validate_rule_name(name: str) -> str:
+    """Reject a blank filter-rule name, or one containing a line break.
+
+    The name is rendered into the function body as an inline SQL ``--`` comment, so
+    a line break would end the comment and leak the rest of the name into live SQL.
+    """
+    _reject_blank_str(name, "name")
+    if "\n" in name or "\r" in name:
+        raise ValueError(
+            "name must not contain line breaks: it is rendered as a SQL '--' comment"
+        )
+    return name
+
+
+class ConditionRuleConfig(BaseConfig):
+    """A filter rule whose predicate is a raw boolean SQL ``condition``."""
+
+    name: str
+    condition: str
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return _validate_rule_name(v)
+
+    @field_validator("condition", mode="after")
+    @classmethod
+    def _reject_blank_condition(cls, v: str) -> str:
+        return _reject_blank_str(v, "condition")
+
+
+def _reject_blank_principal(principal: object) -> None:
+    """Reject an empty/whitespace principal name. Non-string principals are left for
+    the field's strict type to report."""
+    if isinstance(principal, str):
+        _reject_blank_str(principal, "rls_mapping principal")
+
+
+def _validate_rls_principal_list(key: object, principals: list) -> None:
+    """Reject an empty principal list, blank principals, and duplicated principals."""
+    if not principals:
+        raise ValueError(
+            f"rls_mapping value for key {key!r} must list at least one principal"
+        )
+    for principal in principals:
+        _reject_blank_principal(principal)
+    names = [p for p in principals if isinstance(p, str)]
+    if len(set(names)) != len(names):
+        raise ValueError(
+            f"rls_mapping value for key {key!r} lists the same principal more than once"
+        )
+
+
+def _validate_rls_mapping(mapping: object) -> object:
+    """Return a copy of ``rls_mapping`` with every single principal name coerced to a
+    one-element list, rejecting an empty mapping and invalid principal lists. Key
+    types (and null keys) and non-string principals are left to the field's strict
+    types."""
+    if not isinstance(mapping, dict):
+        return mapping
+    if not mapping:
+        raise ValueError("rls_mapping must map at least one key to principals")
+    coerced = {
+        key: [principals] if isinstance(principals, str) else principals
+        for key, principals in mapping.items()
+    }
+    for key, principals in coerced.items():
+        if isinstance(principals, list):
+            _validate_rls_principal_list(key, principals)
+    return coerced
+
+
+class RlsMappingRuleConfig(BaseConfig):
+    """A filter rule mapping values of one function ``parameter`` to the principals
+    allowed to see rows holding that value."""
+
+    name: str
+    parameter: str | None = None
+    operator: RlsOperator = "="
+    identity: RlsIdentity = "is_account_group_member"
+    rls_mapping: dict[_RlsMappingKey, list[StrictStr]]
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return _validate_rule_name(v)
+
+    @field_validator("rls_mapping", mode="before")
+    @classmethod
+    def _validate_rls_mapping(cls, v):
+        return _validate_rls_mapping(v)
+
+
+def _filter_rule_kind(item: object) -> str | None:
+    """Discriminate a filter rule by which shape-defining key it carries: exactly one
+    of ``condition`` / ``rls_mapping``. Anything else is an untagged item."""
+    if isinstance(item, BaseModel):
+        return "condition" if isinstance(item, ConditionRuleConfig) else "rls_mapping"
+    if not isinstance(item, dict):
+        return None
+    has_condition = "condition" in item
+    has_mapping = "rls_mapping" in item
+    if has_condition == has_mapping:
+        return None
+    return "condition" if has_condition else "rls_mapping"
+
+
+FilterRuleConfig = Annotated[
+    Annotated[ConditionRuleConfig, Tag("condition")]
+    | Annotated[RlsMappingRuleConfig, Tag("rls_mapping")],
+    Discriminator(
+        _filter_rule_kind,
+        custom_error_type="invalid_filter_rule",
+        custom_error_message=(
+            "a filter rule must set exactly one of 'condition' or 'rls_mapping'"
+        ),
+    ),
+]
+
+
+_MATCH_RULE_FIELDS = ("match_rules", "match_any_of_rules")
+
+
+def _check_body_form(function: FunctionConfig) -> None:
+    """Require exactly one body form: ``return``, or one/both non-empty match-rule
+    lists."""
+    for field in _MATCH_RULE_FIELDS:
+        rules = getattr(function, field)
+        if rules is not None and not rules:
+            raise ValueError(f"{field} must contain at least one filter rule")
+    has_rules = (
+        function.match_rules is not None or function.match_any_of_rules is not None
+    )
+    if (function.definition is not None) == has_rules:
+        raise ValueError(
+            "a function must set exactly one body form: 'return', or one or both of "
+            "'match_rules' / 'match_any_of_rules'"
+        )
+
+
+def _default_rule_parameter(
+    rule: RlsMappingRuleConfig, parameters: list[ParameterConfig]
+) -> RlsMappingRuleConfig:
+    """Return a copy of ``rule`` targeting the function's sole parameter when the rule
+    leaves ``parameter`` unset; otherwise ``rule`` unchanged."""
+    if rule.parameter is None and len(parameters) == 1:
+        return rule.model_copy(update={"parameter": parameters[0].name})
+    return rule
+
+
+def _rule_parameter(
+    rule: RlsMappingRuleConfig, parameters: list[ParameterConfig]
+) -> ParameterConfig | None:
+    """Return the declared parameter named by ``rule.parameter`` (None when unset);
+    raise when it names no declared parameter."""
+    if rule.parameter is None:
+        return None
+    for parameter in parameters:
+        if parameter.name == rule.parameter:
+            return parameter
+    declared = ", ".join(p.name for p in parameters) or "none"
+    raise ValueError(
+        f"filter rule '{rule.name}': parameter '{rule.parameter}' is not a declared "
+        f"parameter of the function (declared: {declared})"
+    )
+
+
+def _render_rule_keys(
+    rule: RlsMappingRuleConfig, parameter: ParameterConfig, keys: list
+) -> list[str]:
+    """Render each key as a SQL literal of the rule's comparison type, prefixing any
+    operator/type/key error with the rule name."""
+    try:
+        comparison_type = rls_comparison_type(rule.operator, parameter.data_type)
+        return [render_rls_key_literal(key, comparison_type) for key in keys]
+    except ValueError as exc:
+        raise ValueError(f"filter rule '{rule.name}': {exc}") from exc
+
+
+def _reject_duplicate_literals(rule: RlsMappingRuleConfig, literals: list[str]) -> None:
+    """Reject two rls_mapping keys that render to the same SQL literal."""
+    seen: set[str] = set()
+    for literal in literals:
+        if literal in seen:
+            raise ValueError(
+                f"filter rule '{rule.name}': several rls_mapping keys render to the "
+                f"same literal {literal}"
+            )
+        seen.add(literal)
+
+
+def _validate_mapping_keys(
+    rule: RlsMappingRuleConfig, parameter: ParameterConfig | None
+) -> None:
+    """Validate the non-wildcard keys against the rule's parameter. A wildcard-only
+    mapping compares nothing, so it skips every operator/type check."""
+    keys = [key for key in rule.rls_mapping if key != RLS_WILDCARD]
+    if not keys:
+        return
+    if parameter is None:
+        raise ValueError(
+            f"filter rule '{rule.name}': an rls_mapping with non-wildcard keys must "
+            f"set 'parameter' to one of the function's parameters"
+        )
+    _reject_duplicate_literals(rule, _render_rule_keys(rule, parameter, keys))
+
+
+def _validate_filter_rule(
+    rule: ConditionRuleConfig | RlsMappingRuleConfig,
+    parameters: list[ParameterConfig],
+) -> ConditionRuleConfig | RlsMappingRuleConfig:
+    """Return ``rule`` validated against the function's parameters, with an
+    rls_mapping rule's ``parameter`` defaulted where possible."""
+    if isinstance(rule, ConditionRuleConfig):
+        return rule
+    rule = _default_rule_parameter(rule, parameters)
+    _validate_mapping_keys(rule, _rule_parameter(rule, parameters))
+    return rule
+
+
+def _validate_filter_rules(
+    rules: list | None, parameters: list[ParameterConfig]
+) -> list | None:
+    """Return a new list of validated rules (None stays None)."""
+    if rules is None:
+        return None
+    return [_validate_filter_rule(rule, parameters) for rule in rules]
+
+
 class FunctionConfig(BaseSecurableConfig):
+    """A UC SQL function. Its body is either a raw ``return`` expression or one/both
+    of the structured ``match_rules`` (AND-joined) and ``match_any_of_rules``
+    (OR-joined) row-filter rule lists."""
+
     catalog_name: str
     schema_name: str
     parameters: list[ParameterConfig] | None = None
-    definition: str = Field(alias="return")
+    definition: str | None = Field(default=None, alias="return")
+    match_rules: list[FilterRuleConfig] | None = None
+    match_any_of_rules: list[FilterRuleConfig] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_duplicate_rule_names(cls, data):
+        """Rule names must be unique across the whole function, i.e. across
+        ``match_rules`` and ``match_any_of_rules`` combined."""
+        if not isinstance(data, dict):
+            return data
+        rules = [
+            rule
+            for field in _MATCH_RULE_FIELDS
+            if isinstance(data.get(field), list)
+            for rule in data[field]
+        ]
+        _check_duplicate_names(
+            rules, "filter rule", f"function '{data.get('name', '')}'"
+        )
+        return data
+
+    @model_validator(mode="after")
+    def _validate_body(self) -> FunctionConfig:
+        """Enforce exactly one body form and validate every filter rule against the
+        function's parameters."""
+        _check_body_form(self)
+        parameters = self.parameters or []
+        self.match_rules = _validate_filter_rules(self.match_rules, parameters)
+        self.match_any_of_rules = _validate_filter_rules(
+            self.match_any_of_rules, parameters
+        )
+        return self
+
+    @property
+    def has_filter_rules(self) -> bool:
+        """Whether the body is defined by ``match_rules`` / ``match_any_of_rules``."""
+        return bool(self.match_rules or self.match_any_of_rules)
 
     @computed_field
     @property
@@ -1032,6 +1325,47 @@ class CatalogConfig(BaseTaggableConfig):
     @property
     def full_name(self) -> str:
         return self.name
+
+
+def _schema_policies(schema: SchemaConfig) -> Iterator[PolicyConfig]:
+    """Yield every policy attached to ``schema`` or one of its tables."""
+    yield from schema.policies or []
+    for table in schema.tables or []:
+        yield from table.policies or []
+
+
+def _catalog_policies(catalog: CatalogConfig) -> Iterator[PolicyConfig]:
+    """Yield every policy attached to ``catalog``, its schemas, or their tables."""
+    yield from catalog.policies or []
+    for schema in catalog.schemas or []:
+        yield from _schema_policies(schema)
+
+
+def _filter_rule_function_names(catalogs: list[CatalogConfig]) -> frozenset[str]:
+    """Full names of every function whose body is defined by filter rules."""
+    return frozenset(
+        function.full_name
+        for catalog in catalogs
+        for schema in catalog.schemas or []
+        for function in schema.functions or []
+        if function.has_filter_rules
+    )
+
+
+def _reject_mask_policy_using_filter_rules(
+    policy: PolicyConfig, filter_rule_functions: frozenset[str]
+) -> None:
+    """Reject ``policy`` when it is a mask policy whose function is defined by filter
+    rules."""
+    if (
+        isinstance(policy, MaskPolicyConfig)
+        and policy.function in filter_rule_functions
+    ):
+        raise ValueError(
+            f"mask policy '{policy.name}' uses function '{policy.function}', which is "
+            "defined by filter rules; a filter-rule function returns a boolean row "
+            "predicate and can only be used by filter policies"
+        )
 
 
 TaggableConfig = (
@@ -1259,3 +1593,16 @@ class ResourcesConfig(BaseConfig):
                 key="id",
             )
         return data
+
+    @model_validator(mode="after")
+    def _reject_mask_policies_using_filter_rule_functions(self) -> ResourcesConfig:
+        """Reject a mask policy whose function body is defined by filter rules: such a
+        function returns a boolean row predicate, never a masked column value. Covers
+        inline, ``$defs``, and full-name string references alike, since every policy
+        ``function`` is a qualified full name by this point."""
+        catalogs = list(self.catalogs.values())
+        filter_rule_functions = _filter_rule_function_names(catalogs)
+        for catalog in catalogs:
+            for policy in _catalog_policies(catalog):
+                _reject_mask_policy_using_filter_rules(policy, filter_rule_functions)
+        return self

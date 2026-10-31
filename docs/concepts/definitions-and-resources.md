@@ -15,6 +15,7 @@ Definitions are environment-agnostic templates that you can reference and reuse 
 - **Table definitions**: Table definitions tied to a schema definition.
 - **Volume definitions**: Volume definitions tied to a schema definition.
 - **Function definitions**: UDF definitions with parameters and return expressions.
+- **Rule definitions**: reusable {ref}`RLS mapping rules <functions-rls-mapping-rules>` for row filter functions, under `definitions: rules:`.
 - **Policy definitions**: ABAC policies for column masking, row filtering, and grants.
 
 ### Resources (deployed UC objects)

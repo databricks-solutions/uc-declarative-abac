@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 from uc_abac.domains import Domain, DomainIcon
@@ -11,6 +12,7 @@ from uc_abac.privileges import SecurablePrivilege
 from uc_abac.securables import (
     AttributeUpdate,
     Function,
+    Table,
 )
 from uc_abac.tags import SecurableTag
 from uc_abac.types import (
@@ -59,6 +61,26 @@ def _change_lines(mock_logger: MagicMock) -> list[str]:
         for m in _info_messages(mock_logger)
         if m.startswith("  ") and m[2:3] in ("+", "~", "-", "!")
     ]
+
+
+def _logged_lines(mock_logger: MagicMock) -> list[str]:
+    """All info output split into physical lines, regardless of whether the
+    logger emitted a multi-line block as one message or several."""
+    return "\n".join(_info_messages(mock_logger)).splitlines()
+
+
+def _indent(line: str) -> int:
+    """Number of leading whitespace characters on a line."""
+    return len(line) - len(line.lstrip())
+
+
+def _find_change_line(lines: list[str], full_name: str) -> str:
+    """Return the first change line (``  <symbol> ...``) mentioning ``full_name``."""
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped[:1] in ("+", "~", "-", "!") and full_name in line:
+            return line
+    raise AssertionError(f"no change line for {full_name!r} in {lines!r}")
 
 
 def _make_tag(
@@ -851,35 +873,39 @@ def test_logger_securable_replace_shows_changed_parameters() -> None:
     assert "parameters: (a STRING) -> (a STRING, b INT)" in msg
 
 
-def test_logger_securable_replace_marks_definition_change_without_inlining_body() -> (
-    None
-):
-    """Function replace where the body changed surfaces only `definition: changed`
-    — the actual SQL body is intentionally NOT inlined to keep log lines short."""
+def test_logger_securable_replace_keeps_definition_body_off_the_change_line() -> None:
+    """Function replace where the body changed keeps the SQL body off the
+    columnar change line itself — the body appears only in the diff block
+    logged beneath it."""
     cl, mock_logger = _make_change_logger()
     new = _make_function(definition="UPPER(col)\nWHERE col IS NOT NULL")
     old = _make_function(definition="col")
 
     cl.log_securable_replace(new, old)
 
-    msg = _info_messages(mock_logger)[0]
-    assert "definition: changed" in msg
-    assert "UPPER(col)" not in msg
-    assert "col IS NOT NULL" not in msg
+    change_line = _find_change_line(_logged_lines(mock_logger), "cat.s.fn")
+    assert "definition: changed" not in change_line
+    assert "UPPER(col)" not in change_line
+    assert "col IS NOT NULL" not in change_line
 
 
 def test_logger_securable_replace_combines_multiple_field_changes() -> None:
     """When multiple function fields change, each appears in the suffix joined by `|`."""
     cl, mock_logger = _make_change_logger()
-    new = _make_function(comment="b", definition="UPPER(col)")
-    old = _make_function(comment="a", definition="col")
+    new = _make_function(
+        parameters=(("a", "STRING"), ("b", "INT")),
+        comment="b",
+        definition="UPPER(col)",
+    )
+    old = _make_function(parameters=(("a", "STRING"),), comment="a", definition="col")
 
     cl.log_securable_replace(new, old)
 
-    msg = _info_messages(mock_logger)[0]
-    assert "definition: changed" in msg
-    assert "comment: 'a' -> 'b'" in msg
-    assert " | " in msg
+    change_line = _find_change_line(_logged_lines(mock_logger), "cat.s.fn")
+    assert "parameters: (a STRING) -> (a STRING, b INT)" in change_line
+    assert "comment: 'a' -> 'b'" in change_line
+    assert " | " in change_line
+    assert "definition: changed" not in change_line
 
 
 def test_logger_securable_replace_without_old_state_falls_back_to_bare_message() -> (
@@ -1222,3 +1248,118 @@ def test_logger_includes_governed_tag_assigners_in_dry_run_summary() -> None:
     summary = cl._build_summary()
     assert "Governed tag assigners:" in summary
     assert "1 to grant" in summary
+
+
+# ---------------------------------------------------------------------------
+# Function body / definition diff output
+# ---------------------------------------------------------------------------
+
+
+def _lines_after(lines: list[str], change_line: str) -> list[str]:
+    """Lines logged after ``change_line``."""
+    return lines[lines.index(change_line) + 1 :]
+
+
+def _has_indented_line(
+    lines: list[str], change_line: str, predicate: Callable[[str], bool]
+) -> bool:
+    """True when some line after ``change_line`` satisfies ``predicate`` (applied
+    to the stripped line) and is indented further than the change line."""
+    base = _indent(change_line)
+    return any(
+        predicate(line.strip()) and _indent(line) > base
+        for line in _lines_after(lines, change_line)
+    )
+
+
+def _is_diff_line(sign: str, text: str) -> Callable[[str], bool]:
+    """Predicate matching a diff line ``<sign><text>`` (whitespace-tolerant)."""
+    return lambda s: s.startswith(sign) and s[1:].strip() == text
+
+
+def test_change_logger_logs_function_body_on_create() -> None:
+    """Creating a function logs its SQL body indented beneath the change line."""
+    cl, mock_logger = _make_change_logger()
+
+    cl.log_securable_create(_make_function(definition="UPPER(col)"))
+
+    lines = _logged_lines(mock_logger)
+    change_line = _find_change_line(lines, "cat.s.fn")
+    assert "UPPER(col)" not in change_line
+    assert _has_indented_line(lines, change_line, lambda s: s == "UPPER(col)")
+
+
+def test_change_logger_logs_multiline_function_body_indented_on_create() -> None:
+    """Every line of a multi-line function body is logged, each indented
+    beneath the change line."""
+    cl, mock_logger = _make_change_logger()
+    body = "CASE\n  WHEN col IS NULL THEN 'x'\n  ELSE UPPER(col)\nEND"
+
+    cl.log_securable_create(_make_function(definition=body))
+
+    lines = _logged_lines(mock_logger)
+    change_line = _find_change_line(lines, "cat.s.fn")
+    for body_line in body.splitlines():
+        expected = body_line.strip()
+        assert _has_indented_line(lines, change_line, lambda s, e=expected: s == e), (
+            f"body line {expected!r} not logged indented beneath change line"
+        )
+
+
+def test_change_logger_does_not_log_body_for_non_function_create() -> None:
+    """Creating a non-function securable logs only the change line."""
+    cl, mock_logger = _make_change_logger()
+
+    cl.log_securable_create(
+        Table(securable_type=SecurableType.TABLE, full_name="cat.s.tbl")
+    )
+
+    lines = [line for line in _logged_lines(mock_logger) if line.strip()]
+    change_line = _find_change_line(lines, "cat.s.tbl")
+    assert _lines_after(lines, change_line) == []
+
+
+def test_change_logger_logs_definition_diff_on_replace() -> None:
+    """Replacing a function whose definition changed logs a unified diff of
+    old vs new body, indented beneath the change line."""
+    cl, mock_logger = _make_change_logger()
+    old = _make_function(definition="SELECT col\nFROM t")
+    new = _make_function(definition="SELECT UPPER(col)\nFROM t")
+
+    cl.log_securable_replace(new, old)
+
+    lines = _logged_lines(mock_logger)
+    change_line = _find_change_line(lines, "cat.s.fn")
+    assert _has_indented_line(lines, change_line, _is_diff_line("-", "SELECT col"))
+    assert _has_indented_line(
+        lines, change_line, _is_diff_line("+", "SELECT UPPER(col)")
+    )
+
+
+def test_change_logger_omits_definition_changed_suffix_on_replace() -> None:
+    """The ``definition: changed`` summary text is no longer emitted anywhere."""
+    cl, mock_logger = _make_change_logger()
+    old = _make_function(definition="col")
+    new = _make_function(definition="UPPER(col)")
+
+    cl.log_securable_replace(new, old)
+
+    output = "\n".join(_logged_lines(mock_logger))
+    assert "definition: changed" not in output
+
+
+def test_change_logger_keeps_comment_suffix_without_diff_when_only_comment_changes() -> (
+    None
+):
+    """When only the comment changed, the comment delta stays on the change
+    line and no definition diff block is logged."""
+    cl, mock_logger = _make_change_logger()
+    old = _make_function(comment="a", definition="UPPER(col)")
+    new = _make_function(comment="b", definition="UPPER(col)")
+
+    cl.log_securable_replace(new, old)
+
+    lines = [line for line in _logged_lines(mock_logger) if line.strip()]
+    change_line = _find_change_line(lines, "cat.s.fn")
+    assert "comment: 'a' -> 'b'" in change_line
+    assert _lines_after(lines, change_line) == []

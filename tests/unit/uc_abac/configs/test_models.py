@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from pydantic import ValidationError
 
@@ -4481,3 +4483,577 @@ def test_base_config_excludes_file_path_from_dumps_and_repr():
     # Verify file_path is excluded from repr()
     repr_str = repr(c)
     assert "file_path" not in repr_str
+
+
+# ---------------------------------------------------------------------------
+# FunctionConfig filter rules (match_rules / match_any_of_rules)
+# ---------------------------------------------------------------------------
+
+
+def _filter_fn(parameters=None, **body):
+    """Return a FunctionConfig dict with the given parameters and body fields."""
+    data = {
+        "name": "fn_filter",
+        "catalog_name": "cat",
+        "schema_name": "sch",
+    }
+    if parameters is not None:
+        data["parameters"] = parameters
+    data.update(body)
+    return data
+
+
+_REGION_AMOUNT_PARAMS = [
+    {"name": "region", "type": "string"},
+    {"name": "amount", "type": "decimal(18,2)"},
+]
+
+
+def _mapping_rule(rls_mapping, **fields):
+    """Return an rls_mapping rule dict named ``r`` with optional extra fields."""
+    return {"name": "r", "rls_mapping": rls_mapping, **fields}
+
+
+def _single_param_fn(param_type: str, rule: dict) -> dict:
+    """A function with one parameter ``p`` of ``param_type`` and a single match rule."""
+    return _filter_fn(
+        parameters=[{"name": "p", "type": param_type}],
+        match_rules=[rule],
+    )
+
+
+def test_function_config_accepts_match_rules_instead_of_return():
+    """A function body may be defined by match_rules alone, with no `return`."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=_REGION_AMOUNT_PARAMS,
+            match_rules=[
+                {
+                    "name": "user_in_region",
+                    "parameter": "region",
+                    "rls_mapping": {
+                        "AMER": "amer_readers",
+                        "EMEA": ["emea_readers", "emea_leads"],
+                        "*": "global_readers",
+                    },
+                }
+            ],
+        )
+    )
+    assert fn.definition is None
+    assert fn.has_filter_rules is True
+    assert len(fn.match_rules) == 1
+
+
+def test_function_config_accepts_match_any_of_rules_alone():
+    """A function body may be defined by match_any_of_rules alone."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=_REGION_AMOUNT_PARAMS,
+            match_any_of_rules=[
+                {"name": "amount_is_small", "condition": "amount < 10000"},
+                {"name": "user_is_fraud_analyst", "rls_mapping": {"*": "fraud"}},
+            ],
+        )
+    )
+    assert fn.has_filter_rules is True
+    assert fn.match_rules is None
+    assert len(fn.match_any_of_rules) == 2
+
+
+def test_function_config_accepts_match_rules_and_match_any_of_rules_combined():
+    """match_rules and match_any_of_rules may be combined in one function."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=_REGION_AMOUNT_PARAMS,
+            match_rules=[
+                {
+                    "name": "user_in_region",
+                    "parameter": "region",
+                    "rls_mapping": {"AMER": "amer_readers", "*": "global_readers"},
+                }
+            ],
+            match_any_of_rules=[
+                {"name": "amount_is_small", "condition": "amount < 10000"},
+                {"name": "user_is_fraud_analyst", "rls_mapping": {"*": "fraud"}},
+            ],
+        )
+    )
+    assert fn.has_filter_rules is True
+    assert len(fn.match_rules) == 1
+    assert len(fn.match_any_of_rules) == 2
+
+
+def test_function_config_has_filter_rules_is_false_when_return_is_set():
+    """A `return`-bodied function reports has_filter_rules False."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(parameters=[{"name": "c", "type": "string"}], **{"return": "c"})
+    )
+    assert fn.has_filter_rules is False
+    assert fn.definition == "c"
+
+
+@pytest.mark.parametrize("match_field", ["match_rules", "match_any_of_rules"])
+def test_function_config_rejects_return_combined_with_match_rules(match_field):
+    """`return` and a match-rules field are mutually exclusive body forms."""
+    with pytest.raises(ValidationError, match="return"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                **{
+                    "return": "true",
+                    match_field: [{"name": "a", "condition": "c = 'x'"}],
+                },
+            )
+        )
+
+
+def test_function_config_rejects_missing_body():
+    """A function with neither `return` nor any match-rules field is rejected."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _filter_fn(parameters=[{"name": "c", "type": "string"}])
+        )
+
+
+@pytest.mark.parametrize("match_field", ["match_rules", "match_any_of_rules"])
+def test_function_config_rejects_empty_match_rules_list(match_field):
+    """An empty match-rules list is rejected rather than treated as no body."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}], **{match_field: []}
+            )
+        )
+
+
+@pytest.mark.parametrize("match_field", ["match_rules", "match_any_of_rules"])
+def test_function_config_rejects_duplicate_rule_names_within_one_list(match_field):
+    """Two rules sharing a name within one list raise DuplicateResourceError."""
+    with pytest.raises(DuplicateResourceError, match="filter rule"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                **{
+                    match_field: [
+                        {"name": "dup", "condition": "c = 'a'"},
+                        {"name": "dup", "condition": "c = 'b'"},
+                    ]
+                },
+            )
+        )
+
+
+def test_function_config_rejects_duplicate_rule_names_across_both_lists():
+    """Rule names are unique across the whole function, so the same name in
+    `match_rules` and `match_any_of_rules` raises DuplicateResourceError."""
+    with pytest.raises(DuplicateResourceError, match="filter rule"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                match_rules=[{"name": "same", "condition": "c = 'a'"}],
+                match_any_of_rules=[{"name": "same", "condition": "c = 'b'"}],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"name": "both", "condition": "c = 'a'", "rls_mapping": {"*": "g"}},
+        {"name": "neither"},
+    ],
+    ids=["both", "neither"],
+)
+def test_function_config_rejects_rule_without_exactly_one_of_condition_or_mapping(
+    rule,
+):
+    """A rule must set exactly one of `condition` / `rls_mapping`."""
+    with pytest.raises(ValidationError, match="condition"):
+        FunctionConfig.model_validate(
+            _filter_fn(parameters=[{"name": "c", "type": "string"}], match_rules=[rule])
+        )
+
+
+def test_function_config_rejects_extra_key_on_condition_rule():
+    """A condition rule doesn't accept rls_mapping-only keys such as `operator`."""
+    with pytest.raises(ValidationError, match="operator"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                match_rules=[{"name": "a", "condition": "c = 'a'", "operator": "="}],
+            )
+        )
+
+
+@pytest.mark.parametrize("condition", ["", "   "])
+def test_function_config_rejects_blank_condition(condition):
+    """A blank or whitespace-only condition is rejected."""
+    with pytest.raises(ValidationError, match="condition"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                match_rules=[{"name": "a", "condition": condition}],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [{"condition": "c = 'a'"}, {"rls_mapping": {"*": "g"}}],
+    ids=["condition", "rls_mapping"],
+)
+def test_function_config_rejects_rule_missing_name(rule):
+    """Every filter rule must carry a `name`."""
+    with pytest.raises(ValidationError, match="name"):
+        FunctionConfig.model_validate(
+            _filter_fn(parameters=[{"name": "c", "type": "string"}], match_rules=[rule])
+        )
+
+
+@pytest.mark.parametrize("name", ["", "   ", "a\nb", "a\rb"])
+@pytest.mark.parametrize(
+    "rule",
+    [{"condition": "c = 'a'"}, {"rls_mapping": {"*": "g"}}],
+    ids=["condition", "rls_mapping"],
+)
+def test_function_config_rejects_unsafe_rule_name(rule, name):
+    """A rule name that is blank or contains a line break is rejected: it is
+    rendered as an inline SQL comment, which a line break would terminate."""
+    with pytest.raises(ValidationError, match="name"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "c", "type": "string"}],
+                match_rules=[{"name": name, **rule}],
+            )
+        )
+
+
+def test_function_config_rejects_missing_parameter_when_function_has_several():
+    """A non-wildcard mapping on a multi-parameter function must name its parameter."""
+    with pytest.raises(ValidationError, match="parameter"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=_REGION_AMOUNT_PARAMS,
+                match_rules=[_mapping_rule({"AMER": "amer_readers"})],
+            )
+        )
+
+
+def test_function_config_accepts_wildcard_only_mapping_without_parameter():
+    """A wildcard-only mapping needs no parameter, even with several parameters."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=_REGION_AMOUNT_PARAMS,
+            match_rules=[_mapping_rule({"*": "global_readers"})],
+        )
+    )
+    assert fn.has_filter_rules is True
+
+
+def test_function_config_defaults_parameter_to_sole_function_parameter():
+    """On a single-parameter function, a mapping rule's parameter defaults to it."""
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=[{"name": "region", "type": "string"}],
+            match_rules=[_mapping_rule({"AMER": "amer_readers"})],
+        )
+    )
+    assert fn.match_rules[0].parameter == "region"
+
+
+def test_function_config_rejects_undeclared_rule_parameter():
+    """A rule `parameter` must be one of the function's declared parameters."""
+    with pytest.raises(ValidationError, match="country"):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=_REGION_AMOUNT_PARAMS,
+                match_rules=[_mapping_rule({"AMER": "g"}, parameter="country")],
+            )
+        )
+
+
+def test_function_config_rejects_non_wildcard_mapping_when_function_has_no_parameters():
+    """A non-wildcard mapping has nothing to compare against on a parameterless function."""
+    with pytest.raises(ValidationError, match="parameter"):
+        FunctionConfig.model_validate(
+            _filter_fn(match_rules=[_mapping_rule({"AMER": "amer_readers"})])
+        )
+
+
+@pytest.mark.parametrize("operator", ["!=", "IN"])
+def test_function_config_rejects_operator_outside_allowlist(operator):
+    """Only allowlisted operators may be used on an rls_mapping rule."""
+    with pytest.raises(ValidationError, match="operator"):
+        FunctionConfig.model_validate(
+            _single_param_fn("string", _mapping_rule({"a": "g"}, operator=operator))
+        )
+
+
+@pytest.mark.parametrize(
+    ("param_type", "operator", "key"),
+    [
+        ("int", "<=", 10),
+        ("string", "ILIKE", "a%"),
+        ("array<string>", "array_contains", "a"),
+        ("map<string,int>", "map_contains_key", "a"),
+        ("string", "regexp_like", "^a.*"),
+    ],
+)
+def test_function_config_accepts_allowlisted_operator(param_type, operator, key):
+    """Allowlisted operators validate on a compatible parameter type."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(param_type, _mapping_rule({key: "g"}, operator=operator))
+    )
+    assert fn.match_rules[0].operator == operator
+
+
+def test_function_config_rejects_is_member_identity():
+    """`is_member` (workspace-local groups) is not an allowed identity."""
+    with pytest.raises(ValidationError, match="is_member"):
+        FunctionConfig.model_validate(
+            _single_param_fn("string", _mapping_rule({"a": "g"}, identity="is_member"))
+        )
+
+
+def test_function_config_accepts_current_user_identity():
+    """`current_user` is an allowed identity."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(
+            "string",
+            _mapping_rule({"a": "someone@example.com"}, identity="current_user"),
+        )
+    )
+    assert fn.match_rules[0].identity == "current_user"
+
+
+def test_function_config_coerces_single_principal_to_one_element_list():
+    """A single principal name is normalised to a one-element list, so every
+    rls_mapping value is a list of principals."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(
+            "string", _mapping_rule({"a": "group_a", "b": ["group_b", "group_c"]})
+        )
+    )
+    assert fn.match_rules[0].rls_mapping == {
+        "a": ["group_a"],
+        "b": ["group_b", "group_c"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("param_type", "operator", "key"),
+    [
+        ("int", "LIKE", 1),
+        ("boolean", "<=", True),
+        ("array<string>", "=", "a"),
+        ("string", "map_contains_key", "a"),
+    ],
+)
+def test_function_config_rejects_operator_incompatible_with_parameter_type(
+    param_type, operator, key
+):
+    """An operator that can't apply to the parameter's type is rejected."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _single_param_fn(param_type, _mapping_rule({key: "g"}, operator=operator))
+        )
+
+
+def test_function_config_rejects_bool_key_on_string_parameter():
+    """An unquoted YAML boolean key on a string parameter is rejected, hinting to quote it."""
+    with pytest.raises(ValidationError, match="quote"):
+        FunctionConfig.model_validate(
+            _single_param_fn("string", _mapping_rule({False: "g"}))
+        )
+
+
+def test_function_config_rejects_unparseable_string_key_on_int_parameter():
+    """A string key that doesn't parse as the parameter's type is rejected."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _single_param_fn("int", _mapping_rule({"abc": "g"}))
+        )
+
+
+@pytest.mark.parametrize(
+    ("param_type", "key"),
+    [
+        ("int", 42),
+        ("int", "42"),
+        ("date", date(2026, 5, 2)),
+        ("date", "2026-05-02"),
+    ],
+    ids=["native-int", "string-int", "native-date", "string-date"],
+)
+def test_function_config_accepts_key_matching_comparison_type(param_type, key):
+    """Native keys of the comparison type, and string keys that parse as it, are accepted."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(param_type, _mapping_rule({key: "g"}))
+    )
+    assert fn.has_filter_rules is True
+
+
+@pytest.mark.parametrize(
+    "param_type", ["string", "int", "date", "boolean", "decimal(18,2)", "binary"]
+)
+def test_function_config_accepts_wildcard_key_with_any_parameter_type(param_type):
+    """The `'*'` wildcard key is valid whatever the parameter's type."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(param_type, _mapping_rule({"*": "g"}))
+    )
+    assert fn.has_filter_rules is True
+
+
+def test_function_config_rejects_keys_that_canonicalise_to_the_same_literal():
+    """`"042"` and `42` are the same int literal, so they're duplicate keys."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _single_param_fn("int", _mapping_rule({"042": "a", 42: "b"}))
+        )
+
+
+def test_function_config_rejects_mapping_on_unsupported_comparison_type():
+    """An rls_mapping can't compare a binary parameter; the error points to `condition`."""
+    with pytest.raises(ValidationError, match="condition"):
+        FunctionConfig.model_validate(
+            _single_param_fn("binary", _mapping_rule({"abc": "g"}))
+        )
+
+
+@pytest.mark.parametrize(
+    "rls_mapping",
+    [
+        {},
+        {"a": []},
+        {"a": ""},
+        {"a": "   "},
+        {"a": ["g", "g"]},
+        {None: "g"},
+    ],
+    ids=[
+        "empty-mapping",
+        "empty-list",
+        "empty-principal",
+        "blank-principal",
+        "duplicate-principal",
+        "none-key",
+    ],
+)
+def test_function_config_rejects_invalid_rls_mapping(rls_mapping):
+    """Empty mappings, empty/blank/duplicate principals, and null keys are rejected."""
+    with pytest.raises(ValidationError):
+        FunctionConfig.model_validate(
+            _single_param_fn("string", _mapping_rule(rls_mapping))
+        )
+
+
+# ---------------------------------------------------------------------------
+# ResourcesConfig: mask policies vs filter-rule functions
+# ---------------------------------------------------------------------------
+
+
+def _schema_with_function_and_policy(function: dict, policy: dict) -> dict:
+    """A resources config with one schema holding ``function`` and a table ``policy``."""
+    return {
+        "catalogs": {
+            "cat": {
+                "name": "cat",
+                "schemas": [
+                    {
+                        "name": "s",
+                        "functions": [function],
+                        "tables": [{"name": "t", "policies": [policy]}],
+                    }
+                ],
+            }
+        }
+    }
+
+
+_FILTER_RULE_FUNCTION = {
+    "name": "fn",
+    "parameters": [{"name": "region", "type": "string"}],
+    "match_rules": [{"name": "r", "rls_mapping": {"AMER": "amer_readers"}}],
+}
+
+_MASK_POLICY = {
+    "name": "m",
+    "type": "mask",
+    "function": "cat.s.fn",
+    "columns": [{"alias": "c", "has_tags": {"pii": "email"}}],
+}
+
+
+def test_resources_config_rejects_mask_policy_using_filter_rule_function():
+    """A filter-rule function returns a row predicate, so a mask policy can't use it."""
+    with pytest.raises(ValidationError, match="mask"):
+        ResourcesConfig.model_validate(
+            _schema_with_function_and_policy(_FILTER_RULE_FUNCTION, _MASK_POLICY)
+        )
+
+
+def _config_with_policy_at(level: str, function: dict, policy: dict) -> dict:
+    """A resources config with one schema holding ``function`` and ``policy`` attached
+    at the catalog or schema ``level``."""
+    schema = {"name": "s", "functions": [function]}
+    catalog = {"name": "cat", "schemas": [schema]}
+    target = catalog if level == "catalog" else schema
+    target["policies"] = [policy]
+    return {"catalogs": {"cat": catalog}}
+
+
+@pytest.mark.parametrize("level", ["catalog", "schema"])
+def test_resources_config_rejects_mask_policy_using_filter_rule_function_at_level(
+    level,
+):
+    """A mask policy attached at the catalog or schema level is rejected too."""
+    with pytest.raises(ValidationError, match="only be used by filter policies"):
+        ResourcesConfig.model_validate(
+            _config_with_policy_at(level, _FILTER_RULE_FUNCTION, _MASK_POLICY)
+        )
+
+
+@pytest.mark.parametrize("level", ["catalog", "schema"])
+def test_resources_config_accepts_mask_policy_using_return_function_at_level(level):
+    """The same catalog- or schema-level mask policy is valid with a `return`
+    function, so the rejection above is due to the filter rules alone."""
+    return_function = {
+        "name": "fn",
+        "parameters": [{"name": "c", "type": "string"}],
+        "return": "c",
+    }
+    ResourcesConfig.model_validate(
+        _config_with_policy_at(level, return_function, _MASK_POLICY)
+    )
+
+
+def test_resources_config_accepts_filter_policy_using_filter_rule_function():
+    """A filter policy may use a function defined by filter rules."""
+    config = ResourcesConfig.model_validate(
+        _schema_with_function_and_policy(
+            _FILTER_RULE_FUNCTION,
+            {
+                "name": "f",
+                "type": "filter",
+                "function": "cat.s.fn",
+                "columns": [{"alias": "region", "has_tags": {"geo": "region"}}],
+            },
+        )
+    )
+    assert config.catalogs["cat"].schemas[0].functions[0].has_filter_rules is True
+
+
+def test_resources_config_accepts_mask_policy_using_return_function():
+    """A mask policy using a `return`-bodied function is unaffected."""
+    config = ResourcesConfig.model_validate(
+        _schema_with_function_and_policy(
+            {
+                "name": "fn",
+                "parameters": [{"name": "c", "type": "string"}],
+                "return": "c",
+            },
+            _MASK_POLICY,
+        )
+    )
+    assert config.catalogs["cat"].schemas[0].tables[0].policies[0].type == "mask"

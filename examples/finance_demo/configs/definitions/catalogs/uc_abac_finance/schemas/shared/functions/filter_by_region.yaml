@@ -1,6 +1,7 @@
 # Reusable row-filter UDF: a row is visible only to members of the matching
 # regional access group. Referenced by region|filter_by_region as
-# `shared.filter_by_region`.
+# `shared.filter_by_region`. The body is rendered from the RLS mapping rule, and
+# every group is validated against the account at deploy time.
 definitions:
   functions:
     finance|filter_by_region:
@@ -9,7 +10,9 @@ definitions:
       parameters:
         - name: region
           type: string
-      return: |-
-        (region = 'amer' AND is_account_group_member('uc_abac_region_amer'))
-        OR (region = 'emea' AND is_account_group_member('uc_abac_region_emea'))
-        OR (region = 'apac' AND is_account_group_member('uc_abac_region_apac'))
+      match_rules:
+        - name: user_in_region
+          rls_mapping:
+            amer: uc_abac_region_amer
+            emea: uc_abac_region_emea
+            apac: uc_abac_region_apac

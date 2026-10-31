@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from datetime import date
+
 from uc_abac.configs import ResourcesConfig
 from uc_abac.principals import Principal
 from uc_abac.securables import (
     Column,
+    ConditionRule,
+    FilterRules,
     Function,
+    RlsMappingRule,
     Securable,
     SecurableAttributes,
     Table,
@@ -1281,3 +1286,174 @@ def test_securable_compiler_populates_column_comment_on_table_columns():
         c for c in table.columns if c.full_name == "my_cat.sales.orders.email"
     )
     assert email_col.comment == "Customer email address"
+
+
+# ---------------------------------------------------------------------------
+# compile_desired_securables — filter-rule functions
+# ---------------------------------------------------------------------------
+
+
+def _filter_rule_function_config(function: dict) -> ResourcesConfig:
+    """Wrap a single function config dict in a catalog/schema ResourcesConfig."""
+    return ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_catalog": {
+                    "schemas": [{"name": "shared", "functions": [function]}],
+                }
+            }
+        }
+    )
+
+
+def _compiled_function(config: ResourcesConfig) -> Function:
+    """Return the single Function compiled from ``config``."""
+    return next(
+        s for s in compile_desired_securables(config) if isinstance(s, Function)
+    )
+
+
+def _single_rls_rule(parameters: list[dict], rule: dict) -> RlsMappingRule:
+    """Compile a function with one ``match_rules`` rls rule and return that rule."""
+    config = _filter_rule_function_config(
+        {
+            "name": "row_filter",
+            "parameters": parameters,
+            "match_rules": [{"name": "rule", **rule}],
+        }
+    )
+    filter_rules = _compiled_function(config).filter_rules
+    assert filter_rules is not None
+    (compiled_rule,) = filter_rules.all_of
+    assert isinstance(compiled_rule, RlsMappingRule)
+    return compiled_rule
+
+
+def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
+    """A function defined by match_rules / match_any_of_rules compiles to a Function
+    with an empty definition and a FilterRules spec: match_rules become all_of and
+    match_any_of_rules become any_of (in list order), condition rules keep their
+    condition, and rls_mapping principals stay unresolved (list values keep order).
+    A single-parameter function's rls rule defaults its parameter to that one."""
+    config = _filter_rule_function_config(
+        {
+            "name": "region_filter",
+            "parameters": [{"name": "region", "type": "STRING"}],
+            "match_rules": [
+                {
+                    "name": "region_access",
+                    "rls_mapping": {
+                        "AMER": "amer_readers",
+                        "EMEA": ["emea_b", "emea_a"],
+                    },
+                },
+                {"name": "not_deleted", "condition": "region IS NOT NULL"},
+            ],
+            "match_any_of_rules": [
+                {"name": "admins", "condition": "is_account_group_member('admins')"},
+                {
+                    "name": "owners",
+                    "identity": "current_user",
+                    "rls_mapping": {"EMEA": "jdoe@example.com"},
+                },
+            ],
+        }
+    )
+
+    func = _compiled_function(config)
+
+    assert func.full_name == "my_catalog.shared.region_filter"
+    assert func.parameters == (("region", "STRING"),)
+    assert func.definition == ""
+    assert func.filter_rules == FilterRules(
+        all_of=(
+            RlsMappingRule(
+                name="region_access",
+                parameter="region",
+                operator="=",
+                identity="is_account_group_member",
+                entries=(
+                    ("'AMER'", (_unknown_owner("amer_readers"),)),
+                    ("'EMEA'", (_unknown_owner("emea_b"), _unknown_owner("emea_a"))),
+                ),
+            ),
+            ConditionRule(name="not_deleted", condition="region IS NOT NULL"),
+        ),
+        any_of=(
+            ConditionRule(name="admins", condition="is_account_group_member('admins')"),
+            RlsMappingRule(
+                name="owners",
+                parameter="region",
+                operator="=",
+                identity="current_user",
+                entries=(("'EMEA'", (_unknown_owner("jdoe@example.com"),)),),
+            ),
+        ),
+    )
+
+
+def test_securable_compiler_renders_rls_mapping_keys_as_typed_literals():
+    """rls_mapping keys are rendered as canonical SQL literals of the rule's
+    comparison type: an int key on an INT parameter, a date key on a DATE
+    parameter, and an array_contains key on an ARRAY<STRING> parameter."""
+    int_rule = _single_rls_rule(
+        [{"name": "store_id", "type": "INT"}],
+        {"rls_mapping": {42: "store_42_readers"}},
+    )
+    date_rule = _single_rls_rule(
+        [{"name": "event_date", "type": "DATE"}],
+        {"rls_mapping": {date(2026, 5, 2): "may_readers"}},
+    )
+    array_rule = _single_rls_rule(
+        [{"name": "cities", "type": "ARRAY<STRING>"}],
+        {"operator": "array_contains", "rls_mapping": {"Sydney": "sydney_readers"}},
+    )
+
+    assert [literal for literal, _ in int_rule.entries] == ["42"]
+    assert [literal for literal, _ in date_rule.entries] == ["DATE'2026-05-02'"]
+    assert [literal for literal, _ in array_rule.entries] == ["'Sydney'"]
+    assert array_rule.operator == "array_contains"
+    assert array_rule.parameter == "cities"
+
+
+def test_securable_compiler_uses_explicit_rls_parameter_on_multi_parameter_function():
+    """An rls rule's explicit parameter is kept, and its keys are typed against
+    that parameter."""
+    rule = _single_rls_rule(
+        [{"name": "region", "type": "STRING"}, {"name": "store_id", "type": "INT"}],
+        {"parameter": "store_id", "rls_mapping": {7: "store_7_readers"}},
+    )
+
+    assert rule.parameter == "store_id"
+    assert rule.entries == (("7", (_unknown_owner("store_7_readers"),)),)
+
+
+def test_securable_compiler_maps_wildcard_key_to_none():
+    """The '*' wildcard key compiles to a None literal, alongside typed entries in
+    mapping order."""
+    rule = _single_rls_rule(
+        [{"name": "region", "type": "STRING"}],
+        {"rls_mapping": {"AMER": "amer_readers", "*": ["global_a", "global_b"]}},
+    )
+
+    assert rule.entries == (
+        ("'AMER'", (_unknown_owner("amer_readers"),)),
+        (None, (_unknown_owner("global_a"), _unknown_owner("global_b"))),
+    )
+
+
+def test_securable_compiler_keeps_filter_rules_none_for_return_function():
+    """A function defined by ``return`` compiles with its definition and no
+    filter_rules."""
+    config = _filter_rule_function_config(
+        {
+            "name": "greet",
+            "parameters": [{"name": "x", "type": "STRING"}],
+            "return": "x = 'hi'",
+        }
+    )
+
+    func = _compiled_function(config)
+
+    assert func.definition == "x = 'hi'"
+    assert func.filter_rules is None

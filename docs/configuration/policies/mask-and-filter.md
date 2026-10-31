@@ -40,6 +40,8 @@ function:
   return: 'CONCAT(col_value, "_MASKED")'
 ```
 
+A filter policy's inline function can define its body with {ref}`RLS mapping rules <functions-rls-mapping-rules>` instead of `return`.
+
 If this results in two functions with the same name in the same catalog and schema, config load fails with a duplicate functions error. When several policies use the same reusable function definition inline via `$defs/functions/<key>`, override the function `name` on each to keep them distinct.
 
 (mask-filter-for-field)=
