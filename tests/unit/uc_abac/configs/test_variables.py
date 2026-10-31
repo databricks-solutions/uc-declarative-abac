@@ -638,6 +638,7 @@ def test_templatable_key_fields_are_real_model_fields():
         BasePolicyConfig,
         BaseTaggableConfig,
         PolicyColumnAliasConfig,
+        RlsMappingRuleConfig,
     )
 
     assert "tags" in BaseTaggableConfig.model_fields
@@ -659,6 +660,8 @@ def test_templatable_key_fields_are_real_model_fields():
         "has_none_of_identity_attribute_tag_matches",
     ):
         assert field in BaseFgacPolicyConfig.model_fields
+    # rls_mapping keys are filter-rule values (user data), so they are templatable too.
+    assert "rls_mapping" in RlsMappingRuleConfig.model_fields
 
     # And the constant lists exactly those user-data maps — nothing stale, nothing missing.
     assert TEMPLATABLE_KEY_FIELDS == frozenset(
@@ -676,6 +679,7 @@ def test_templatable_key_fields_are_real_model_fields():
             "has_identity_attribute_tag_matches",
             "has_any_of_identity_attribute_tag_matches",
             "has_none_of_identity_attribute_tag_matches",
+            "rls_mapping",
         }
     )
 

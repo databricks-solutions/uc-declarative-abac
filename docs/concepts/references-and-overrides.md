@@ -17,7 +17,7 @@ schemas:
     name: sales_staging
 ```
 
-The available definition types for `$defs` are: `catalogs`, `schemas`, `tables`, `volumes`, `functions`, `policies`, and `groups`.
+The `<type>` segment is simply the key the definition is declared under in `definitions:`; it is not a fixed list. Any part of a config can be a definition: catalogs, schemas, tables, volumes, functions, and policies, but also columns, function parameters, filter rules, tags, groups, governed tags, domains, or any other value. Reference it wherever that value is accepted. A definition whose body is a list (for example, a function's `parameters`) must be referenced with the inline string form, not a `$ref` object.
 
 ## Overrides
 

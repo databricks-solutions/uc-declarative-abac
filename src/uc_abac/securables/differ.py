@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from uc_abac.principals import PrincipalResolver
 
 from uc_abac.principals import log_principal_resolution_failure
+from uc_abac.securables.resolver import render_function_bodies
 from uc_abac.securables.state import (
     AttributeUpdate,
     Column,
@@ -96,6 +97,9 @@ def compute_securable_diff(
         actual_attrs, resolver, change_logger, ignore_unresolvable
     )
 
+    desired_securables = render_function_bodies(
+        desired_securables, resolver, change_logger, ignore_unresolvable
+    )
     securables_to_create, securables_to_replace, old_securables = _diff_securables(
         desired_securables, actual_securables
     )

@@ -40,6 +40,8 @@ function:
   return: 'CONCAT(col_value, "_MASKED")'
 ```
 
+A filter policy's inline function can define its body with {ref}`RLS mapping rules <functions-rls-mapping-rules>` instead of `return`.
+
 If this results in two functions with the same name in the same catalog and schema, config load fails with a duplicate functions error. When several policies use the same reusable function definition inline via `$defs/functions/<key>`, override the function `name` on each to keep them distinct.
 
 (mask-filter-for-field)=
@@ -127,10 +129,22 @@ definitions:
 
 ### Filter trips by region
 
+A trip is visible when either endpoint is in one of the user's regions. The region mapping is written once as a {ref}`rule definition <functions-rls-mapping-rules>` and applied to each endpoint parameter with a `$ref` override:
+
 ```{code-block} yaml
 :caption: definitions/policies/region/filter_trips_by_region.yaml
 
 definitions:
+  rules:
+    user_in_region:
+      name: user_in_region
+      rls_mapping:
+        AFRICA: africa_users
+        AMERICA: america_users
+        EUROPE: europe_users
+        ASIA: asia_users
+        MIDDLE EAST: middle_east_users
+
   policies:
     region|filter_trips_by_region:
       name: filter_trips_by_region
@@ -152,20 +166,13 @@ definitions:
             type: string
           - name: to_region
             type: string
-        return: |-
-          (
-            (from_region = 'AFRICA' AND is_account_group_member('africa_users'))
-            OR (from_region = 'AMERICA' AND is_account_group_member('america_users'))
-            OR (from_region = 'EUROPE' AND is_account_group_member('europe_users'))
-            OR (from_region = 'ASIA' AND is_account_group_member('asia_users'))
-            OR (from_region = 'MIDDLE EAST' AND is_account_group_member('middle_east_users'))
-          ) OR (
-            (to_region = 'AFRICA' AND is_account_group_member('africa_users'))
-            OR (to_region = 'AMERICA' AND is_account_group_member('america_users'))
-            OR (to_region = 'EUROPE' AND is_account_group_member('europe_users'))
-            OR (to_region = 'ASIA' AND is_account_group_member('asia_users'))
-            OR (to_region = 'MIDDLE EAST' AND is_account_group_member('middle_east_users'))
-          )
+        match_any_of_rules:
+          - $ref: $defs/rules/user_in_region
+            name: user_in_from_region
+            parameter: from_region
+          - $ref: $defs/rules/user_in_region
+            name: user_in_to_region
+            parameter: to_region
       except:
         - account admins
 ```

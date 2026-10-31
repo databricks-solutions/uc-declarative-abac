@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 from uc_abac.configs import (
+    RLS_WILDCARD,
     ColumnConfig,
+    ConditionRuleConfig,
+    FilterRuleConfig,
     FunctionConfig,
     ResourcesConfig,
+    RlsMappingRuleConfig,
     SecurableConfig,
     TableConfig,
+    render_rls_key_literal,
+    rls_comparison_type,
 )
 from uc_abac.principals import Principal
 from uc_abac.securables.state import (
     Column,
+    ConditionRule,
+    FilterRule,
+    FilterRules,
     Function,
+    RlsMappingRule,
     Securable,
     SecurableAttributes,
     Table,
@@ -100,19 +110,95 @@ def compile_desired_attributes(config: ResourcesConfig) -> set[SecurableAttribut
     return attrs
 
 
+def _compile_rls_principals(names: list[str]) -> tuple[Principal, ...]:
+    """Build unresolved Principals from an ``rls_mapping`` value's names, in order."""
+    return tuple(
+        Principal(principal_type=PrincipalType.UNKNOWN, name=name) for name in names
+    )
+
+
+def _compile_rls_literal(
+    key: object, rule: RlsMappingRuleConfig, parameter_types: dict[str, str]
+) -> str | None:
+    """Render an ``rls_mapping`` key as a SQL literal of the rule's comparison type,
+    or ``None`` for the ``'*'`` wildcard.
+
+    The parameter type is only looked up for non-wildcard keys: a rule with no
+    ``parameter`` is valid only when every key is a wildcard. Config validation
+    has already checked every key, so rendering can't fail here.
+    """
+    if key == RLS_WILDCARD:
+        return None
+    comparison_type = rls_comparison_type(
+        rule.operator, parameter_types[rule.parameter]
+    )
+    return render_rls_key_literal(key, comparison_type)
+
+
+def _compile_rls_rule(
+    rule: RlsMappingRuleConfig, parameter_types: dict[str, str]
+) -> RlsMappingRule:
+    """Build an RlsMappingRule whose entries follow the mapping's order."""
+    entries = tuple(
+        (
+            _compile_rls_literal(key, rule, parameter_types),
+            _compile_rls_principals(value),
+        )
+        for key, value in rule.rls_mapping.items()
+    )
+    return RlsMappingRule(
+        name=rule.name,
+        parameter=rule.parameter,
+        operator=rule.operator,
+        identity=rule.identity,
+        entries=entries,
+    )
+
+
+def _compile_filter_rule(
+    rule: FilterRuleConfig, parameter_types: dict[str, str]
+) -> FilterRule:
+    """Build the state rule for a condition or rls_mapping rule config."""
+    if isinstance(rule, ConditionRuleConfig):
+        return ConditionRule(name=rule.name, condition=rule.condition)
+    return _compile_rls_rule(rule, parameter_types)
+
+
+def _compile_filter_rules(func: FunctionConfig) -> FilterRules:
+    """Build FilterRules from ``match_rules`` (``all_of``) and ``match_any_of_rules``
+    (``any_of``), each in list order."""
+    parameter_types = {p.name: p.data_type for p in func.parameters or []}
+    return FilterRules(
+        all_of=tuple(
+            _compile_filter_rule(r, parameter_types) for r in func.match_rules or []
+        ),
+        any_of=tuple(
+            _compile_filter_rule(r, parameter_types)
+            for r in func.match_any_of_rules or []
+        ),
+    )
+
+
 def _compile_function(func: FunctionConfig) -> Function:
-    """Build a Function from a FunctionConfig."""
+    """Build a Function from a FunctionConfig.
+
+    A function defined by filter rules gets an empty ``definition`` and a
+    ``FilterRules`` spec with unresolved principals; the differ resolves them and
+    renders the body. A ``return`` function carries its definition as-is.
+    """
     parameters = (
         tuple((param.name, param.data_type) for param in func.parameters)
         if func.parameters
         else ()
     )
+    filter_rules = _compile_filter_rules(func) if func.has_filter_rules else None
     return Function(
         securable_type=SecurableType.FUNCTION,
         full_name=func.full_name,
         parameters=parameters,
-        definition=func.definition,
+        definition=func.definition or "",
         comment=func.comment,
+        filter_rules=filter_rules,
     )
 
 

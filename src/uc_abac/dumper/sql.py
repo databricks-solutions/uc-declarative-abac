@@ -27,7 +27,9 @@ def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> s
     ``bool`` is checked before ``int`` (it is an ``int`` subclass). A tuple is an
     array. An empty array, or one holding NULL elements, is cast to ``sql_type`` — the
     column's declared type — because a bare ``array()`` or ``array(NULL)`` carries no
-    element type.
+    element type. A dict is a map, rendered ``map(k1, v1, k2, v2, ...)`` in insertion
+    order with each key and value rendered recursively; an empty map is likewise cast
+    to ``sql_type``, because a bare ``map()`` carries no key/value types.
     """
     if value is None:
         return "NULL"
@@ -37,6 +39,12 @@ def render_sql_literal(value: RowValue, *, sql_type: str = "ARRAY<STRING>") -> s
         return str(value)
     if isinstance(value, str):
         return sql_string_literal(value)
+    if isinstance(value, dict):
+        entries = ", ".join(
+            f"{render_sql_literal(k)}, {render_sql_literal(v)}"
+            for k, v in value.items()
+        )
+        return f"map({entries})" if value else f"CAST(map() AS {sql_type})"
     if isinstance(value, tuple):
         rendered = f"array({', '.join(render_sql_literal(v) for v in value)})"
         if not value or None in value:
