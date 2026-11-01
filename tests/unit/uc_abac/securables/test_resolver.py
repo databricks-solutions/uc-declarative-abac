@@ -6,8 +6,7 @@ decide whether a filter-rule function needs replacing, so the output format is a
 frozen idempotency contract. Exact-string assertions on ``render_filter_rules`` are
 therefore deliberate: any change to the rendered text is a behaviour change (it
 re-creates every filter-rule function on the next deploy), not an implementation
-detail. Every rule is labelled with an inline ``-- <rule name>`` SQL comment at the
-end of its first line.
+detail.
 
 Principal resolution is internal to the securables differ, so it is exercised
 through the public ``compute_securable_diff`` entry point.
@@ -61,13 +60,11 @@ def _service_principal(display_name: str, application_id: str) -> Principal:
 def _rls(
     entries: tuple[tuple[str | None, tuple[Principal, ...]], ...],
     *,
-    name: str = "rule",
     parameter: str | None = "region",
     operator: str = "=",
     identity: str = "is_account_group_member",
 ) -> RlsMappingRule:
     return RlsMappingRule(
-        name=name,
         parameter=parameter,
         operator=operator,
         identity=identity,
@@ -82,12 +79,11 @@ def _region_rule() -> RlsMappingRule:
             ("'ASIA'", (_group("a"), _group("b"))),
             (None, (_group("global_readers"),)),
         ),
-        name="region_access",
     )
 
 
 _REGION_RULE_SQL = (
-    "( -- region_access\n"
+    "(\n"
     "  (region = 'AFRICA' AND is_account_group_member('africa_readers'))\n"
     "  OR (region = 'ASIA' AND (is_account_group_member('a')"
     " OR is_account_group_member('b')))\n"
@@ -107,7 +103,7 @@ def test_securable_resolver_single_rule_with_single_entry():
     rules = FilterRules(all_of=(_rls((("'AMER'", (_group("amer_readers"),)),)),))
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n  (region = 'AMER' AND is_account_group_member('amer_readers'))\n)"
+        "(\n  (region = 'AMER' AND is_account_group_member('amer_readers'))\n)"
     )
 
 
@@ -118,7 +114,7 @@ def test_securable_resolver_ors_identities_when_entry_has_several_principals():
     )
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n"
+        "(\n"
         "  (region = 'AMER' AND (is_account_group_member('a')"
         " OR is_account_group_member('b') OR is_account_group_member('c')))\n"
         ")"
@@ -131,24 +127,6 @@ def test_securable_resolver_wildcard_entry_renders_identity_alone():
     rules = FilterRules(all_of=(_region_rule(),))
 
     assert render_filter_rules(rules) == _REGION_RULE_SQL
-
-
-def test_securable_resolver_labels_rls_mapping_rule_with_name_comment():
-    """An rls_mapping rule carries its name as an inline comment after its
-    opening parenthesis."""
-    rules = FilterRules(
-        all_of=(
-            _rls(
-                ((None, (_group("fraud_analysts"),)),),
-                name="user_is_fraud_analyst",
-                parameter=None,
-            ),
-        )
-    )
-
-    assert render_filter_rules(rules) == (
-        "( -- user_is_fraud_analyst\n  is_account_group_member('fraud_analysts')\n)"
-    )
 
 
 def test_securable_resolver_wildcard_only_rule_ignores_parameter_and_operator():
@@ -165,7 +143,7 @@ def test_securable_resolver_wildcard_only_rule_ignores_parameter_and_operator():
     )
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n  is_account_group_member('fraud_analysts')\n)"
+        "(\n  is_account_group_member('fraud_analysts')\n)"
     )
 
 
@@ -176,7 +154,7 @@ def test_securable_resolver_wildcard_only_rule_with_several_principals():
     )
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n  (is_account_group_member('x') OR is_account_group_member('y'))\n)"
+        "(\n  (is_account_group_member('x') OR is_account_group_member('y'))\n)"
     )
 
 
@@ -200,7 +178,7 @@ def test_securable_resolver_infix_operator_renders_parameter_operator_literal(
     rules = FilterRules(all_of=(_rls(((literal, (_group("g"),)),), operator=operator),))
 
     assert render_filter_rules(rules) == (
-        f"( -- rule\n  ({expected_predicate} AND is_account_group_member('g'))\n)"
+        f"(\n  ({expected_predicate} AND is_account_group_member('g'))\n)"
     )
 
 
@@ -214,7 +192,7 @@ def test_securable_resolver_function_operator_renders_function_call(operator: st
     )
 
     assert render_filter_rules(rules) == (
-        f"( -- rule\n  ({operator}(regions, 'AMER') AND is_account_group_member('g'))\n)"
+        f"(\n  ({operator}(regions, 'AMER') AND is_account_group_member('g'))\n)"
     )
 
 
@@ -222,10 +200,9 @@ def test_securable_resolver_passes_typed_literals_through_unchanged():
     """Entry keys are already-rendered SQL literals and appear verbatim."""
     rules = FilterRules(
         all_of=(
-            _rls((("42", (_group("g"),)),), name="tenant", parameter="tenant_id"),
+            _rls((("42", (_group("g"),)),), parameter="tenant_id"),
             _rls(
                 (("DATE'2026-05-02'", (_group("h"),)),),
-                name="as_of",
                 parameter="as_of",
                 operator=">=",
             ),
@@ -233,8 +210,8 @@ def test_securable_resolver_passes_typed_literals_through_unchanged():
     )
 
     assert render_filter_rules(rules) == (
-        "( -- tenant\n  (tenant_id = 42 AND is_account_group_member('g'))\n)\n"
-        "AND ( -- as_of\n  (as_of >= DATE'2026-05-02' AND is_account_group_member('h'))\n)"
+        "(\n  (tenant_id = 42 AND is_account_group_member('g'))\n)\n"
+        "AND (\n  (as_of >= DATE'2026-05-02' AND is_account_group_member('h'))\n)"
     )
 
 
@@ -248,7 +225,7 @@ def test_securable_resolver_escapes_quotes_in_group_name():
     rules = FilterRules(all_of=(_rls(((None, (_group("o'brien"),)),), parameter=None),))
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n  is_account_group_member('o\\'brien')\n)"
+        "(\n  is_account_group_member('o\\'brien')\n)"
     )
 
 
@@ -264,7 +241,7 @@ def test_securable_resolver_current_user_compares_username_for_user():
     )
 
     assert render_filter_rules(rules) == (
-        "( -- rule\n  (region = 'AMER' AND current_user() = 'a@x.com')\n)"
+        "(\n  (region = 'AMER' AND current_user() = 'a@x.com')\n)"
     )
 
 
@@ -282,7 +259,7 @@ def test_securable_resolver_current_user_compares_application_id_for_service_pri
         )
     )
 
-    assert render_filter_rules(rules) == f"( -- rule\n  current_user() = '{app_id}'\n)"
+    assert render_filter_rules(rules) == f"(\n  current_user() = '{app_id}'\n)"
 
 
 # ---------------------------------------------------------------------------
@@ -292,34 +269,17 @@ def test_securable_resolver_current_user_compares_application_id_for_service_pri
 
 def test_securable_resolver_condition_rule_is_wrapped_and_stripped():
     """A condition rule renders its stripped condition in parentheses."""
-    rules = FilterRules(all_of=(ConditionRule("small", "  amount < 10000\n"),))
+    rules = FilterRules(all_of=(ConditionRule("  amount < 10000\n"),))
 
-    assert render_filter_rules(rules) == "(amount < 10000) -- small"
-
-
-def test_securable_resolver_labels_condition_rule_with_name_comment():
-    """A condition rule is followed by an inline comment carrying its name."""
-    rules = FilterRules(all_of=(ConditionRule("amount_is_small", "amount < 10000"),))
-
-    assert render_filter_rules(rules) == "(amount < 10000) -- amount_is_small"
-
-
-def test_securable_resolver_labels_multiline_condition_on_first_line():
-    """A multi-line condition carries its name comment on its first line, so the
-    closing parenthesis on the last line stays live SQL."""
-    rules = FilterRules(all_of=(ConditionRule("name", "a\nAND b"),))
-
-    assert render_filter_rules(rules) == "(a -- name\nAND b)"
+    assert render_filter_rules(rules) == "(amount < 10000)"
 
 
 def test_securable_resolver_moves_closing_paren_to_own_line_when_condition_ends_in_comment():
     """When the condition's last line ends in its own ``--`` comment, the closing
     parenthesis goes on its own line so it is not commented out."""
-    rules = FilterRules(
-        all_of=(ConditionRule("small", "amount < 10000 -- small only"),)
-    )
+    rules = FilterRules(all_of=(ConditionRule("amount < 10000 -- small only"),))
 
-    assert render_filter_rules(rules) == "(amount < 10000 -- small only -- small\n)"
+    assert render_filter_rules(rules) == "(amount < 10000 -- small only\n)"
 
 
 # ---------------------------------------------------------------------------
@@ -331,14 +291,14 @@ def test_securable_resolver_all_of_rules_are_and_joined():
     """``all_of`` rules are joined with a newline and AND."""
     rules = FilterRules(
         all_of=(
-            ConditionRule("small", "amount < 10000"),
-            ConditionRule("recent", "year >= 2020"),
-            ConditionRule("active", "is_active"),
+            ConditionRule("amount < 10000"),
+            ConditionRule("year >= 2020"),
+            ConditionRule("is_active"),
         )
     )
 
     assert render_filter_rules(rules) == (
-        "(amount < 10000) -- small\nAND (year >= 2020) -- recent\nAND (is_active) -- active"
+        "(amount < 10000)\nAND (year >= 2020)\nAND (is_active)"
     )
 
 
@@ -346,14 +306,13 @@ def test_securable_resolver_any_of_rules_are_or_joined():
     """``any_of`` rules are joined with a newline and OR."""
     rules = FilterRules(
         any_of=(
-            ConditionRule("small", "amount < 10000"),
+            ConditionRule("amount < 10000"),
             _rls(((None, (_group("fraud_analysts"),)),), parameter=None),
         )
     )
 
     assert render_filter_rules(rules) == (
-        "(amount < 10000) -- small\n"
-        "OR ( -- rule\n  is_account_group_member('fraud_analysts')\n)"
+        "(amount < 10000)\nOR (\n  is_account_group_member('fraud_analysts')\n)"
     )
 
 
@@ -363,7 +322,7 @@ def test_securable_resolver_combined_groups_wraps_and_indents_multi_rule_group()
     rules = FilterRules(
         all_of=(_region_rule(),),
         any_of=(
-            ConditionRule("small", "amount < 10000"),
+            ConditionRule("amount < 10000"),
             _rls(((None, (_group("fraud_analysts"),)),), parameter=None),
         ),
     )
@@ -371,8 +330,8 @@ def test_securable_resolver_combined_groups_wraps_and_indents_multi_rule_group()
     assert render_filter_rules(rules) == (
         _REGION_RULE_SQL + "\n"
         "AND (\n"
-        "  (amount < 10000) -- small\n"
-        "  OR ( -- rule\n"
+        "  (amount < 10000)\n"
+        "  OR (\n"
         "    is_account_group_member('fraud_analysts')\n"
         "  )\n"
         ")"
@@ -383,23 +342,23 @@ def test_securable_resolver_combined_groups_wraps_both_when_both_multi_rule():
     """With both groups holding several rules, each group is wrapped and indented."""
     rules = FilterRules(
         all_of=(
-            ConditionRule("small", "amount < 10000"),
-            ConditionRule("recent", "year >= 2020"),
+            ConditionRule("amount < 10000"),
+            ConditionRule("year >= 2020"),
         ),
         any_of=(
-            ConditionRule("emea", "region = 'EMEA'"),
-            ConditionRule("apac", "region = 'APAC'"),
+            ConditionRule("region = 'EMEA'"),
+            ConditionRule("region = 'APAC'"),
         ),
     )
 
     assert render_filter_rules(rules) == (
         "(\n"
-        "  (amount < 10000) -- small\n"
-        "  AND (year >= 2020) -- recent\n"
+        "  (amount < 10000)\n"
+        "  AND (year >= 2020)\n"
         ")\n"
         "AND (\n"
-        "  (region = 'EMEA') -- emea\n"
-        "  OR (region = 'APAC') -- apac\n"
+        "  (region = 'EMEA')\n"
+        "  OR (region = 'APAC')\n"
         ")"
     )
 
@@ -407,13 +366,11 @@ def test_securable_resolver_combined_groups_wraps_both_when_both_multi_rule():
 def test_securable_resolver_combined_groups_uses_single_rule_groups_as_is():
     """With both groups holding a single rule, neither is wrapped."""
     rules = FilterRules(
-        all_of=(ConditionRule("small", "amount < 10000"),),
-        any_of=(ConditionRule("emea", "region = 'EMEA'"),),
+        all_of=(ConditionRule("amount < 10000"),),
+        any_of=(ConditionRule("region = 'EMEA'"),),
     )
 
-    assert render_filter_rules(rules) == (
-        "(amount < 10000) -- small\nAND (region = 'EMEA') -- emea"
-    )
+    assert render_filter_rules(rules) == ("(amount < 10000)\nAND (region = 'EMEA')")
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +382,7 @@ def test_securable_resolver_is_deterministic():
     """Rendering the same rules twice yields identical, non-empty text."""
     rules = FilterRules(
         all_of=(_region_rule(),),
-        any_of=(ConditionRule("small", "amount < 10000"),),
+        any_of=(ConditionRule("amount < 10000"),),
     )
 
     first = render_filter_rules(rules)
@@ -528,7 +485,6 @@ def _region_rules(
     return FilterRules(
         all_of=(
             RlsMappingRule(
-                name="region_access",
                 parameter="region",
                 operator="=",
                 identity=identity,
@@ -539,9 +495,7 @@ def _region_rules(
                 ),
             ),
         ),
-        any_of=(
-            ConditionRule(name="admins", condition="is_account_group_member('admins')"),
-        ),
+        any_of=(ConditionRule(condition="is_account_group_member('admins')"),),
     )
 
 
@@ -562,7 +516,6 @@ def _single_rule_function(identity: str, principal_name: str) -> Function:
         FilterRules(
             all_of=(
                 RlsMappingRule(
-                    name="rule",
                     parameter=None,
                     operator="=",
                     identity=identity,

@@ -313,11 +313,13 @@ def _rule_shape_fields(rule: ConditionRuleConfig | RlsMappingRuleConfig) -> Row:
 def _function_rule_row(
     function: FunctionConfig,
     rule: ConditionRuleConfig | RlsMappingRuleConfig,
+    rule_position: int,
     rule_grouping: str,
     context: DumpContext,
 ) -> Row:
-    """One function_rules row. ``config_file_path`` is the file defining the rule,
-    falling back to the function's config file when the rule carries no path."""
+    """One function_rules row. ``rule_position`` is the rule's 1-based position within
+    its function. ``config_file_path`` is the file defining the rule, falling back to
+    the function's config file when the rule carries no path."""
     catalog_name, schema_name, _, function_name = split_securable_name(
         SecurableType.FUNCTION, function.full_name
     )
@@ -331,7 +333,7 @@ def _function_rule_row(
         "catalog_name": catalog_name,
         "schema_name": schema_name,
         "function_name": function_name,
-        "rule_name": rule.name,
+        "rule_position": rule_position,
         "rule_grouping": rule_grouping,
         **_rule_shape_fields(rule),
     }
@@ -339,14 +341,14 @@ def _function_rule_row(
 
 def _function_rule_rows(function: FunctionConfig, context: DumpContext) -> list[Row]:
     """A function's rule rows: ``match_rules`` (AND) then ``match_any_of_rules`` (OR),
-    each in config order."""
+    each in config order, numbered by 1-based position across both groups."""
     grouped = [
         *(("AND", rule) for rule in function.match_rules or ()),
         *(("OR", rule) for rule in function.match_any_of_rules or ()),
     ]
     return [
-        _function_rule_row(function, rule, grouping, context)
-        for grouping, rule in grouped
+        _function_rule_row(function, rule, position, grouping, context)
+        for position, (grouping, rule) in enumerate(grouped, start=1)
     ]
 
 
@@ -967,9 +969,10 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 "The function's own name; joins to securables.securable_name.",
             ),
             ColumnSpec(
-                "rule_name",
-                "STRING",
-                "Name of the rule, unique within its function.",
+                "rule_position",
+                "INT",
+                "1-based position of the rule within its function: match_rules rules "
+                "first, then match_any_of_rules rules, each in config order.",
             ),
             ColumnSpec(
                 "rule_type",

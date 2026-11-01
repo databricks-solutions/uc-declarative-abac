@@ -11,8 +11,7 @@ definitions:
         - name: region
           type: string
       match_rules:
-        - name: user_in_region
-          rls_mapping:
+        - rls_mapping:
             amer: uc_abac_region_amer
             emea: uc_abac_region_emea
             apac: uc_abac_region_apac

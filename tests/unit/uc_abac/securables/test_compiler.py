@@ -1319,7 +1319,7 @@ def _single_rls_rule(parameters: list[dict], rule: dict) -> RlsMappingRule:
         {
             "name": "row_filter",
             "parameters": parameters,
-            "match_rules": [{"name": "rule", **rule}],
+            "match_rules": [rule],
         }
     )
     filter_rules = _compiled_function(config).filter_rules
@@ -1341,18 +1341,16 @@ def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
             "parameters": [{"name": "region", "type": "STRING"}],
             "match_rules": [
                 {
-                    "name": "region_access",
                     "rls_mapping": {
                         "AMER": "amer_readers",
                         "EMEA": ["emea_b", "emea_a"],
                     },
                 },
-                {"name": "not_deleted", "condition": "region IS NOT NULL"},
+                {"condition": "region IS NOT NULL"},
             ],
             "match_any_of_rules": [
-                {"name": "admins", "condition": "is_account_group_member('admins')"},
+                {"condition": "is_account_group_member('admins')"},
                 {
-                    "name": "owners",
                     "identity": "current_user",
                     "rls_mapping": {"EMEA": "jdoe@example.com"},
                 },
@@ -1368,7 +1366,6 @@ def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
     assert func.filter_rules == FilterRules(
         all_of=(
             RlsMappingRule(
-                name="region_access",
                 parameter="region",
                 operator="=",
                 identity="is_account_group_member",
@@ -1377,12 +1374,11 @@ def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
                     ("'EMEA'", (_unknown_owner("emea_b"), _unknown_owner("emea_a"))),
                 ),
             ),
-            ConditionRule(name="not_deleted", condition="region IS NOT NULL"),
+            ConditionRule(condition="region IS NOT NULL"),
         ),
         any_of=(
-            ConditionRule(name="admins", condition="is_account_group_member('admins')"),
+            ConditionRule(condition="is_account_group_member('admins')"),
             RlsMappingRule(
-                name="owners",
                 parameter="region",
                 operator="=",
                 identity="current_user",

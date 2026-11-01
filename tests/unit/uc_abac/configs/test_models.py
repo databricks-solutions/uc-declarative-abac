@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import pytest
@@ -4510,8 +4511,8 @@ _REGION_AMOUNT_PARAMS = [
 
 
 def _mapping_rule(rls_mapping, **fields):
-    """Return an rls_mapping rule dict named ``r`` with optional extra fields."""
-    return {"name": "r", "rls_mapping": rls_mapping, **fields}
+    """Return an rls_mapping rule dict with optional extra fields."""
+    return {"rls_mapping": rls_mapping, **fields}
 
 
 def _single_param_fn(param_type: str, rule: dict) -> dict:
@@ -4529,7 +4530,6 @@ def test_function_config_accepts_match_rules_instead_of_return():
             parameters=_REGION_AMOUNT_PARAMS,
             match_rules=[
                 {
-                    "name": "user_in_region",
                     "parameter": "region",
                     "rls_mapping": {
                         "AMER": "amer_readers",
@@ -4551,8 +4551,8 @@ def test_function_config_accepts_match_any_of_rules_alone():
         _filter_fn(
             parameters=_REGION_AMOUNT_PARAMS,
             match_any_of_rules=[
-                {"name": "amount_is_small", "condition": "amount < 10000"},
-                {"name": "user_is_fraud_analyst", "rls_mapping": {"*": "fraud"}},
+                {"condition": "amount < 10000"},
+                {"rls_mapping": {"*": "fraud"}},
             ],
         )
     )
@@ -4568,14 +4568,13 @@ def test_function_config_accepts_match_rules_and_match_any_of_rules_combined():
             parameters=_REGION_AMOUNT_PARAMS,
             match_rules=[
                 {
-                    "name": "user_in_region",
                     "parameter": "region",
                     "rls_mapping": {"AMER": "amer_readers", "*": "global_readers"},
                 }
             ],
             match_any_of_rules=[
-                {"name": "amount_is_small", "condition": "amount < 10000"},
-                {"name": "user_is_fraud_analyst", "rls_mapping": {"*": "fraud"}},
+                {"condition": "amount < 10000"},
+                {"rls_mapping": {"*": "fraud"}},
             ],
         )
     )
@@ -4602,7 +4601,7 @@ def test_function_config_rejects_return_combined_with_match_rules(match_field):
                 parameters=[{"name": "c", "type": "string"}],
                 **{
                     "return": "true",
-                    match_field: [{"name": "a", "condition": "c = 'x'"}],
+                    match_field: [{"condition": "c = 'x'"}],
                 },
             )
         )
@@ -4627,41 +4626,11 @@ def test_function_config_rejects_empty_match_rules_list(match_field):
         )
 
 
-@pytest.mark.parametrize("match_field", ["match_rules", "match_any_of_rules"])
-def test_function_config_rejects_duplicate_rule_names_within_one_list(match_field):
-    """Two rules sharing a name within one list raise DuplicateResourceError."""
-    with pytest.raises(DuplicateResourceError, match="filter rule"):
-        FunctionConfig.model_validate(
-            _filter_fn(
-                parameters=[{"name": "c", "type": "string"}],
-                **{
-                    match_field: [
-                        {"name": "dup", "condition": "c = 'a'"},
-                        {"name": "dup", "condition": "c = 'b'"},
-                    ]
-                },
-            )
-        )
-
-
-def test_function_config_rejects_duplicate_rule_names_across_both_lists():
-    """Rule names are unique across the whole function, so the same name in
-    `match_rules` and `match_any_of_rules` raises DuplicateResourceError."""
-    with pytest.raises(DuplicateResourceError, match="filter rule"):
-        FunctionConfig.model_validate(
-            _filter_fn(
-                parameters=[{"name": "c", "type": "string"}],
-                match_rules=[{"name": "same", "condition": "c = 'a'"}],
-                match_any_of_rules=[{"name": "same", "condition": "c = 'b'"}],
-            )
-        )
-
-
 @pytest.mark.parametrize(
     "rule",
     [
-        {"name": "both", "condition": "c = 'a'", "rls_mapping": {"*": "g"}},
-        {"name": "neither"},
+        {"condition": "c = 'a'", "rls_mapping": {"*": "g"}},
+        {},
     ],
     ids=["both", "neither"],
 )
@@ -4681,7 +4650,7 @@ def test_function_config_rejects_extra_key_on_condition_rule():
         FunctionConfig.model_validate(
             _filter_fn(
                 parameters=[{"name": "c", "type": "string"}],
-                match_rules=[{"name": "a", "condition": "c = 'a'", "operator": "="}],
+                match_rules=[{"condition": "c = 'a'", "operator": "="}],
             )
         )
 
@@ -4693,38 +4662,7 @@ def test_function_config_rejects_blank_condition(condition):
         FunctionConfig.model_validate(
             _filter_fn(
                 parameters=[{"name": "c", "type": "string"}],
-                match_rules=[{"name": "a", "condition": condition}],
-            )
-        )
-
-
-@pytest.mark.parametrize(
-    "rule",
-    [{"condition": "c = 'a'"}, {"rls_mapping": {"*": "g"}}],
-    ids=["condition", "rls_mapping"],
-)
-def test_function_config_rejects_rule_missing_name(rule):
-    """Every filter rule must carry a `name`."""
-    with pytest.raises(ValidationError, match="name"):
-        FunctionConfig.model_validate(
-            _filter_fn(parameters=[{"name": "c", "type": "string"}], match_rules=[rule])
-        )
-
-
-@pytest.mark.parametrize("name", ["", "   ", "a\nb", "a\rb"])
-@pytest.mark.parametrize(
-    "rule",
-    [{"condition": "c = 'a'"}, {"rls_mapping": {"*": "g"}}],
-    ids=["condition", "rls_mapping"],
-)
-def test_function_config_rejects_unsafe_rule_name(rule, name):
-    """A rule name that is blank or contains a line break is rejected: it is
-    rendered as an inline SQL comment, which a line break would terminate."""
-    with pytest.raises(ValidationError, match="name"):
-        FunctionConfig.model_validate(
-            _filter_fn(
-                parameters=[{"name": "c", "type": "string"}],
-                match_rules=[{"name": name, **rule}],
+                match_rules=[{"condition": condition}],
             )
         )
 
@@ -4948,6 +4886,36 @@ def test_function_config_rejects_invalid_rls_mapping(rls_mapping):
         )
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"name": "x", "condition": "c = 'a'"},
+        {"name": "x", "rls_mapping": {"*": "g"}},
+    ],
+    ids=["condition", "rls_mapping"],
+)
+def test_function_config_rejects_name_on_filter_rule(rule):
+    """Filter rules have no `name` field, so a rule carrying one is rejected."""
+    with pytest.raises(ValidationError, match="name"):
+        FunctionConfig.model_validate(
+            _filter_fn(parameters=[{"name": "c", "type": "string"}], match_rules=[rule])
+        )
+
+
+def test_function_config_error_identifies_rule_by_position():
+    """A rule error names the rule by its list field and 0-based index."""
+    with pytest.raises(ValidationError, match=re.escape("match_any_of_rules[1]")):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "p", "type": "int"}],
+                match_any_of_rules=[
+                    _mapping_rule({"*": "g"}),
+                    _mapping_rule({"abc": "g"}),
+                ],
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # ResourcesConfig: mask policies vs filter-rule functions
 # ---------------------------------------------------------------------------
@@ -4974,7 +4942,7 @@ def _schema_with_function_and_policy(function: dict, policy: dict) -> dict:
 _FILTER_RULE_FUNCTION = {
     "name": "fn",
     "parameters": [{"name": "region", "type": "string"}],
-    "match_rules": [{"name": "r", "rls_mapping": {"AMER": "amer_readers"}}],
+    "match_rules": [{"rls_mapping": {"AMER": "amer_readers"}}],
 }
 
 _MASK_POLICY = {

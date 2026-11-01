@@ -862,30 +862,10 @@ _RlsMappingKey = (
 )
 
 
-def _validate_rule_name(name: str) -> str:
-    """Reject a blank filter-rule name, or one containing a line break.
-
-    The name is rendered into the function body as an inline SQL ``--`` comment, so
-    a line break would end the comment and leak the rest of the name into live SQL.
-    """
-    _reject_blank_str(name, "name")
-    if "\n" in name or "\r" in name:
-        raise ValueError(
-            "name must not contain line breaks: it is rendered as a SQL '--' comment"
-        )
-    return name
-
-
 class ConditionRuleConfig(BaseConfig):
     """A filter rule whose predicate is a raw boolean SQL ``condition``."""
 
-    name: str
     condition: str
-
-    @field_validator("name", mode="after")
-    @classmethod
-    def _validate_name(cls, v: str) -> str:
-        return _validate_rule_name(v)
 
     @field_validator("condition", mode="after")
     @classmethod
@@ -938,16 +918,10 @@ class RlsMappingRuleConfig(BaseConfig):
     """A filter rule mapping values of one function ``parameter`` to the principals
     allowed to see rows holding that value."""
 
-    name: str
     parameter: str | None = None
     operator: RlsOperator = "="
     identity: RlsIdentity = "is_account_group_member"
     rls_mapping: dict[_RlsMappingKey, list[StrictStr]]
-
-    @field_validator("name", mode="after")
-    @classmethod
-    def _validate_name(cls, v: str) -> str:
-        return _validate_rule_name(v)
 
     @field_validator("rls_mapping", mode="before")
     @classmethod
@@ -1013,10 +987,11 @@ def _default_rule_parameter(
 
 
 def _rule_parameter(
-    rule: RlsMappingRuleConfig, parameters: list[ParameterConfig]
+    rule: RlsMappingRuleConfig, parameters: list[ParameterConfig], label: str
 ) -> ParameterConfig | None:
     """Return the declared parameter named by ``rule.parameter`` (None when unset);
-    raise when it names no declared parameter."""
+    raise, prefixed with the rule's ``label`` location, when it names no declared
+    parameter."""
     if rule.parameter is None:
         return None
     for parameter in parameters:
@@ -1024,71 +999,79 @@ def _rule_parameter(
             return parameter
     declared = ", ".join(p.name for p in parameters) or "none"
     raise ValueError(
-        f"filter rule '{rule.name}': parameter '{rule.parameter}' is not a declared "
+        f"{label}: parameter '{rule.parameter}' is not a declared "
         f"parameter of the function (declared: {declared})"
     )
 
 
 def _render_rule_keys(
-    rule: RlsMappingRuleConfig, parameter: ParameterConfig, keys: list
+    rule: RlsMappingRuleConfig, parameter: ParameterConfig, keys: list, label: str
 ) -> list[str]:
     """Render each key as a SQL literal of the rule's comparison type, prefixing any
-    operator/type/key error with the rule name."""
+    operator/type/key error with the rule's ``label`` location."""
     try:
         comparison_type = rls_comparison_type(rule.operator, parameter.data_type)
         return [render_rls_key_literal(key, comparison_type) for key in keys]
     except ValueError as exc:
-        raise ValueError(f"filter rule '{rule.name}': {exc}") from exc
+        raise ValueError(f"{label}: {exc}") from exc
 
 
-def _reject_duplicate_literals(rule: RlsMappingRuleConfig, literals: list[str]) -> None:
-    """Reject two rls_mapping keys that render to the same SQL literal."""
+def _reject_duplicate_literals(literals: list[str], label: str) -> None:
+    """Reject two rls_mapping keys that render to the same SQL literal, prefixing the
+    error with the rule's ``label`` location."""
     seen: set[str] = set()
     for literal in literals:
         if literal in seen:
             raise ValueError(
-                f"filter rule '{rule.name}': several rls_mapping keys render to the "
+                f"{label}: several rls_mapping keys render to the "
                 f"same literal {literal}"
             )
         seen.add(literal)
 
 
 def _validate_mapping_keys(
-    rule: RlsMappingRuleConfig, parameter: ParameterConfig | None
+    rule: RlsMappingRuleConfig, parameter: ParameterConfig | None, label: str
 ) -> None:
-    """Validate the non-wildcard keys against the rule's parameter. A wildcard-only
-    mapping compares nothing, so it skips every operator/type check."""
+    """Validate the non-wildcard keys against the rule's parameter, identifying the
+    rule in errors by its ``label`` location. A wildcard-only mapping compares
+    nothing, so it skips every operator/type check."""
     keys = [key for key in rule.rls_mapping if key != RLS_WILDCARD]
     if not keys:
         return
     if parameter is None:
         raise ValueError(
-            f"filter rule '{rule.name}': an rls_mapping with non-wildcard keys must "
+            f"{label}: an rls_mapping with non-wildcard keys must "
             f"set 'parameter' to one of the function's parameters"
         )
-    _reject_duplicate_literals(rule, _render_rule_keys(rule, parameter, keys))
+    _reject_duplicate_literals(_render_rule_keys(rule, parameter, keys, label), label)
 
 
 def _validate_filter_rule(
     rule: ConditionRuleConfig | RlsMappingRuleConfig,
     parameters: list[ParameterConfig],
+    label: str,
 ) -> ConditionRuleConfig | RlsMappingRuleConfig:
     """Return ``rule`` validated against the function's parameters, with an
-    rls_mapping rule's ``parameter`` defaulted where possible."""
+    rls_mapping rule's ``parameter`` defaulted where possible. Errors identify the
+    rule by its ``label`` location (e.g. ``match_rules[0]``)."""
     if isinstance(rule, ConditionRuleConfig):
         return rule
     rule = _default_rule_parameter(rule, parameters)
-    _validate_mapping_keys(rule, _rule_parameter(rule, parameters))
+    _validate_mapping_keys(rule, _rule_parameter(rule, parameters, label), label)
     return rule
 
 
 def _validate_filter_rules(
-    rules: list | None, parameters: list[ParameterConfig]
+    rules: list | None, parameters: list[ParameterConfig], field: str
 ) -> list | None:
-    """Return a new list of validated rules (None stays None)."""
+    """Return a new list of validated rules (None stays None). Filter rules are
+    unnamed, so each is identified in errors by its location ``<field>[<index>]``."""
     if rules is None:
         return None
-    return [_validate_filter_rule(rule, parameters) for rule in rules]
+    return [
+        _validate_filter_rule(rule, parameters, f"{field}[{i}]")
+        for i, rule in enumerate(rules)
+    ]
 
 
 class FunctionConfig(BaseSecurableConfig):
@@ -1103,33 +1086,17 @@ class FunctionConfig(BaseSecurableConfig):
     match_rules: list[FilterRuleConfig] | None = None
     match_any_of_rules: list[FilterRuleConfig] | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_duplicate_rule_names(cls, data):
-        """Rule names must be unique across the whole function, i.e. across
-        ``match_rules`` and ``match_any_of_rules`` combined."""
-        if not isinstance(data, dict):
-            return data
-        rules = [
-            rule
-            for field in _MATCH_RULE_FIELDS
-            if isinstance(data.get(field), list)
-            for rule in data[field]
-        ]
-        _check_duplicate_names(
-            rules, "filter rule", f"function '{data.get('name', '')}'"
-        )
-        return data
-
     @model_validator(mode="after")
     def _validate_body(self) -> FunctionConfig:
         """Enforce exactly one body form and validate every filter rule against the
         function's parameters."""
         _check_body_form(self)
         parameters = self.parameters or []
-        self.match_rules = _validate_filter_rules(self.match_rules, parameters)
+        self.match_rules = _validate_filter_rules(
+            self.match_rules, parameters, "match_rules"
+        )
         self.match_any_of_rules = _validate_filter_rules(
-            self.match_any_of_rules, parameters
+            self.match_any_of_rules, parameters, "match_any_of_rules"
         )
         return self
 

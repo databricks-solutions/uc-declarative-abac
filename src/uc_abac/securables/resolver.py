@@ -7,10 +7,10 @@ desired and actual functions are compared, so a filter-rule function's
 
 The rendered text is compared byte-for-byte with ``routine_definition`` to decide
 whether a function needs replacing, so the output format is frozen: changing it
-re-creates every filter-rule function on the next deploy. Every rule is labelled
-with an inline ``-- <rule name>`` comment at the end of its first line (rule names are
-validated to contain no line breaks); when a condition's last line holds its own
-``--`` comment, its closing parenthesis goes on a new line so it isn't commented out.
+re-creates every filter-rule function on the next deploy. Rules are unnamed, so each
+renders as just its parenthesised predicate; when a condition's last line holds its
+own ``--`` comment, its closing parenthesis goes on a new line so it isn't commented
+out.
 """
 
 from __future__ import annotations
@@ -86,24 +86,15 @@ def _render_entry(
     return f"({_render_predicate(rule, literal)} AND {identities})"
 
 
-def _label_first_line(rendered: str, name: str) -> str:
-    """Append the inline ``-- <name>`` comment to the end of ``rendered``'s first
-    line. Rule names are validated to contain no line breaks, so the comment cannot
-    spill onto the following lines."""
-    first, newline, rest = rendered.partition("\n")
-    return f"{first} -- {name}{newline}{rest}"
-
-
 def _render_rls_mapping_rule(rule: RlsMappingRule) -> str:
-    """Render the entries one per indented line, OR-joined, inside parentheses,
-    with the rule's name comment after the opening parenthesis."""
+    """Render the entries one per indented line, OR-joined, inside parentheses."""
     entries = [_render_entry(rule, lit, principals) for lit, principals in rule.entries]
     body = f"\n{_INDENT}OR ".join(entries)
-    return _label_first_line(f"(\n{_INDENT}{body}\n)", rule.name)
+    return f"(\n{_INDENT}{body}\n)"
 
 
 def _render_condition_rule(rule: ConditionRule) -> str:
-    """Render the stripped condition in parentheses, labelled on its first line.
+    """Render the stripped condition in parentheses.
 
     When the condition's last line contains ``--`` (e.g. its own trailing comment),
     the closing parenthesis goes on its own line, otherwise it would be commented
@@ -111,14 +102,12 @@ def _render_condition_rule(rule: ConditionRule) -> str:
     """
     condition = rule.condition.strip()
     if "--" in condition.rsplit("\n", 1)[-1]:
-        wrapped = f"({condition}\n)"
-    else:
-        wrapped = f"({condition})"
-    return _label_first_line(wrapped, rule.name)
+        return f"({condition}\n)"
+    return f"({condition})"
 
 
 def _render_rule(rule: FilterRule) -> str:
-    """Render a single rule, labelled with its name comment."""
+    """Render a single condition or rls_mapping rule."""
     if isinstance(rule, ConditionRule):
         return _render_condition_rule(rule)
     return _render_rls_mapping_rule(rule)

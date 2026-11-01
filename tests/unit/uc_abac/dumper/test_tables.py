@@ -784,7 +784,8 @@ def _fr_function(full_name: str, *parameter_names: str) -> Function:
 
 
 def test_dumper_tables_function_rules_columns_type():
-    """function_rules: rls_mapping is MAP<STRING, ARRAY<STRING>>, every other column STRING."""
+    """function_rules: rule_position is INT, rls_mapping is MAP<STRING, ARRAY<STRING>>,
+    every other column STRING."""
     spec = _spec("function_rules")
     types = {col.name: col.sql_type for col in spec.columns}
     assert list(types) == [
@@ -792,7 +793,7 @@ def test_dumper_tables_function_rules_columns_type():
         "catalog_name",
         "schema_name",
         "function_name",
-        "rule_name",
+        "rule_position",
         "rule_type",
         "rule_grouping",
         "condition",
@@ -801,8 +802,13 @@ def test_dumper_tables_function_rules_columns_type():
         "operator",
         "identity",
     ]
+    assert types["rule_position"] == "INT"
     assert types["rls_mapping"] == "MAP<STRING, ARRAY<STRING>>"
-    assert all(t == "STRING" for name, t in types.items() if name != "rls_mapping")
+    assert all(
+        t == "STRING"
+        for name, t in types.items()
+        if name not in ("rule_position", "rls_mapping")
+    )
 
 
 def test_dumper_tables_function_rules_emits_one_row_per_rule_with_grouping(
@@ -816,19 +822,19 @@ def test_dumper_tables_function_rules_emits_one_row_per_rule_with_grouping(
             "name": "fn_b",
             "parameters": _FR_REGION_PARAMS,
             "match_rules": [
-                {"name": "b_and_1", "condition": "region <> 'X'"},
-                {"name": "b_and_2", "rls_mapping": {"AMER": "amer_readers"}},
+                {"condition": "region <> 'X'"},
+                {"rls_mapping": {"AMER": "amer_readers"}},
             ],
             "match_any_of_rules": [
-                {"name": "b_or_2", "condition": "is_account_group_member('admins')"},
-                {"name": "b_or_1", "rls_mapping": {"*": "global_readers"}},
+                {"condition": "is_account_group_member('admins')"},
+                {"rls_mapping": {"*": "global_readers"}},
             ],
         },
         {
             "name": "fn_a",
             "parameters": _FR_REGION_PARAMS,
             "match_any_of_rules": [
-                {"name": "a_or", "condition": "true"},
+                {"condition": "true"},
             ],
         },
     )
@@ -842,16 +848,73 @@ def test_dumper_tables_function_rules_emits_one_row_per_rule_with_grouping(
     )
     rows = _rows("function_rules", state, config=config)
 
-    assert [(r["function_name"], r["rule_name"], r["rule_grouping"]) for r in rows] == [
-        ("fn_a", "a_or", "OR"),
-        ("fn_b", "b_and_1", "AND"),
-        ("fn_b", "b_and_2", "AND"),
-        ("fn_b", "b_or_2", "OR"),
-        ("fn_b", "b_or_1", "OR"),
+    assert [
+        (
+            r["function_name"],
+            r["rule_position"],
+            r["rule_grouping"],
+            r["condition"],
+            r["rls_mapping"],
+        )
+        for r in rows
+    ] == [
+        ("fn_a", 1, "OR", "true", None),
+        ("fn_b", 1, "AND", "region <> 'X'", None),
+        ("fn_b", 2, "AND", None, {"AMER": ("amer_readers",)}),
+        ("fn_b", 3, "OR", "is_account_group_member('admins')", None),
+        ("fn_b", 4, "OR", None, {"*": ("global_readers",)}),
     ]
     assert all(r["catalog_name"] == "cat" and r["schema_name"] == "sch" for r in rows)
     spec_columns = {col.name for col in _spec("function_rules").columns}
     assert all(set(r) == spec_columns for r in rows)
+
+
+def test_dumper_tables_function_rules_numbers_rule_position_across_groupings(
+    tmp_yaml_dir,
+):
+    """function_rules: rule_position is 1-based and continuous within a function,
+    numbering match_rules (AND) first then match_any_of_rules (OR), and restarts at 1
+    for each function."""
+    config = _fr_config(
+        tmp_yaml_dir,
+        {
+            "name": "fn_one",
+            "parameters": _FR_REGION_PARAMS,
+            "match_rules": [
+                {"condition": "region <> 'A'"},
+                {"condition": "region <> 'B'"},
+            ],
+            "match_any_of_rules": [
+                {"condition": "region = 'C'"},
+            ],
+        },
+        {
+            "name": "fn_two",
+            "parameters": _FR_REGION_PARAMS,
+            "match_any_of_rules": [
+                {"condition": "region = 'D'"},
+            ],
+        },
+    )
+    state = _state(
+        securables=frozenset(
+            [
+                _fr_function("cat.sch.fn_one", "region"),
+                _fr_function("cat.sch.fn_two", "region"),
+            ]
+        )
+    )
+    rows = _rows("function_rules", state, config=config)
+
+    assert [
+        (r["function_name"], r["condition"], r["rule_grouping"], r["rule_position"])
+        for r in rows
+    ] == [
+        ("fn_one", "region <> 'A'", "AND", 1),
+        ("fn_one", "region <> 'B'", "AND", 2),
+        ("fn_one", "region = 'C'", "OR", 3),
+        ("fn_two", "region = 'D'", "OR", 1),
+    ]
 
 
 def test_dumper_tables_function_rules_condition_rule_sets_only_condition(
@@ -864,7 +927,7 @@ def test_dumper_tables_function_rules_condition_rule_sets_only_condition(
             "name": "fn_filter",
             "parameters": _FR_REGION_PARAMS,
             "match_rules": [
-                {"name": "not_restricted", "condition": "region <> 'RESTRICTED'"},
+                {"condition": "region <> 'RESTRICTED'"},
             ],
         },
     )
@@ -873,6 +936,7 @@ def test_dumper_tables_function_rules_condition_rule_sets_only_condition(
 
     assert len(rows) == 1
     row = rows[0]
+    assert row["rule_position"] == 1
     assert row["rule_type"] == "FILTER_CONDITION"
     assert row["condition"] == "region <> 'RESTRICTED'"
     assert row["rls_mapping"] is None
@@ -896,7 +960,6 @@ def test_dumper_tables_function_rules_rls_mapping_rule_sets_mapping_parameter_op
             ],
             "match_rules": [
                 {
-                    "name": "user_in_region",
                     "parameter": "regions",
                     "operator": "array_contains",
                     "identity": "current_user",
@@ -906,7 +969,6 @@ def test_dumper_tables_function_rules_rls_mapping_rule_sets_mapping_parameter_op
                     },
                 },
                 {
-                    "name": "owner_is_group",
                     "parameter": "owner",
                     "rls_mapping": {"sales": "sales_readers"},
                 },
@@ -920,6 +982,7 @@ def test_dumper_tables_function_rules_rls_mapping_rule_sets_mapping_parameter_op
 
     assert len(rows) == 2
     explicit, defaulted = rows
+    assert [explicit["rule_position"], defaulted["rule_position"]] == [1, 2]
     assert explicit["rule_type"] == "RLS_MAPPING"
     assert explicit["condition"] is None
     assert explicit["rls_mapping"] == {
@@ -940,11 +1003,10 @@ def test_dumper_tables_function_rules_rls_mapping_rule_sets_mapping_parameter_op
 def test_dumper_tables_function_rules_renders_non_string_rls_keys_as_text():
     """function_rules: int, bool and date rls_mapping keys are rendered as text."""
 
-    def _rule(name: str, parameter: str, key: object) -> dict:
+    def _rule(parameter: str, key: object, readers: str) -> dict:
         return {
-            "name": name,
             "parameter": parameter,
-            "rls_mapping": {key: f"{name}_readers", "*": "global_readers"},
+            "rls_mapping": {key: readers, "*": "global_readers"},
         }
 
     config = ResourcesConfig.model_validate(
@@ -964,9 +1026,11 @@ def test_dumper_tables_function_rules_renders_non_string_rls_keys_as_text():
                                         {"name": "d", "type": "date"},
                                     ],
                                     "match_rules": [
-                                        _rule("int_key", "n", 42),
-                                        _rule("bool_key", "flag", True),
-                                        _rule("date_key", "d", date(2026, 5, 2)),
+                                        _rule("n", 42, "int_key_readers"),
+                                        _rule("flag", True, "bool_key_readers"),
+                                        _rule(
+                                            "d", date(2026, 5, 2), "date_key_readers"
+                                        ),
                                     ],
                                 },
                             ],
@@ -981,11 +1045,11 @@ def test_dumper_tables_function_rules_renders_non_string_rls_keys_as_text():
     )
     rows = _rows("function_rules", state, config=config)
 
-    mappings = {r["rule_name"]: r["rls_mapping"] for r in rows}
+    mappings = {r["parameter"]: r["rls_mapping"] for r in rows}
     assert mappings == {
-        "int_key": {"42": ("int_key_readers",), "*": ("global_readers",)},
-        "bool_key": {"true": ("bool_key_readers",), "*": ("global_readers",)},
-        "date_key": {"2026-05-02": ("date_key_readers",), "*": ("global_readers",)},
+        "n": {"42": ("int_key_readers",), "*": ("global_readers",)},
+        "flag": {"true": ("bool_key_readers",), "*": ("global_readers",)},
+        "d": {"2026-05-02": ("date_key_readers",), "*": ("global_readers",)},
     }
 
 
@@ -1000,7 +1064,7 @@ def test_dumper_tables_function_rules_defaults_parameter_to_sole_function_parame
             "name": "fn_filter",
             "parameters": _FR_REGION_PARAMS,
             "match_rules": [
-                {"name": "user_in_region", "rls_mapping": {"AMER": "amer_readers"}},
+                {"rls_mapping": {"AMER": "amer_readers"}},
             ],
         },
     )
@@ -1023,7 +1087,6 @@ def test_dumper_tables_function_rules_config_file_path_uses_rule_definition_file
 definitions:
   rules:
     region_rule:
-      name: user_in_region
       rls_mapping:
         AMER: amer_readers
 """
@@ -1044,18 +1107,17 @@ resources:
                   type: string
               match_rules:
                 - $defs/rules/region_rule
-                - name: not_restricted
-                  condition: region <> 'RESTRICTED'
+                - condition: region <> 'RESTRICTED'
 """
     )
     config = load_config(tmp_path)
     state = _state(securables=frozenset([_fr_function("cat.sch.fn_filter", "region")]))
     rows = _rows("function_rules", state, config=config)
 
-    paths = {r["rule_name"]: r["config_file_path"] for r in rows}
+    paths = {r["rule_position"]: r["config_file_path"] for r in rows}
     assert paths == {
-        "user_in_region": rules_file.as_posix(),
-        "not_restricted": catalog_file.as_posix(),
+        1: rules_file.as_posix(),
+        2: catalog_file.as_posix(),
     }
 
 
@@ -1069,19 +1131,19 @@ def test_dumper_tables_function_rules_skips_functions_absent_from_state(
         {
             "name": "fn_present",
             "parameters": _FR_REGION_PARAMS,
-            "match_rules": [{"name": "present_rule", "condition": "true"}],
+            "match_rules": [{"condition": "present = true"}],
         },
         {
             "name": "fn_absent",
             "parameters": _FR_REGION_PARAMS,
-            "match_rules": [{"name": "absent_rule", "condition": "true"}],
+            "match_rules": [{"condition": "absent = true"}],
         },
     )
     state = _state(securables=frozenset([_fr_function("cat.sch.fn_present", "region")]))
     rows = _rows("function_rules", state, config=config)
 
     assert [r["function_name"] for r in rows] == ["fn_present"]
-    assert [r["rule_name"] for r in rows] == ["present_rule"]
+    assert [r["condition"] for r in rows] == ["present = true"]
 
 
 def test_dumper_tables_function_rules_skips_return_functions(tmp_yaml_dir):
@@ -1111,7 +1173,7 @@ def test_dumper_tables_function_rules_joins_to_securables_on_name_columns(
             "name": "fn_filter",
             "parameters": _FR_REGION_PARAMS,
             "match_rules": [
-                {"name": "user_in_region", "rls_mapping": {"AMER": "amer_readers"}},
+                {"rls_mapping": {"AMER": "amer_readers"}},
             ],
         },
         catalog="main_cat",

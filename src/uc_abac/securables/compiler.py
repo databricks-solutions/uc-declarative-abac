@@ -147,7 +147,6 @@ def _compile_rls_rule(
         for key, value in rule.rls_mapping.items()
     )
     return RlsMappingRule(
-        name=rule.name,
         parameter=rule.parameter,
         operator=rule.operator,
         identity=rule.identity,
@@ -160,7 +159,7 @@ def _compile_filter_rule(
 ) -> FilterRule:
     """Build the state rule for a condition or rls_mapping rule config."""
     if isinstance(rule, ConditionRuleConfig):
-        return ConditionRule(name=rule.name, condition=rule.condition)
+        return ConditionRule(condition=rule.condition)
     return _compile_rls_rule(rule, parameter_types)
 
 

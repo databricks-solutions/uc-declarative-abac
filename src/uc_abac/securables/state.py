@@ -93,15 +93,15 @@ class Table(Securable):
 
 @dataclass(frozen=True)
 class ConditionRule:
-    """A filter rule whose predicate is a raw boolean SQL ``condition``."""
+    """An unnamed filter rule whose predicate is a raw boolean SQL ``condition``."""
 
-    name: str
     condition: str
 
 
 @dataclass(frozen=True)
 class RlsMappingRule:
-    """A filter rule mapping parameter values to the principals allowed to see them.
+    """An unnamed filter rule mapping parameter values to the principals allowed to
+    see them.
 
     Each entry is ``(literal, principals)``: ``literal`` is the key already rendered as
     a canonical SQL literal of the rule's comparison type (``None`` for the ``'*'``
@@ -111,7 +111,6 @@ class RlsMappingRule:
     always defaults it to that parameter.
     """
 
-    name: str
     parameter: str | None
     operator: str
     identity: str

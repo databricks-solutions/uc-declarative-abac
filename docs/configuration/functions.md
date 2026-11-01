@@ -77,8 +77,7 @@ definitions:
           - name: region
             type: string
         match_rules:
-          - name: user_in_region
-            rls_mapping:
+          - rls_mapping:
               AFRICA: africa_readers
               AMERICA: america_readers
               EUROPE: europe_readers
@@ -92,7 +91,7 @@ definitions:
 Renders as:
 
 ```{code-block} sql
-( -- user_in_region
+(
   (region = 'AFRICA' AND is_account_group_member('africa_readers'))
   OR (region = 'AMERICA' AND is_account_group_member('america_readers'))
   OR (region = 'EUROPE' AND is_account_group_member('europe_readers'))
@@ -106,7 +105,7 @@ Functions defined with these rules return a boolean row predicate, so only `filt
 
 ### Rule fields
 
-Every rule has a required `name`, unique across both of the function's rule lists, and is exactly one of two shapes. The name labels the rule in the rendered SQL as a `-- <name>` comment, so it cannot contain a line break.
+Every rule is exactly one of two shapes.
 
 A **condition rule** holds a raw boolean SQL expression:
 
@@ -151,8 +150,7 @@ With `LIKE` and `ILIKE`, `%` and `_` in a key are wildcards. With the comparison
 
 ```{code-block} yaml
 match_rules:
-  - name: user_has_clearance
-    parameter: sensitivity_level
+  - parameter: sensitivity_level
     operator: '<='
     rls_mapping:
       1: public_readers
@@ -178,7 +176,6 @@ Rules can be defined once under `definitions: rules:` and referenced from any fu
 definitions:
   rules:
     user_in_region:
-      name: user_in_region
       rls_mapping:
         AFRICA: africa_readers
         AMERICA: america_readers
@@ -204,10 +201,8 @@ definitions:
           type: string
       match_any_of_rules:
         - $ref: $defs/rules/user_in_region
-          name: user_in_from_region
           parameter: from_region
         - $ref: $defs/rules/user_in_region
-          name: user_in_to_region
           parameter: to_region
 ```
 
@@ -223,26 +218,24 @@ match_rules:
   - $ref: $defs/rules/user_in_region
     parameter: region
 match_any_of_rules:
-  - name: amount_is_small
-    condition: amount < 10000
-  - name: user_is_fraud_analyst
-    rls_mapping:
+  - condition: amount < 10000
+  - rls_mapping:
       '*': fraud_analysts
 ```
 
 Renders as:
 
 ```{code-block} sql
-( -- user_in_region
+(
   (region = 'AFRICA' AND is_account_group_member('africa_readers'))
   OR ...
 )
 AND (
-  (amount < 10000) -- amount_is_small
-  OR ( -- user_is_fraud_analyst
+  (amount < 10000)
+  OR (
     is_account_group_member('fraud_analysts')
   )
 )
 ```
 
-Rule lists merge by `name` when a `$ref` overrides them (see {ref}`references-and-overrides`): an override rule with a new `name` is added, and one with an existing `name` is merged into it. Adding a rule to `match_any_of_rules` this way widens who can see rows. A `$ref` to a function definition that uses `return` cannot override it with rule lists, because the merged function would set both.
+Rules have no name, so a `$ref` override cannot target an individual rule (see {ref}`references-and-overrides`). To change a function's rule lists, redefine the function config instead of overriding it. A `$ref` to a function definition that uses `return` cannot override it with rule lists either, because the merged function would set both.
