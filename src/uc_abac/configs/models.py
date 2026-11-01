@@ -920,7 +920,7 @@ class RlsMappingRuleConfig(BaseConfig):
 
     parameter: str | None = None
     operator: RlsOperator = "="
-    identity: RlsIdentity = "is_account_group_member"
+    identity: RlsIdentity | None = None
     rls_mapping: dict[_RlsMappingKey, list[StrictStr]]
 
     @field_validator("rls_mapping", mode="before")

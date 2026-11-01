@@ -48,20 +48,55 @@ from uc_abac.utils import (
 _INDENT = "  "
 
 
-def _render_identity_check(identity: str, principal: Principal) -> str:
-    """Render one principal's identity check, e.g. ``is_account_group_member('g')``
-    or ``current_user() = 'u'``. Raises ``OrchestratorError`` for an unresolved
-    principal, whose identifier would otherwise be missing."""
-    literal = sql_string_literal(ensure_resolved(principal).identifier)
-    if identity == "current_user":
-        return f"current_user() = {literal}"
+def _identity_functions(
+    identity: str | None, principal_type: PrincipalType
+) -> tuple[str, ...]:
+    """Return the identity functions that check a principal of ``principal_type``.
+
+    An explicit ``identity`` checks every principal. The default (``None``) checks a
+    group with both ``is_account_group_member`` and ``session_user``, so either match
+    grants it, and a user or service principal with ``session_user`` alone.
+    """
+    if identity is not None:
+        return (identity,)
+    if principal_type is PrincipalType.GROUP:
+        return ("is_account_group_member", "session_user")
+    return ("session_user",)
+
+
+def _render_identity_check(identity: str, literal: str) -> str:
+    """Render one identity function against a principal's SQL ``literal``, e.g.
+    ``is_account_group_member('g')`` or ``session_user() = 'u'``. The argument-less
+    ``session_user`` and ``current_user`` are compared with ``=``."""
+    if identity in ("session_user", "current_user"):
+        return f"{identity}() = {literal}"
     return f"{identity}({literal})"
 
 
-def _render_identity_checks(identity: str, principals: tuple[Principal, ...]) -> str:
-    """OR together the identity checks of ``principals``, parenthesised when there
-    is more than one."""
-    checks = [_render_identity_check(identity, p) for p in principals]
+def _principal_identity_checks(
+    identity: str | None, principal: Principal
+) -> tuple[str, ...]:
+    """Return the identity checks of one principal, in the order of
+    ``_identity_functions``. Raises ``OrchestratorError`` for an unresolved principal,
+    whose identifier would otherwise be missing."""
+    resolved = ensure_resolved(principal)
+    literal = sql_string_literal(resolved.identifier)
+    return tuple(
+        _render_identity_check(function, literal)
+        for function in _identity_functions(identity, resolved.principal_type)
+    )
+
+
+def _render_identity_checks(
+    identity: str | None, principals: tuple[Principal, ...]
+) -> str:
+    """Flatten the identity checks of all ``principals`` in order, OR-ed together. A
+    single check renders bare; several are parenthesised as ``(a OR b ...)``."""
+    checks = [
+        check
+        for principal in principals
+        for check in _principal_identity_checks(identity, principal)
+    ]
     if len(checks) == 1:
         return checks[0]
     return "(" + " OR ".join(checks) + ")"
@@ -143,9 +178,23 @@ def render_filter_rules(rules: FilterRules) -> str:
     return f"{_wrap_group(rules.all_of, 'AND')}\nAND {_wrap_group(rules.any_of, 'OR')}"
 
 
+def _describe_identity(identity: str | None) -> str:
+    """Name an identity for an error message: ``identity 'x'``, or ``the default
+    identity`` for ``None``, which would otherwise read as ``identity 'None'``."""
+    if identity is None:
+        return "the default identity"
+    return f"identity '{identity}'"
+
+
 # Principal types each rls identity function can check membership / identity of.
 _IDENTITY_PRINCIPAL_TYPES = {
+    None: frozenset(
+        {PrincipalType.USER, PrincipalType.SERVICE_PRINCIPAL, PrincipalType.GROUP}
+    ),
     "is_account_group_member": frozenset({PrincipalType.GROUP}),
+    "session_user": frozenset(
+        {PrincipalType.USER, PrincipalType.SERVICE_PRINCIPAL, PrincipalType.GROUP}
+    ),
     "current_user": frozenset({PrincipalType.USER, PrincipalType.SERVICE_PRINCIPAL}),
 }
 
@@ -157,7 +206,7 @@ class _UnrenderableFunctionError(Exception):
 
 def _resolve_rule_principal(
     principal: Principal,
-    identity: str,
+    identity: str | None,
     full_name: str,
     resolver: PrincipalResolver,
     change_logger: ChangeLogger,
@@ -187,8 +236,8 @@ def _resolve_rule_principal(
                 context=f"Validate principal for FUNCTION {full_name}",
                 exception=OrchestratorError(
                     f"Principal {principal.name!r} resolved to a "
-                    f"{resolved.principal_type.value}, which identity '{identity}' "
-                    "can't check."
+                    f"{resolved.principal_type.value}, which "
+                    f"{_describe_identity(identity)} can't check."
                 ),
             )
         )

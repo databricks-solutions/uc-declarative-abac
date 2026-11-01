@@ -997,7 +997,33 @@ def test_dumper_tables_function_rules_rls_mapping_rule_sets_mapping_parameter_op
     assert defaulted["rls_mapping"] == {"sales": ("sales_readers",)}
     assert defaulted["parameter"] == "owner"
     assert defaulted["operator"] == "="
-    assert defaulted["identity"] == "is_account_group_member"
+    assert defaulted["identity"] is None
+
+
+def test_dumper_tables_function_rules_rls_mapping_rule_dumps_session_user_identity(
+    tmp_yaml_dir,
+):
+    """function_rules: an rls_mapping rule with `identity: session_user` dumps that
+    identity as written."""
+    config = _fr_config(
+        tmp_yaml_dir,
+        {
+            "name": "fn_filter",
+            "parameters": [{"name": "owner", "type": "string"}],
+            "match_rules": [
+                {
+                    "identity": "session_user",
+                    "rls_mapping": {"sales": "sales_readers"},
+                },
+            ],
+        },
+    )
+    state = _state(securables=frozenset([_fr_function("cat.sch.fn_filter", "owner")]))
+    rows = _rows("function_rules", state, config=config)
+
+    assert len(rows) == 1
+    assert rows[0]["rule_type"] == "RLS_MAPPING"
+    assert rows[0]["identity"] == "session_user"
 
 
 def test_dumper_tables_function_rules_renders_non_string_rls_keys_as_text():

@@ -62,7 +62,7 @@ def _rls(
     *,
     parameter: str | None = "region",
     operator: str = "=",
-    identity: str = "is_account_group_member",
+    identity: str | None = "is_account_group_member",
 ) -> RlsMappingRule:
     return RlsMappingRule(
         parameter=parameter,
@@ -260,6 +260,125 @@ def test_securable_resolver_current_user_compares_application_id_for_service_pri
     )
 
     assert render_filter_rules(rules) == f"(\n  current_user() = '{app_id}'\n)"
+
+
+# ---------------------------------------------------------------------------
+# Default (identity=None) and session_user identity
+# ---------------------------------------------------------------------------
+
+
+def test_securable_resolver_default_identity_checks_group_membership_or_session_user_for_group():
+    """With the default identity a group is matched by either account group membership
+    or its session user name."""
+    rules = FilterRules(
+        all_of=(_rls((("'AMER'", (_group("g"),)),), identity=None),),
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND (is_account_group_member('g') OR session_user() = 'g'))\n)"
+    )
+
+
+def test_securable_resolver_default_identity_checks_session_user_for_user():
+    """With the default identity a user is matched by session user name alone."""
+    rules = FilterRules(
+        all_of=(_rls((("'AMER'", (_user("a@x.com"),)),), identity=None),),
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND session_user() = 'a@x.com')\n)"
+    )
+
+
+def test_securable_resolver_default_identity_checks_session_user_application_id_for_service_principal():
+    """With the default identity a service principal is matched by its application id
+    via session_user, not by its display name."""
+    app_id = "11111111-2222-3333-4444-555555555555"
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_service_principal("My SP", app_id),)),),
+                identity=None,
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        f"(\n  (region = 'AMER' AND session_user() = '{app_id}')\n)"
+    )
+
+
+def test_securable_resolver_default_identity_flattens_checks_of_several_principals():
+    """With the default identity the checks of every principal in an entry are
+    flattened into one OR list, in principal order."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_group("g"), _user("a@x.com"))),),
+                identity=None,
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND (is_account_group_member('g')"
+        " OR session_user() = 'g' OR session_user() = 'a@x.com'))\n)"
+    )
+
+
+def test_securable_resolver_default_identity_wildcard_entry_renders_parenthesised_checks():
+    """A wildcard default-identity group entry alone in a rule renders its two checks
+    in parentheses, with no parameter comparison."""
+    rules = FilterRules(
+        all_of=(_rls(((None, (_group("g"),)),), parameter=None, identity=None),)
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (is_account_group_member('g') OR session_user() = 'g')\n)"
+    )
+
+
+def test_securable_resolver_group_identity_checks_only_group_membership():
+    """An explicit is_account_group_member identity checks group membership only, with
+    no session_user comparison."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_group("g"),)),),
+                identity="is_account_group_member",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND is_account_group_member('g'))\n)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("principal", "expected_identifier"),
+    [
+        pytest.param(_user("a@x.com"), "a@x.com", id="user"),
+        pytest.param(
+            _service_principal("My SP", "11111111-2222-3333-4444-555555555555"),
+            "11111111-2222-3333-4444-555555555555",
+            id="service_principal",
+        ),
+        pytest.param(_group("g"), "g", id="group"),
+    ],
+)
+def test_securable_resolver_session_user_identity_checks_only_session_user(
+    principal: Principal, expected_identifier: str
+):
+    """A session_user identity compares session_user() with the principal's identifier
+    for users, service principals and groups alike, never checking group membership."""
+    rules = FilterRules(
+        all_of=(_rls((("'AMER'", (principal,)),), identity="session_user"),)
+    )
+
+    assert render_filter_rules(rules) == (
+        f"(\n  (region = 'AMER' AND session_user() = '{expected_identifier}')\n)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -702,3 +821,62 @@ def test_securable_resolver_diffs_return_function_without_filter_rules_as_before
     assert created.definition == "region = 'AMER'"
     assert unchanged_diff.securables_to_create == []
     assert unchanged_diff.securables_to_replace == []
+
+
+# ---------------------------------------------------------------------------
+# Default and session_user identity through function rendering
+# ---------------------------------------------------------------------------
+
+
+def test_securable_resolver_renders_function_with_default_identity_for_mixed_principal_types():
+    """A default-identity rule holding a group and a user renders both principals'
+    checks flattened into one list, with no errors logged."""
+    desired = _filter_function(
+        FilterRules(
+            all_of=(
+                RlsMappingRule(
+                    parameter="region",
+                    operator="=",
+                    identity=None,
+                    entries=(
+                        (
+                            "'AMER'",
+                            (
+                                _unresolved("amer_readers"),
+                                _unresolved("jdoe@example.com"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is False
+    (created,) = diff.securables_to_create
+    assert isinstance(created, Function)
+    assert created.definition == (
+        "(\n  (region = 'AMER' AND (is_account_group_member('amer_readers')"
+        " OR session_user() = 'amer_readers' OR session_user() = 'jdoe@example.com'))\n)"
+    )
+
+
+def test_securable_resolver_renders_function_with_session_user_identity_for_group():
+    """A session_user rule with a group principal renders the session user check
+    without error."""
+    desired = _single_rule_function("session_user", "amer_readers")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is False
+    (created,) = diff.securables_to_create
+    assert isinstance(created, Function)
+    assert created.definition == "(\n  session_user() = 'amer_readers'\n)"

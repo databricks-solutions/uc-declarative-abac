@@ -92,12 +92,12 @@ Renders as:
 
 ```{code-block} sql
 (
-  (region = 'AFRICA' AND is_account_group_member('africa_readers'))
-  OR (region = 'AMERICA' AND is_account_group_member('america_readers'))
-  OR (region = 'EUROPE' AND is_account_group_member('europe_readers'))
-  OR (region = 'ASIA' AND is_account_group_member('asia_readers'))
-  OR (region = 'MIDDLE EAST' AND is_account_group_member('middle_east_readers'))
-  OR is_account_group_member('global_readers')
+  (region = 'AFRICA' AND (is_account_group_member('africa_readers') OR session_user() = 'africa_readers'))
+  OR (region = 'AMERICA' AND (is_account_group_member('america_readers') OR session_user() = 'america_readers'))
+  OR (region = 'EUROPE' AND (is_account_group_member('europe_readers') OR session_user() = 'europe_readers'))
+  OR (region = 'ASIA' AND (is_account_group_member('asia_readers') OR session_user() = 'asia_readers'))
+  OR (region = 'MIDDLE EAST' AND (is_account_group_member('middle_east_readers') OR session_user() = 'middle_east_readers'))
+  OR (is_account_group_member('global_readers') OR session_user() = 'global_readers')
 )
 ```
 
@@ -116,7 +116,14 @@ An **RLS mapping rule** maps parameter values to the principals allowed to see r
 - **`rls_mapping`** (required): a non-empty map of parameter values to a principal name or a list of principal names (a list means any of them). A `'*'` key matches every row, whatever the parameter value.
 - **`parameter`**: the parameter the keys are compared with. Optional when the function has one parameter, or when the only key is `'*'`; otherwise required.
 - **`operator`**: how a key is compared with the parameter (default `=`), from the list below.
-- **`identity`**: how the querying user is checked against a mapped principal. `is_account_group_member` (the default) checks account group membership; `current_user` compares the querying user's username, or a service principal's application ID, with the mapped user or service principal. `is_member` is not supported, because the engine cannot resolve workspace-local groups.
+- **`identity`**: how the querying user is checked against a mapped principal. When omitted, each principal is checked by its type: a group with `(is_account_group_member('g') OR session_user() = 'g')`, so both its members and users who [assume it as a role](https://docs.databricks.com/aws/en/security/auth/rbac/abac-interaction) see its rows, and a user or service principal with `session_user()`. Set it to check one way only:
+  - `is_account_group_member`: account group membership; groups only. Users who assume the group as a role do not match.
+  - `session_user`: `session_user()` only, for any principal type. A group matches only users who assume it as a role, not its members.
+  - `current_user`: deprecated (see {ref}`deprecations`); renders `current_user()` for a user or service principal. Use `session_user` instead.
+
+  As everywhere else in the config, map a service principal by its display name. The engine resolves it to its application ID, which is what `session_user()` and `current_user()` return for a service principal, so the rendered check compares the application ID.
+
+  `is_member` is not supported, because the engine cannot resolve workspace-local groups.
 
 ### Operators
 
@@ -159,6 +166,54 @@ match_rules:
 ```
 
 With an `int` `sensitivity_level` parameter, `internal_readers` see rows at levels 1 and 2.
+
+A function over two `array<string>` parameters, checking only account group membership, so a row is visible to members of a group for one of its office locations and one of its departments:
+
+```{code-block} yaml
+definitions:
+  functions:
+    region|fn_filter_by_location_department:
+      name: fn_filter_by_location_department
+      parameters:
+        - name: office_locations
+          type: array<string>
+        - name: department_names
+          type: array<string>
+      match_rules:
+        - parameter: office_locations
+          operator: array_contains
+          identity: is_account_group_member
+          rls_mapping:
+            Sydney: grp-location-sydney
+            London: grp-location-london
+            New York: grp-location-newyork
+            Tokyo: grp-location-tokyo
+        - parameter: department_names
+          operator: array_contains
+          identity: is_account_group_member
+          rls_mapping:
+            Finance: grp-dept-finance
+            Trading: grp-dept-trading
+            Marketing: grp-dept-marketing
+            Recruiting: grp-dept-recruiting
+```
+
+Renders as:
+
+```{code-block} sql
+(
+  (array_contains(office_locations, 'Sydney') AND is_account_group_member('grp-location-sydney'))
+  OR (array_contains(office_locations, 'London') AND is_account_group_member('grp-location-london'))
+  OR (array_contains(office_locations, 'New York') AND is_account_group_member('grp-location-newyork'))
+  OR (array_contains(office_locations, 'Tokyo') AND is_account_group_member('grp-location-tokyo'))
+)
+AND (
+  (array_contains(department_names, 'Finance') AND is_account_group_member('grp-dept-finance'))
+  OR (array_contains(department_names, 'Trading') AND is_account_group_member('grp-dept-trading'))
+  OR (array_contains(department_names, 'Marketing') AND is_account_group_member('grp-dept-marketing'))
+  OR (array_contains(department_names, 'Recruiting') AND is_account_group_member('grp-dept-recruiting'))
+)
+```
 
 ### Key types
 
@@ -227,13 +282,13 @@ Renders as:
 
 ```{code-block} sql
 (
-  (region = 'AFRICA' AND is_account_group_member('africa_readers'))
+  (region = 'AFRICA' AND (is_account_group_member('africa_readers') OR session_user() = 'africa_readers'))
   OR ...
 )
 AND (
   (amount < 10000)
   OR (
-    is_account_group_member('fraud_analysts')
+    (is_account_group_member('fraud_analysts') OR session_user() = 'fraud_analysts')
   )
 )
 ```
