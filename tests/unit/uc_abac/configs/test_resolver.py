@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from uc_abac.configs import resolve_refs
+from uc_abac.orchestrator import load_config
 from uc_abac.utils import (
     ResolutionError,
     TemplateVariableError,
@@ -732,12 +733,12 @@ def test_resolver_merge_strategy_leaves_primitive_list_unchanged_when_override_e
 
 
 # ---------------------------------------------------------------------------
-# merge strategy — fallback to replace
+# merge strategy — identifier-less items and type mismatches
 # ---------------------------------------------------------------------------
 
 
-def test_resolver_merge_strategy_replaces_list_when_items_lack_identifier():
-    """A list of dicts whose items have no 'name' or '$ref' falls back to replace."""
+def test_resolver_merge_strategy_unions_items_without_identifier():
+    """A list of dicts whose items have no 'name'/'alias'/'$ref' is unioned, not replaced."""
     definitions = {
         "schemas": {
             "ops|sales": {
@@ -762,8 +763,8 @@ def test_resolver_merge_strategy_replaces_list_when_items_lack_identifier():
     result = resolve_refs(definitions, resources)
 
     extras = result["catalogs"]["main"]["schemas"][0]["extras"]
-    # No identifiers → override wins entirely.
-    assert extras == [{"comment": "only"}]
+    # No identifiers → override items are appended after the definition's items.
+    assert extras == [{"comment": "first"}, {"comment": "second"}, {"comment": "only"}]
 
 
 def test_resolver_merge_strategy_replaces_when_type_mismatch():
@@ -795,6 +796,308 @@ def test_resolver_merge_strategy_replaces_when_type_mismatch():
     extras = result["catalogs"]["main"]["schemas"][0]["extras"]
     # Override wins on type mismatch.
     assert extras == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Override list merge rules
+# ---------------------------------------------------------------------------
+
+
+def _schema_definition(field: str, items: list) -> dict:
+    """A definitions registry holding one schema whose ``field`` list is ``items``."""
+    return {"schemas": {"ops|sales": {"name": "sales", field: items}}}
+
+
+def _schema_ref_resources(field: str, items: list) -> dict:
+    """Resources holding one $ref to the ``ops|sales`` schema, overriding ``field``."""
+    return {
+        "catalogs": {
+            "main": {
+                "schemas": [{"$ref": "$defs/schemas/ops|sales", field: items}],
+            },
+        },
+    }
+
+
+def _resolved_schema_field(definitions: dict, resources: dict, field: str) -> list:
+    result = resolve_refs(definitions, resources)
+    return result["catalogs"]["main"]["schemas"][0][field]
+
+
+def test_resolver_merge_strategy_merges_override_into_unique_identifier_match():
+    """An override item whose identifier matches exactly one definition item is deep-merged
+    into it in place, even when the list also holds identifier-less items."""
+    definitions = _schema_definition(
+        "tables",
+        [
+            {"name": "orders", "comment": "Orders", "tags": {"tier": "gold"}},
+            {"comment": "untitled"},
+            {"name": "quotes", "comment": "Quotes"},
+        ],
+    )
+    resources = _schema_ref_resources(
+        "tables", [{"name": "orders", "comment": "TEST orders"}]
+    )
+
+    tables = _resolved_schema_field(definitions, resources, "tables")
+
+    assert tables == [
+        {"name": "orders", "comment": "TEST orders", "tags": {"tier": "gold"}},
+        {"comment": "untitled"},
+        {"name": "quotes", "comment": "Quotes"},
+    ]
+
+
+def test_resolver_merge_strategy_raises_when_override_identifier_matches_several_definition_items():
+    """An override item whose identifier matches several definition items is ambiguous: it is
+    a config error naming the identifier and the overridden location."""
+    definitions = _schema_definition(
+        "tables",
+        [
+            {"name": "orders", "comment": "first"},
+            {"name": "orders", "comment": "second"},
+        ],
+    )
+    resources = _schema_ref_resources(
+        "tables", [{"name": "orders", "comment": "TEST orders"}]
+    )
+
+    with pytest.raises(ResolutionError, match="(?i)ambiguous") as exc_info:
+        resolve_refs(definitions, resources)
+
+    message = str(exc_info.value)
+    assert "orders" in message
+    assert "$defs/schemas/ops|sales" in message
+    assert "tables" in message
+
+
+@pytest.mark.parametrize(
+    "repeated",
+    ["orders", "leads"],
+    ids=["matches_definition_item", "matches_no_definition_item"],
+)
+def test_resolver_merge_strategy_raises_when_override_repeats_an_identifier(repeated):
+    """An override list that repeats an identifier is ambiguous, whether or not the
+    identifier matches a definition item."""
+    definitions = _schema_definition(
+        "tables", [{"name": "orders", "comment": "Orders"}]
+    )
+    resources = _schema_ref_resources(
+        "tables",
+        [
+            {"name": repeated, "comment": "one"},
+            {"name": repeated, "comment": "two"},
+        ],
+    )
+
+    with pytest.raises(ResolutionError, match="(?i)ambiguous") as exc_info:
+        resolve_refs(definitions, resources)
+
+    message = str(exc_info.value)
+    assert repeated in message
+    assert "$defs/schemas/ops|sales" in message
+    assert "tables" in message
+
+
+def test_resolver_merge_strategy_unions_override_item_with_unmatched_identifier():
+    """An override item whose identifier matches no definition item is appended after the
+    definition's items, alongside identifier-less definition items."""
+    definitions = _schema_definition(
+        "tables", [{"name": "orders"}, {"comment": "note"}]
+    )
+    resources = _schema_ref_resources("tables", [{"name": "leads"}])
+
+    tables = _resolved_schema_field(definitions, resources, "tables")
+
+    assert tables == [{"name": "orders"}, {"comment": "note"}, {"name": "leads"}]
+
+
+def test_resolver_merge_strategy_union_skips_item_equal_to_existing_item():
+    """An identifier-less override item equal to an item already in the list is not
+    duplicated; new ones are appended."""
+    definitions = _schema_definition(
+        "extras", [{"comment": "first"}, {"comment": "second"}]
+    )
+    resources = _schema_ref_resources(
+        "extras", [{"comment": "second"}, {"comment": "third"}]
+    )
+
+    extras = _resolved_schema_field(definitions, resources, "extras")
+
+    assert extras == [{"comment": "first"}, {"comment": "second"}, {"comment": "third"}]
+
+
+def test_resolver_merge_strategy_dedupe_ignores_file_path_stamps(tmp_yaml_dir):
+    """An identifier-less item re-listed in an override written in a different YAML file
+    than the definition still dedupes, even though each side carries its own file stamp."""
+    root = tmp_yaml_dir(
+        {
+            "definitions/policies.yaml": {
+                "definitions": {
+                    "policies": {
+                        "shared|mask_redact": {
+                            "name": "mask_redact",
+                            "type": "mask",
+                            "function": "shared.mask_redact",
+                            "to": ["account users"],
+                            "columns": [
+                                {"alias": "masked"},
+                                {"constant": "REDACTED"},
+                                {"constant": 7},
+                            ],
+                        },
+                    },
+                },
+            },
+            "resources/catalogs.yaml": {
+                "resources": {
+                    "catalogs": {
+                        "main": {
+                            "policies": [
+                                {
+                                    "$ref": "$defs/policies/shared|mask_redact",
+                                    "columns": [
+                                        {"alias": "masked"},
+                                        {"constant": "REDACTED"},
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        }
+    )
+
+    config = load_config(root)
+
+    columns = config.catalogs["main"].policies[0].columns
+    assert [getattr(c, "alias", None) for c in columns] == ["masked", None, None]
+    assert [getattr(c, "constant", None) for c in columns] == [None, "REDACTED", 7]
+
+
+def test_resolver_merge_strategy_merges_mixed_primitive_and_dict_lists():
+    """A list mixing primitives, identifier-bearing dicts and identifier-less dicts merges
+    identified items, dedupes equal items and appends the rest."""
+    definitions = _schema_definition(
+        "extras",
+        ["a", {"name": "x", "comment": "one"}, {"comment": "free"}],
+    )
+    resources = _schema_ref_resources(
+        "extras",
+        ["b", "a", {"name": "x", "comment": "two"}, {"comment": "free2"}],
+    )
+
+    extras = _resolved_schema_field(definitions, resources, "extras")
+
+    assert extras == [
+        "a",
+        {"name": "x", "comment": "two"},
+        {"comment": "free"},
+        "b",
+        {"comment": "free2"},
+    ]
+
+
+def test_resolver_merge_strategy_keeps_definition_order_and_unions_in_override_order():
+    """Definition items keep their order (merged in place); new override items follow in
+    override order."""
+    definitions = _schema_definition(
+        "tables", [{"name": "a"}, {"name": "b"}, {"comment": "c"}]
+    )
+    resources = _schema_ref_resources(
+        "tables",
+        [{"name": "z"}, {"name": "b", "comment": "B"}, {"name": "y"}],
+    )
+
+    tables = _resolved_schema_field(definitions, resources, "tables")
+
+    assert tables == [
+        {"name": "a"},
+        {"name": "b", "comment": "B"},
+        {"comment": "c"},
+        {"name": "z"},
+        {"name": "y"},
+    ]
+
+
+def test_resolver_merge_strategy_allows_repeated_identifiers_in_definition_when_not_targeted():
+    """A definition may repeat an identifier as long as no override item targets it."""
+    definitions = _schema_definition(
+        "tables",
+        [
+            {"name": "orders", "comment": "one"},
+            {"name": "orders", "comment": "two"},
+            {"comment": "note"},
+            {"name": "quotes"},
+        ],
+    )
+    resources = _schema_ref_resources(
+        "tables", [{"name": "quotes", "comment": "Q"}, {"name": "leads"}]
+    )
+
+    tables = _resolved_schema_field(definitions, resources, "tables")
+
+    assert tables == [
+        {"name": "orders", "comment": "one"},
+        {"name": "orders", "comment": "two"},
+        {"comment": "note"},
+        {"name": "quotes", "comment": "Q"},
+        {"name": "leads"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "with_constant", [True, False], ids=["with_constant", "without_constant"]
+)
+def test_resolver_merge_strategy_raises_when_override_ref_matches_several_policy_columns(
+    with_constant,
+):
+    """Two policy columns built from the same $ref share that $ref as their identifier, so an
+    override column with the same $ref is ambiguous — with or without a constant column."""
+    tag_value_ref = "$defs/policy_columns/tag_value"
+    columns = [
+        {"alias": "email"},
+        {"$ref": tag_value_ref, "arguments": {"tag": "region"}},
+        {"$ref": tag_value_ref, "arguments": {"tag": "sensitivity"}},
+    ]
+    if with_constant:
+        columns.append({"constant": "REDACTED"})
+    definitions = {
+        "policy_columns": {"tag_value": {"expression": "get_tag_value"}},
+        "policies": {
+            "shared|mask_email": {
+                "name": "mask_email",
+                "type": "mask",
+                "columns": columns,
+            },
+        },
+    }
+    resources = {
+        "catalogs": {
+            "main": {
+                "policies": [
+                    {
+                        "$ref": "$defs/policies/shared|mask_email",
+                        "columns": [
+                            {
+                                "$ref": tag_value_ref,
+                                "arguments": {"tag": "classification"},
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    }
+
+    with pytest.raises(ResolutionError, match="(?i)ambiguous") as exc_info:
+        resolve_refs(definitions, resources)
+
+    message = str(exc_info.value)
+    assert tag_value_ref in message
+    assert "$defs/policies/shared|mask_email" in message
+    assert "columns" in message
 
 
 # ---------------------------------------------------------------------------
