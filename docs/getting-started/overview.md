@@ -8,7 +8,7 @@ UC Declarative ABAC lets you manage your Databricks Unity Catalog governance mod
 
 Configs are split into two namespaces:
 
-- **Definitions** are environment-agnostic, reusable templates for catalogs, schemas, tables, volumes, functions, and policies. You write a definition once, version it, and reuse it across environments.
+- **Definitions** are environment-agnostic, reusable templates for any part of a config: catalogs, schemas, tables, volumes, functions, and policies, or smaller fragments such as tags, columns, and filter rules. You write a definition once, version it, and reuse it across environments.
 - **Resources** are concrete, deployable instances (catalogs, governed tags, groups) that compose definitions into real UC objects deployed to your workspace.
 
 Definitions define *what exists*; resources define *where* it gets deployed.

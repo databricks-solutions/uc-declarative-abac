@@ -6,10 +6,15 @@ from uc_abac.securables.compiler import (
 )
 from uc_abac.securables.differ import compute_securable_diff
 from uc_abac.securables.executor import execute_securable_diff
+from uc_abac.securables.resolver import render_filter_rules
 from uc_abac.securables.state import (
     AttributeUpdate,
     Column,
+    ConditionRule,
+    FilterRule,
+    FilterRules,
     Function,
+    RlsMappingRule,
     Securable,
     SecurableAttributes,
     SecurableDiff,
@@ -19,7 +24,11 @@ from uc_abac.securables.state import (
 __all__ = [
     "AttributeUpdate",
     "Column",
+    "ConditionRule",
+    "FilterRule",
+    "FilterRules",
     "Function",
+    "RlsMappingRule",
     "Securable",
     "SecurableAttributes",
     "SecurableDiff",
@@ -28,4 +37,5 @@ __all__ = [
     "compile_desired_securables",
     "compute_securable_diff",
     "execute_securable_diff",
+    "render_filter_rules",
 ]

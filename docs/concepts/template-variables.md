@@ -123,7 +123,7 @@ definitions:
 
 ## User-data map keys
 
-Most dict keys are structural (field names, resource identities) and stay literal. However, a tag or identity-attribute name is user data, so `${placeholder}` is allowed in the keys of the user-data maps: `tags`, `has_tags`, `has_any_of_tags`, `has_none_of_tags` (on securables, columns, and policies), the FGAC-policy context-attribute maps (`has_context_attributes`, `has_any_of_context_attributes`, `has_none_of_context_attributes`), and the mask-policy identity-attribute maps (`has_identity_attributes`, `has_any_of_identity_attributes`, `has_none_of_identity_attributes`, `has_identity_attribute_tag_matches`, `has_any_of_identity_attribute_tag_matches`, `has_none_of_identity_attribute_tag_matches`). These are bound by the enclosing definition's `$vars` just like a value.
+Most dict keys are structural (field names, resource identities) and stay literal. However, a tag or identity-attribute name is user data, so `${placeholder}` is allowed in the keys of the user-data maps: `tags`, `has_tags`, `has_any_of_tags`, `has_none_of_tags` (on securables, columns, and policies), the FGAC-policy context-attribute maps (`has_context_attributes`, `has_any_of_context_attributes`, `has_none_of_context_attributes`), and the mask-policy identity-attribute maps (`has_identity_attributes`, `has_any_of_identity_attributes`, `has_none_of_identity_attributes`, `has_identity_attribute_tag_matches`, `has_any_of_identity_attribute_tag_matches`, `has_none_of_identity_attribute_tag_matches`), and the `rls_mapping` of an RLS mapping rule (whose keys are parameter values). These are bound by the enclosing definition's `$vars` just like a value.
 
 A placeholder in any other key is an error.
 

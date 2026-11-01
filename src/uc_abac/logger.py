@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import logging
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from uc_abac.privileges.state import SecurablePrivilege
     from uc_abac.securables.state import (
         AttributeUpdate,
+        Function,
         Securable,
     )
     from uc_abac.tags.state import SecurableTag
@@ -24,6 +26,8 @@ _default_logger = logging.getLogger("uc_abac")
 # Column widths for aligned output
 _TYPE_WIDTH = 12
 _NAME_WIDTH = 36
+# Indent for multi-line blocks (function bodies, diffs) beneath a change line
+_BLOCK_INDENT = " " * 6
 
 
 def _format_tag(tag_name: str, tag_value: str | None) -> str:
@@ -75,27 +79,78 @@ def _format_parameters_value(params: tuple[tuple[str, str], ...]) -> str:
     return "(" + ", ".join(f"{n} {t}" for n, t in params) + ")"
 
 
-def _format_function_diff(info: Securable, old: Securable | None) -> str:
-    """Return a pipe-joined per-field diff for a Function replace, or ``''``
-    when ``info`` is not a Function or ``old`` was not supplied. The body
-    (``definition``) is intentionally summarised as ``definition: changed``
-    rather than inlined — multi-line SQL would break the columnar log layout."""
+def _indent_block(text: str, prefix: str = _BLOCK_INDENT) -> str:
+    """Prefix every line of a multi-line ``text`` block with ``prefix`` so it
+    reads as nested beneath a change line."""
+    return "\n".join(f"{prefix}{line}" for line in text.splitlines())
+
+
+def _function_pair(
+    info: Securable, old: Securable | None
+) -> tuple[Function, Function] | None:
+    """Return ``(new, old)`` when both are Functions, else ``None``.
+
+    ``Function`` is imported lazily to avoid a circular import with
+    ``uc_abac.securables``."""
     from uc_abac.securables import Function
 
-    if old is None or not isinstance(info, Function) or not isinstance(old, Function):
+    if isinstance(info, Function) and isinstance(old, Function):
+        return info, old
+    return None
+
+
+def _format_function_body(info: Securable) -> str:
+    """Return a Function's SQL body indented for logging beneath its change
+    line, or ``''`` for non-functions and empty bodies."""
+    from uc_abac.securables import Function
+
+    if not isinstance(info, Function) or not info.definition:
         return ""
+    return _indent_block(info.definition)
+
+
+def _format_function_diff(info: Securable, old: Securable | None) -> str:
+    """Return a pipe-joined per-field diff for a Function replace, or ``''``
+    when ``info`` is not a Function or ``old`` was not supplied.
+
+    Only single-line fields (parameters, comment) go on the change line. The
+    body (``definition``) is deliberately left out — multi-line SQL would break
+    the columnar log layout — and is instead logged as an indented unified diff
+    beneath the change line (see ``_format_definition_diff``)."""
+    pair = _function_pair(info, old)
+    if pair is None:
+        return ""
+    new_fn, old_fn = pair
     parts: list[str] = []
-    if info.parameters != old.parameters:
+    if new_fn.parameters != old_fn.parameters:
         parts.append(
-            f"parameters: {_format_parameters_value(old.parameters)} -> "
-            f"{_format_parameters_value(info.parameters)}"
+            f"parameters: {_format_parameters_value(old_fn.parameters)} -> "
+            f"{_format_parameters_value(new_fn.parameters)}"
         )
-    if info.definition != old.definition:
-        parts.append("definition: changed")
-    comment_delta = _format_scalar_delta("comment", old.comment, info.comment)
+    comment_delta = _format_scalar_delta("comment", old_fn.comment, new_fn.comment)
     if comment_delta:
         parts.append(comment_delta)
     return " | ".join(parts)
+
+
+def _format_definition_diff(info: Securable, old: Securable | None) -> str:
+    """Return an indented unified diff of a Function's old vs new body, or
+    ``''`` when either side is not a Function or the bodies are identical.
+
+    The ``---``/``+++``/``@@`` header lines are dropped: the change line above
+    already identifies the function, and hunk offsets add noise for short
+    SQL bodies."""
+    pair = _function_pair(info, old)
+    if pair is None or pair[0].definition == pair[1].definition:
+        return ""
+    new_fn, old_fn = pair
+    diff = difflib.unified_diff(
+        old_fn.definition.splitlines(),
+        new_fn.definition.splitlines(),
+        lineterm="",
+    )
+    body = [line for line in diff if not line.startswith(("---", "+++", "@@"))]
+    return _indent_block("\n".join(body))
 
 
 def _format_policy_diff(new: Policy, old: Policy | None) -> str:
@@ -413,7 +468,8 @@ class ChangeLogger:
         )
 
     def log_securable_create(self, info: Securable) -> None:
-        """Log a securable being created."""
+        """Log a securable being created. For a Function, its SQL body is
+        logged indented beneath the change line."""
         self._securables_created += 1
         action_verb = "Create" if self._dry_run else "Created"
         self._log_info(
@@ -424,13 +480,17 @@ class ChangeLogger:
                 f"{action_verb} {info.securable_type.value.lower()}",
             )
         )
+        body = _format_function_body(info)
+        if body:
+            self._log_info(body)
 
     def log_securable_replace(
         self, info: Securable, old: Securable | None = None
     ) -> None:
         """Log a securable being replaced. When ``old`` is provided alongside a
         Function ``info``, the line includes a pipe-joined per-field diff so the
-        reader can see which fields actually changed."""
+        reader can see which fields actually changed, and a changed body is
+        logged as an indented unified diff beneath the line."""
         self._securables_replaced += 1
         action_verb = "Replace" if self._dry_run else "Replaced"
         action = f"{action_verb} {info.securable_type.value.lower()}"
@@ -445,6 +505,9 @@ class ChangeLogger:
                 action,
             )
         )
+        definition_diff = _format_definition_diff(info, old)
+        if definition_diff:
+            self._log_info(definition_diff)
 
     # ------------------------------------------------------------------
     # Policy logging

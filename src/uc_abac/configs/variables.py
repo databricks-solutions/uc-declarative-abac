@@ -28,7 +28,7 @@ Dict *keys* are literal by default, with one exception: the keys of a **user-dat
 (the fields in ``TEMPLATABLE_KEY_FIELDS`` — the tag-name maps ``tags``, ``has_tags``,
 ``has_any_of_tags``, ``has_none_of_tags``, plus the context-attribute maps
 ``has_context_attributes`` and friends and the identity-attribute maps
-``has_identity_attributes`` and friends)
+``has_identity_attributes`` and friends, plus the filter-rule value map ``rls_mapping``)
 are user data, so a placeholder in such a key is bound and substituted like a value. Every other
 key — config field names, ``$ref``/``$defs`` targets, resource identity keys — stays literal;
 a placeholder there is a hard error at ``finalise``.
@@ -81,7 +81,8 @@ _VARS_KEY = "$vars"
 # ``has_tags``/``has_any_of_tags``/``has_none_of_tags`` on policies and column aliases, the
 # context-attribute maps (``has_*_context_attributes``, whose keys are context-attribute names)
 # and the identity-attribute maps (``has_*_identity_attributes`` and ``has_*_identity_attribute_tag_matches``)
-# on FGAC policies (whose keys are identity-attribute names). A drift-guard test asserts these names
+# on FGAC policies (whose keys are identity-attribute names), and ``rls_mapping`` on filter rules
+# (whose keys are parameter values). A drift-guard test asserts these names
 # are real model fields, so this stays dependency-light (no runtime import of the model layer).
 TEMPLATABLE_KEY_FIELDS = frozenset(
     {
@@ -98,6 +99,7 @@ TEMPLATABLE_KEY_FIELDS = frozenset(
         "has_identity_attribute_tag_matches",
         "has_any_of_identity_attribute_tag_matches",
         "has_none_of_identity_attribute_tag_matches",
+        "rls_mapping",
     }
 )
 

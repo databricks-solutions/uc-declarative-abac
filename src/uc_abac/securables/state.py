@@ -92,6 +92,44 @@ class Table(Securable):
 
 
 @dataclass(frozen=True)
+class ConditionRule:
+    """An unnamed filter rule whose predicate is a raw boolean SQL ``condition``."""
+
+    condition: str
+
+
+@dataclass(frozen=True)
+class RlsMappingRule:
+    """An unnamed filter rule mapping parameter values to the principals allowed to
+    see them.
+
+    Each entry is ``(literal, principals)``: ``literal`` is the key already rendered as
+    a canonical SQL literal of the rule's comparison type (``None`` for the ``'*'``
+    wildcard, which renders the identity check alone), and ``principals`` are OR-ed.
+    ``parameter`` may be ``None`` only when every entry is a wildcard (the function
+    then has several parameters and none is needed); a single-parameter function
+    always defaults it to that parameter.
+    """
+
+    parameter: str | None
+    operator: str
+    identity: str
+    entries: tuple[tuple[str | None, tuple[Principal, ...]], ...]
+
+
+FilterRule = ConditionRule | RlsMappingRule
+
+
+@dataclass(frozen=True)
+class FilterRules:
+    """A function body built from row-filter rules: ``all_of`` rules are AND-joined,
+    ``any_of`` rules are OR-joined, and the two groups combine with AND."""
+
+    all_of: tuple[FilterRule, ...] = ()
+    any_of: tuple[FilterRule, ...] = ()
+
+
+@dataclass(frozen=True)
 class Function(Securable):
     """Function-specific state: parameters and body.
 
@@ -99,11 +137,19 @@ class Function(Securable):
     function definition — a change to the comment triggers a CREATE OR REPLACE
     FUNCTION, not a separate attribute update. ``location`` is inherited but
     unused (functions have no storage location).
+
+    ``filter_rules`` is set only on desired functions whose body is defined by
+    ``match_rules`` / ``match_any_of_rules``. Their ``definition`` is empty until the
+    differ resolves the rules' principals and renders the SQL body into it, then
+    clears ``filter_rules``. It is excluded from equality so the diff compares
+    rendered ``definition`` text against UC's ``routine_definition`` as for any
+    other function.
     """
 
     securable_type: Literal[SecurableType.FUNCTION]
     parameters: tuple[tuple[str, str], ...]
     definition: str
+    filter_rules: FilterRules | None = field(default=None, compare=False, kw_only=True)
 
 
 @dataclass(frozen=True)

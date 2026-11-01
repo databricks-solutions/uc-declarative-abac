@@ -4,8 +4,10 @@
 
 ```{glossary}
 definition
-  A reusable, environment-agnostic template declared under `definitions:` (a catalog, schema,
-  table, volume, function, policy, or group). A definition is never deployed by itself; it takes
+  A reusable, environment-agnostic template declared under `definitions:`. Any part of a config
+  can be a definition: a catalog, schema, table, volume, function, or policy, or a smaller
+  fragment such as a tag map, column, parameter list, filter rule, or group. A definition is
+  never deployed by itself; it takes
   effect only when a {term}`resource` references it. See {ref}`definitions-and-resources`.
 
 resource
@@ -32,4 +34,16 @@ governed tag
 principal
   A user, group, or service principal referenced as an owner, policy target, tag assigner, group
   member, or domain owner. See {ref}`principals`.
+
+filter rule
+  One entry of a function's `match_rules` or `match_any_of_rules` list: either a raw boolean
+  `condition` or an {term}`RLS mapping rule`. See {ref}`functions-rls-mapping-rules`.
+
+RLS mapping
+  The `rls_mapping` of an {term}`RLS mapping rule`: keys are values of a function parameter, and
+  each value is the principal, or list of principals, allowed to see rows holding that key.
+
+RLS mapping rule
+  A {term}`filter rule` that grants row visibility from an {term}`RLS mapping`, rendered by the
+  engine into the function body. See {ref}`functions-rls-mapping-rules`.
 ```

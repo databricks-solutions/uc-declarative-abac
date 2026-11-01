@@ -40,6 +40,8 @@ function:
   return: 'CONCAT(col_value, "_MASKED")'
 ```
 
+A filter policy's inline function can define its body with {ref}`RLS mapping rules <functions-rls-mapping-rules>` instead of `return`.
+
 If this results in two functions with the same name in the same catalog and schema, config load fails with a duplicate functions error. When several policies use the same reusable function definition inline via `$defs/functions/<key>`, override the function `name` on each to keep them distinct.
 
 (mask-filter-for-field)=
@@ -104,7 +106,7 @@ definitions:
 
 ### Mask email with a fixed value
 
-A shared mask function reused across policies, parameterised by a constant replacement value. The first column (alias) is the masked column; the constant is passed as the second function argument:
+An inline mask function parameterised by a constant replacement value. The first column (alias) is the masked column and the constant is passed as the second function argument, so `jane@example.com` is shown as `REDACTED@example.com`:
 
 ```{code-block} yaml
 :caption: definitions/policies/pii/mask_email_redacted.yaml
@@ -120,52 +122,46 @@ definitions:
             pii: email
             class.email: '*'
         - constant: REDACTED
-      function: platform.abac.mask_with_value
+      function:
+        parameters:
+          - name: email
+            type: string
+          - name: replacement
+            type: string
+        return: CONCAT(replacement, SUBSTRING(email, INSTR(email, '@')))
       to:
         - account users
 ```
 
-### Filter trips by region
+### Filter by region
+
+Users see only the rows for their region, defined with an {ref}`RLS mapping rule <functions-rls-mapping-rules>`; members of `global_readers` see every region:
 
 ```{code-block} yaml
-:caption: definitions/policies/region/filter_trips_by_region.yaml
+:caption: definitions/policies/region/filter_by_region.yaml
 
 definitions:
   policies:
-    region|filter_trips_by_region:
-      name: filter_trips_by_region
-      comment: Users can only see high sensitivity trips to or from their region
+    region|filter_by_region:
+      name: filter_by_region
+      comment: Users can only see records for their region
       type: filter
-      has_tags:
-        trips: '*'
-        sensitivity: high
-      columns:
-        - alias: from_region
-          has_tags:
-            from_region: '*'
-        - alias: to_region
-          has_tags:
-            to_region: '*'
+      column:
+        alias: region
+        has_tags:
+          region: '*'
       function:
         parameters:
-          - name: from_region
+          - name: region
             type: string
-          - name: to_region
-            type: string
-        return: |-
-          (
-            (from_region = 'AFRICA' AND is_account_group_member('africa_users'))
-            OR (from_region = 'AMERICA' AND is_account_group_member('america_users'))
-            OR (from_region = 'EUROPE' AND is_account_group_member('europe_users'))
-            OR (from_region = 'ASIA' AND is_account_group_member('asia_users'))
-            OR (from_region = 'MIDDLE EAST' AND is_account_group_member('middle_east_users'))
-          ) OR (
-            (to_region = 'AFRICA' AND is_account_group_member('africa_users'))
-            OR (to_region = 'AMERICA' AND is_account_group_member('america_users'))
-            OR (to_region = 'EUROPE' AND is_account_group_member('europe_users'))
-            OR (to_region = 'ASIA' AND is_account_group_member('asia_users'))
-            OR (to_region = 'MIDDLE EAST' AND is_account_group_member('middle_east_users'))
-          )
+        match_rules:
+          - rls_mapping:
+              AFRICA: africa_readers
+              AMERICA: america_readers
+              EUROPE: europe_readers
+              ASIA: asia_readers
+              MIDDLE EAST: middle_east_readers
+              '*': global_readers
       except:
         - account admins
 ```

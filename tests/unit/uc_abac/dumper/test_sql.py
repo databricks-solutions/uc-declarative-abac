@@ -13,6 +13,7 @@ from uc_abac.dumper import (
     render_sql_literal,
     staging_table_name,
 )
+from uc_abac.utils import sql_string_literal
 
 # ---
 # render_sql_literal tests
@@ -151,6 +152,56 @@ def test_dumper_sql_render_sql_literal_empty_tuple_default_type() -> None:
     result = render_sql_literal(())
     assert "CAST(array()" in result
     assert "ARRAY<STRING>" in result
+
+
+# ---
+# render_sql_literal map tests
+# ---
+
+
+def test_dumper_sql_render_sql_literal_renders_map_with_array_values() -> None:
+    """render_sql_literal renders a dict as map(k1, v1, k2, v2, ...), with string keys
+    and array values rendered as literals."""
+    value = {"AMER": ("amer_readers",), "EMEA": ("emea_a", "emea_b")}
+    result = render_sql_literal(value, sql_type="MAP<STRING, ARRAY<STRING>>")
+    assert result == (
+        "map('AMER', array('amer_readers'), 'EMEA', array('emea_a', 'emea_b'))"
+    )
+
+
+def test_dumper_sql_render_sql_literal_renders_empty_map_with_cast_to_sql_type() -> (
+    None
+):
+    """render_sql_literal casts an empty map to its column type, since a bare map()
+    carries no key/value types."""
+    result = render_sql_literal({}, sql_type="MAP<STRING, ARRAY<STRING>>")
+    assert result == "CAST(map() AS MAP<STRING, ARRAY<STRING>>)"
+
+
+def test_dumper_sql_render_sql_literal_escapes_map_keys_and_values() -> None:
+    """render_sql_literal escapes quotes and backslashes in map keys and values."""
+    key = "O'Brien\\x"
+    first, second = "it's", "a\\b"
+    result = render_sql_literal(
+        {key: (first, second)}, sql_type="MAP<STRING, ARRAY<STRING>>"
+    )
+    expected_key = sql_string_literal(key)
+    expected_values = f"{sql_string_literal(first)}, {sql_string_literal(second)}"
+    assert result == f"map({expected_key}, array({expected_values}))"
+
+
+def test_dumper_sql_render_sql_literal_preserves_map_insertion_order() -> None:
+    """render_sql_literal emits map entries in dict insertion order, not sorted."""
+    value = {"ZULU": ("z",), "ALPHA": ("a",), "MIKE": ("m",)}
+    result = render_sql_literal(value, sql_type="MAP<STRING, ARRAY<STRING>>")
+    assert result == (
+        "map('ZULU', array('z'), 'ALPHA', array('a'), 'MIKE', array('m'))"
+    )
+
+
+def test_dumper_sql_render_sql_literal_none_for_map_column() -> None:
+    """render_sql_literal renders None as NULL for a MAP column."""
+    assert render_sql_literal(None, sql_type="MAP<STRING, ARRAY<STRING>>") == "NULL"
 
 
 # ---
@@ -693,6 +744,33 @@ def test_dumper_sql_build_insert_statements_empty_array_with_struct_type() -> No
     # Should use the column's sql_type to type the empty array
     assert "CAST(array()" in stmt
     assert "ARRAY<STRUCT<name: STRING>>" in stmt
+
+
+def test_dumper_sql_build_insert_statements_map_column_values() -> None:
+    """build_insert_statements renders a MAP column's dict as a map literal, an empty
+    dict cast to the column type, and None as NULL."""
+    map_type = "MAP<STRING, ARRAY<STRING>>"
+    spec = TableSpec(
+        name="t",
+        comment="Test",
+        columns=(
+            ColumnSpec("id", "INT", "ID"),
+            ColumnSpec("mapping", map_type, "Mapping"),
+        ),
+        rows=lambda state, ctx: [],
+    )
+    rows = [
+        {"id": 1, "mapping": {"AMER": ("amer_readers",), "EMEA": ("emea_a",)}},
+        {"id": 2, "mapping": {}},
+        {"id": 3, "mapping": None},
+    ]
+    result = build_insert_statements("db.t", spec, rows)
+    assert len(result) == 1
+    stmt = result[0]
+    assert "`mapping`" in stmt
+    assert "map('AMER', array('amer_readers'), 'EMEA', array('emea_a'))" in stmt
+    assert f"CAST(map() AS {map_type})" in stmt
+    assert "(3, NULL)" in stmt
 
 
 # ---------------------------------------------------------------------------
