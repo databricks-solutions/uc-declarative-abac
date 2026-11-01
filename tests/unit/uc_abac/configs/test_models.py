@@ -10,6 +10,7 @@ from uc_abac.configs import (
     FunctionConfig,
     ParameterConfig,
     ResourcesConfig,
+    RlsMappingRuleConfig,
 )
 from uc_abac.types import PrivilegeType, SecurableType
 from uc_abac.utils import DuplicateResourceError
@@ -4763,6 +4764,56 @@ def test_function_config_accepts_current_user_identity():
         )
     )
     assert fn.match_rules[0].identity == "current_user"
+
+
+def test_rls_mapping_rule_config_defaults_identity_to_none():
+    """An rls_mapping rule with no `identity` leaves it None, meaning the
+    per-principal-type default is applied at resolution time."""
+    rule = RlsMappingRuleConfig.model_validate({"rls_mapping": {"a": "group_a"}})
+    assert rule.identity is None
+
+
+def test_rls_mapping_rule_config_accepts_session_user_identity():
+    """`session_user` is an allowed identity."""
+    rule = RlsMappingRuleConfig.model_validate(
+        {"rls_mapping": {"a": "someone@example.com"}, "identity": "session_user"}
+    )
+    assert rule.identity == "session_user"
+
+
+def test_rls_mapping_rule_config_still_accepts_current_user_identity():
+    """`current_user` remains an allowed identity alongside `session_user`."""
+    rule = RlsMappingRuleConfig.model_validate(
+        {"rls_mapping": {"a": "someone@example.com"}, "identity": "current_user"}
+    )
+    assert rule.identity == "current_user"
+
+
+def test_rls_mapping_rule_config_rejects_is_member_identity():
+    """`is_member` is not an allowed identity."""
+    with pytest.raises(ValidationError):
+        RlsMappingRuleConfig.model_validate(
+            {"rls_mapping": {"a": "group_a"}, "identity": "is_member"}
+        )
+
+
+def test_function_config_accepts_defaulted_and_explicit_group_identity_rules_as_distinct():
+    """A defaulted-identity rule and an otherwise-identical rule with explicit
+    `is_account_group_member` are not duplicates, so both are accepted."""
+    mapping = {"a": "group_a", "*": "global_readers"}
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=[{"name": "p", "type": "string"}],
+            match_any_of_rules=[
+                _mapping_rule(mapping),
+                _mapping_rule(mapping, identity="is_account_group_member"),
+            ],
+        )
+    )
+    assert [r.identity for r in fn.match_any_of_rules] == [
+        None,
+        "is_account_group_member",
+    ]
 
 
 def test_function_config_coerces_single_principal_to_one_element_list():

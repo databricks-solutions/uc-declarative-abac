@@ -108,12 +108,15 @@ class RlsMappingRule:
     wildcard, which renders the identity check alone), and ``principals`` are OR-ed.
     ``parameter`` may be ``None`` only when every entry is a wildcard (the function
     then has several parameters and none is needed); a single-parameter function
-    always defaults it to that parameter.
+    always defaults it to that parameter. ``identity`` is the identity function
+    checking each principal; ``None`` picks it per principal type (a group is checked
+    with both ``is_account_group_member`` and ``session_user``, a user or service
+    principal with ``session_user``).
     """
 
     parameter: str | None
     operator: str
-    identity: str
+    identity: str | None
     entries: tuple[tuple[str | None, tuple[Principal, ...]], ...]
 
 

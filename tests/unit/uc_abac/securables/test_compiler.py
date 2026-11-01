@@ -1334,7 +1334,9 @@ def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
     with an empty definition and a FilterRules spec: match_rules become all_of and
     match_any_of_rules become any_of (in list order), condition rules keep their
     condition, and rls_mapping principals stay unresolved (list values keep order).
-    A single-parameter function's rls rule defaults its parameter to that one."""
+    A single-parameter function's rls rule defaults its parameter to that one, and
+    an rls rule with no `identity` compiles to identity=None (the per-principal-type
+    default is resolved later)."""
     config = _filter_rule_function_config(
         {
             "name": "region_filter",
@@ -1368,7 +1370,7 @@ def test_securable_compiler_emits_filter_rules_with_unresolved_principals():
             RlsMappingRule(
                 parameter="region",
                 operator="=",
-                identity="is_account_group_member",
+                identity=None,
                 entries=(
                     ("'AMER'", (_unknown_owner("amer_readers"),)),
                     ("'EMEA'", (_unknown_owner("emea_b"), _unknown_owner("emea_a"))),

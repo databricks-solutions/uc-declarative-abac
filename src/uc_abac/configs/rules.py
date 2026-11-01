@@ -36,7 +36,7 @@ RlsFunctionOperator = Literal[
     "contains",
 ]
 RlsOperator = Literal[RlsInfixOperator, RlsFunctionOperator]
-RlsIdentity = Literal["is_account_group_member", "current_user"]
+RlsIdentity = Literal["is_account_group_member", "session_user", "current_user"]
 
 # bool before int (bool is an int subclass) and datetime before date (datetime is a
 # date subclass) so the most specific YAML scalar type is reported in errors.

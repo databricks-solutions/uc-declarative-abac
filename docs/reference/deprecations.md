@@ -86,6 +86,9 @@ Deprecated items still work but log a deprecation warning unless noted otherwise
 * - Governed tag `comment` field
   - Use `description`
   - The `comment` field on governed tags is a backward-compatible alias for `description` on input. Use `description` going forward.
+* - RLS mapping rule `identity: current_user`
+  - Use `identity: session_user`, or omit `identity`
+  - Databricks has deprecated `current_user()` as an alias of `session_user()`. Still renders `current_user()`, without a warning. See {ref}`functions-rls-mapping-rules`.
 * - Template variable delimiter `{{ name }}`
   - Use `${name}` (tight, no inner whitespace)
   - The legacy curly-brace form is still supported and functional without a warning. The recommended form is `${name}`.

@@ -1016,8 +1016,10 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
                 "identity",
                 "STRING",
                 "How the querying user is checked against a mapped principal: "
-                "is_account_group_member or current_user. NULL for FILTER_CONDITION "
-                "rules.",
+                "is_account_group_member, session_user, or current_user "
+                "(deprecated). NULL for FILTER_CONDITION rules and when unset, which "
+                "checks groups with both is_account_group_member and session_user, "
+                "and users and service principals with session_user.",
             ),
         ),
         rows=_function_rules_rows,
