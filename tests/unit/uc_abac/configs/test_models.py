@@ -4916,6 +4916,90 @@ def test_function_config_error_identifies_rule_by_position():
         )
 
 
+_DUPLICABLE_RULES = {
+    "condition": {"condition": "p = 'a'"},
+    "rls_mapping": _mapping_rule({"a": "group_a", "*": "global_readers"}),
+}
+
+
+@pytest.mark.parametrize("match_field", ["match_rules", "match_any_of_rules"])
+@pytest.mark.parametrize("rule_kind", list(_DUPLICABLE_RULES))
+def test_function_config_rejects_duplicate_rule_within_a_list(match_field, rule_kind):
+    """A rule that exactly repeats an earlier rule in the same list is rejected,
+    and the error names both positions."""
+    rule = _DUPLICABLE_RULES[rule_kind]
+    with pytest.raises(
+        ValidationError,
+        match=rf"{match_field}\[1\].*{match_field}\[0\]",
+    ):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "p", "type": "string"}],
+                **{match_field: [dict(rule), dict(rule)]},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (
+            _mapping_rule({"a": "group_a"}),
+            _mapping_rule({"a": "group_a"}, parameter="p"),
+        ),
+        (
+            _mapping_rule({"a": "group_a"}),
+            _mapping_rule({"a": ["group_a"]}),
+        ),
+    ],
+    ids=["defaulted-parameter", "single-principal-vs-list"],
+)
+def test_function_config_rejects_rules_equal_after_defaulting(first, second):
+    """Rules are compared after validation, so a defaulted parameter or a
+    single principal equals its explicit / one-element-list form."""
+    with pytest.raises(
+        ValidationError, match=r"match_any_of_rules\[1\].*match_any_of_rules\[0\]"
+    ):
+        FunctionConfig.model_validate(
+            _filter_fn(
+                parameters=[{"name": "p", "type": "string"}],
+                match_any_of_rules=[first, second],
+            )
+        )
+
+
+def test_function_config_accepts_rules_differing_only_by_parameter():
+    """The same mapping applied to different parameters is not a duplicate."""
+    mapping = {"AMER": "amer_readers", "*": "global_readers"}
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=[
+                {"name": "from_region", "type": "string"},
+                {"name": "to_region", "type": "string"},
+            ],
+            match_any_of_rules=[
+                _mapping_rule(mapping, parameter="from_region"),
+                _mapping_rule(mapping, parameter="to_region"),
+            ],
+        )
+    )
+    assert [r.parameter for r in fn.match_any_of_rules] == ["from_region", "to_region"]
+
+
+def test_function_config_accepts_same_rule_in_both_lists():
+    """A rule may appear once in match_rules and once in match_any_of_rules."""
+    rule = _mapping_rule({"a": "group_a"})
+    fn = FunctionConfig.model_validate(
+        _filter_fn(
+            parameters=[{"name": "p", "type": "string"}],
+            match_rules=[dict(rule)],
+            match_any_of_rules=[dict(rule)],
+        )
+    )
+    assert len(fn.match_rules) == 1
+    assert len(fn.match_any_of_rules) == 1
+
+
 # ---------------------------------------------------------------------------
 # ResourcesConfig: mask policies vs filter-rule functions
 # ---------------------------------------------------------------------------

@@ -1074,6 +1074,31 @@ def _validate_filter_rules(
     ]
 
 
+def _rule_identity(rule: ConditionRuleConfig | RlsMappingRuleConfig) -> tuple:
+    """Return a comparable identity for a validated rule: its type plus its dumped
+    content. ``model_dump`` omits the engine's ``file_path`` (``exclude=True``), so
+    two rules from different files still compare equal, and the type keeps a
+    condition rule from ever equalling an rls_mapping rule."""
+    return (type(rule), rule.model_dump())
+
+
+def _reject_duplicate_rules(rules: list | None, field: str) -> None:
+    """Reject a validated rule that exactly equals an earlier rule in the same
+    ``field`` list, naming both positions. Comparison is on the validated rules, so
+    a defaulted ``parameter`` or normalised principals equal their explicit forms.
+    Rules are not compared across the two rule lists."""
+    identities: list[tuple] = []
+    for i, rule in enumerate(rules or []):
+        identity = _rule_identity(rule)
+        if identity in identities:
+            j = identities.index(identity)
+            raise ValueError(
+                f"{field}[{i}] duplicates {field}[{j}]: two identical rules in "
+                f"one list are redundant"
+            )
+        identities.append(identity)
+
+
 class FunctionConfig(BaseSecurableConfig):
     """A UC SQL function. Its body is either a raw ``return`` expression or one/both
     of the structured ``match_rules`` (AND-joined) and ``match_any_of_rules``
@@ -1088,8 +1113,8 @@ class FunctionConfig(BaseSecurableConfig):
 
     @model_validator(mode="after")
     def _validate_body(self) -> FunctionConfig:
-        """Enforce exactly one body form and validate every filter rule against the
-        function's parameters."""
+        """Enforce exactly one body form, validate every filter rule against the
+        function's parameters, and reject a rule repeated within one list."""
         _check_body_form(self)
         parameters = self.parameters or []
         self.match_rules = _validate_filter_rules(
@@ -1098,6 +1123,8 @@ class FunctionConfig(BaseSecurableConfig):
         self.match_any_of_rules = _validate_filter_rules(
             self.match_any_of_rules, parameters, "match_any_of_rules"
         )
+        _reject_duplicate_rules(self.match_rules, "match_rules")
+        _reject_duplicate_rules(self.match_any_of_rules, "match_any_of_rules")
         return self
 
     @property

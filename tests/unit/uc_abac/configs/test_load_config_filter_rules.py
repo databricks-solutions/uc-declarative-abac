@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from pydantic import ValidationError
 
@@ -186,4 +188,40 @@ def test_load_config_rejects_inline_mask_policy_function_using_match_rules(
     )
 
     with pytest.raises(ValidationError, match="mask"):
+        load_config(root)
+
+
+def test_load_config_rejects_override_repeating_a_rule_for_a_new_list(tmp_yaml_dir):
+    """A `$ref` override that adds a list repeating the same rule fails to load."""
+    root = tmp_yaml_dir(
+        {
+            "config.yaml": {
+                "definitions": {
+                    "rules": {
+                        "region_rule": {
+                            "rls_mapping": {"AMER": "amer_readers"},
+                        },
+                    },
+                    "functions": {
+                        "region_filter": {
+                            "name": "fn_filter",
+                            "parameters": _REGION_PARAMS,
+                            "match_rules": [{"condition": "region = 'EMEA'"}],
+                        },
+                    },
+                },
+                "resources": _catalog_with_function(
+                    {
+                        "$ref": "$defs/functions/region_filter",
+                        "match_any_of_rules": [
+                            {"$ref": "$defs/rules/region_rule"},
+                            {"$ref": "$defs/rules/region_rule"},
+                        ],
+                    }
+                ),
+            },
+        }
+    )
+
+    with pytest.raises(ValidationError, match=re.escape("match_any_of_rules[1]")):
         load_config(root)
