@@ -106,7 +106,7 @@ definitions:
 
 ### Mask email with a fixed value
 
-A shared mask function reused across policies, parameterised by a constant replacement value. The first column (alias) is the masked column; the constant is passed as the second function argument:
+An inline mask function parameterised by a constant replacement value. The first column (alias) is the masked column and the constant is passed as the second function argument, so `jane@example.com` is shown as `REDACTED@example.com`:
 
 ```{code-block} yaml
 :caption: definitions/policies/pii/mask_email_redacted.yaml
@@ -122,57 +122,46 @@ definitions:
             pii: email
             class.email: '*'
         - constant: REDACTED
-      function: platform.abac.mask_with_value
+      function:
+        parameters:
+          - name: email
+            type: string
+          - name: replacement
+            type: string
+        return: CONCAT(replacement, SUBSTRING(email, INSTR(email, '@')))
       to:
         - account users
 ```
 
-### Filter trips by region
+### Filter by region
 
-A trip is visible when either endpoint is in one of the user's regions. The region mapping is written once as a {ref}`rule definition <functions-rls-mapping-rules>` and applied to each endpoint parameter with a `$ref` override:
+Users see only the rows for their region, defined with an {ref}`RLS mapping rule <functions-rls-mapping-rules>`; members of `global_readers` see every region:
 
 ```{code-block} yaml
-:caption: definitions/policies/region/filter_trips_by_region.yaml
+:caption: definitions/policies/region/filter_by_region.yaml
 
 definitions:
-  rules:
-    user_in_region:
-      name: user_in_region
-      rls_mapping:
-        AFRICA: africa_users
-        AMERICA: america_users
-        EUROPE: europe_users
-        ASIA: asia_users
-        MIDDLE EAST: middle_east_users
-
   policies:
-    region|filter_trips_by_region:
-      name: filter_trips_by_region
-      comment: Users can only see high sensitivity trips to or from their region
+    region|filter_by_region:
+      name: filter_by_region
+      comment: Users can only see records for their region
       type: filter
-      has_tags:
-        trips: '*'
-        sensitivity: high
-      columns:
-        - alias: from_region
-          has_tags:
-            from_region: '*'
-        - alias: to_region
-          has_tags:
-            to_region: '*'
+      column:
+        alias: region
+        has_tags:
+          region: '*'
       function:
         parameters:
-          - name: from_region
+          - name: region
             type: string
-          - name: to_region
-            type: string
-        match_any_of_rules:
-          - $ref: $defs/rules/user_in_region
-            name: user_in_from_region
-            parameter: from_region
-          - $ref: $defs/rules/user_in_region
-            name: user_in_to_region
-            parameter: to_region
+        match_rules:
+          - rls_mapping:
+              AFRICA: africa_readers
+              AMERICA: america_readers
+              EUROPE: europe_readers
+              ASIA: asia_readers
+              MIDDLE EAST: middle_east_readers
+              '*': global_readers
       except:
         - account admins
 ```
