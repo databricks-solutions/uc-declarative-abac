@@ -26,14 +26,8 @@ from uc_abac.utils import (
 OverrideStrategy = Literal["merge", "replace"]
 
 
-_PRIMITIVE_TYPES = (str, int, float, bool)
 _IDENTIFIER_KEYS = ("name", "alias", "$ref")
 _VARS_KEY = "$vars"
-
-
-def _is_primitive(value: Any) -> bool:
-    """A scalar leaf for merge purposes: str/int/float/bool or None."""
-    return value is None or isinstance(value, _PRIMITIVE_TYPES)
 
 
 def _identifier_of(item: dict) -> tuple[str, Any] | None:
@@ -48,64 +42,133 @@ def _identifier_of(item: dict) -> tuple[str, Any] | None:
     return None
 
 
-def _all_have_identifiers(items: list) -> bool:
-    """True if every item in the list is a dict carrying 'name' or '$ref'.
+def _identifier_of_item(item: Any) -> tuple[str, Any] | None:
+    """The identifier of any list item: ``_identifier_of`` for a dict, else None."""
+    return _identifier_of(item) if isinstance(item, dict) else None
 
-    Vacuously true for an empty list — empty lists are shape-neutral and compatible
-    with any merge strategy chosen by the other side.
+
+def _identifier_counts(items: list) -> dict[tuple[str, Any], int]:
+    """How many items of ``items`` carry each identifier (identifier-less items are skipped)."""
+    counts: dict[tuple[str, Any], int] = {}
+    for item in items:
+        identifier = _identifier_of_item(item)
+        if identifier is not None:
+            counts[identifier] = counts.get(identifier, 0) + 1
+    return counts
+
+
+def _describe_identifier(identifier: tuple[str, Any]) -> str:
+    """Render an identifier as ``key='value'`` for error messages."""
+    key, value = identifier
+    return f"{key}={value!r}"
+
+
+def _check_unique_override_identifiers(override: list, path: str) -> None:
+    """Reject an override list that repeats an identifier.
+
+    Two override items with the same identifier leave it unclear which one the author meant
+    (to merge into a definition item, or to add), so this is a config error regardless of
+    whether the identifier matches anything in the definition.
     """
-    return all(isinstance(i, dict) and _identifier_of(i) is not None for i in items)
+    for identifier, count in _identifier_counts(override).items():
+        if count > 1:
+            raise ResolutionError(
+                f"Ambiguous override of {path}: identifier "
+                f"{_describe_identifier(identifier)} appears more than once in the override; "
+                "give the items a distinguishing name or alias, or redefine the list "
+                "instead of overriding it"
+            )
 
 
-def _all_primitives(items: list) -> bool:
-    """True if every item in the list is a primitive scalar.
+def _strip_file_path_stamps(value: Any) -> Any:
+    """Return ``value`` with every engine ``file_path`` stamp removed, at any depth.
 
-    Vacuously true for an empty list.
+    Only a stamp (a ``Path``, per ``stamped_file_path``) is stripped; a user-written string
+    under ``FILE_PATH_KEY`` is ordinary data and is kept.
     """
-    return all(_is_primitive(i) for i in items)
+    if isinstance(value, dict):
+        has_stamp = stamped_file_path(value) is not None
+        return {
+            key: _strip_file_path_stamps(item)
+            for key, item in value.items()
+            if not (has_stamp and key == FILE_PATH_KEY)
+        }
+    if isinstance(value, list):
+        return [_strip_file_path_stamps(item) for item in value]
+    return value
 
 
-def _union_primitives(definition: list, override: list) -> list:
-    """Concatenate definition + override, deduping by value. Definition order preserved."""
-    result = list(definition)
-    for item in override:
-        if item not in result:
-            result.append(item)
-    return result
+def _equal_ignoring_stamps(left: Any, right: Any) -> bool:
+    """Whether two list items are equal once engine ``file_path`` stamps are ignored.
 
-
-def _merge_lists_by_identifier(definition: list, override: list) -> list:
-    """Align list items by identifier, recursively merge matched items, append the rest.
-
-    Matched items: items from definition whose identifier appears in override are recursively
-    deep-merged with the matching override item.
-    Unmatched definition items: preserved in definition order.
-    Unmatched override items: appended after, in override order.
+    The definition and an override are usually written in different files, so the same item
+    re-listed in both carries different stamps; those must not defeat de-duplication.
     """
-    override_by_id = {_identifier_of(item): item for item in override}
-    consumed: set = set()
-    result: list = []
-    for def_item in definition:
-        def_id = _identifier_of(def_item)
-        if def_id in override_by_id:
-            result.append(_deep_merge(def_item, override_by_id[def_id]))
-            consumed.add(def_id)
-        else:
-            result.append(copy.deepcopy(def_item))
+    return _strip_file_path_stamps(left) == _strip_file_path_stamps(right)
+
+
+def _contains_equal_item(items: list, candidate: Any) -> bool:
+    """Whether ``items`` already holds an item equal to ``candidate`` (ignoring stamps)."""
+    return any(_equal_ignoring_stamps(item, candidate) for item in items)
+
+
+def _matched_definition_index(
+    definition: list,
+    identifier: tuple[str, Any] | None,
+    definition_counts: dict[tuple[str, Any], int],
+    path: str,
+) -> int | None:
+    """Index of the single definition item an override identifier targets, else None.
+
+    None when the override item has no identifier or its identifier matches no definition
+    item (the item is then unioned). Raises ``ResolutionError`` when the identifier matches
+    several definition items, since the target of the override is then ambiguous.
+    """
+    count = definition_counts.get(identifier, 0) if identifier is not None else 0
+    if count == 0:
+        return None
+    if count > 1:
+        raise ResolutionError(
+            f"Ambiguous override of {path}: identifier "
+            f"{_describe_identifier(identifier)} matches {count} definition items; "
+            "give the items a distinguishing name or alias, or redefine the list "
+            "instead of overriding it"
+        )
+    return next(
+        index
+        for index, item in enumerate(definition)
+        if _identifier_of_item(item) == identifier
+    )
+
+
+def _merge_lists(definition: list, override: list, path: str) -> list:
+    """Merge an override list into a definition list, returning a new list.
+
+    One rule set applies to every list, whatever its item shapes:
+
+    - The result starts as a copy of the definition list, in definition order.
+    - An override item whose identifier (``name``, ``alias`` or ``$ref``; dict items only)
+      matches exactly one definition item is deep-merged into that item in place.
+    - Any other override item (identifier-less dict, primitive, or unmatched identifier) is
+      appended in override order, unless an equal item is already in the result. Equality
+      ignores engine ``file_path`` stamps, so an item re-listed in another file still dedupes.
+    - An identifier repeated within the override, or matching several definition items, is
+      ambiguous and raises ``ResolutionError`` naming the identifier and ``path`` (the
+      location being overridden). A definition may repeat an identifier freely as long as
+      no override item targets it.
+    """
+    _check_unique_override_identifiers(override, path)
+    definition_counts = _identifier_counts(definition)
+    result = copy.deepcopy(definition)
     for ov_item in override:
-        ov_id = _identifier_of(ov_item)
-        if ov_id not in consumed:
+        index = _matched_definition_index(
+            definition, _identifier_of_item(ov_item), definition_counts, path
+        )
+        if index is not None:
+            result[index] = _deep_merge(definition[index], ov_item, path)
+        elif not _contains_equal_item(result, ov_item):
             result.append(copy.deepcopy(ov_item))
     return result
-
-
-def _merge_lists(definition: list, override: list) -> list:
-    """Merge two lists. Strategy depends on item shape; see module docstring."""
-    if _all_have_identifiers(definition) and _all_have_identifiers(override):
-        return _merge_lists_by_identifier(definition, override)
-    if _all_primitives(definition) and _all_primitives(override):
-        return _union_primitives(definition, override)
-    return copy.deepcopy(override)
 
 
 def _definition_keeps_file_path(definition: dict, override: dict) -> bool:
@@ -118,9 +181,13 @@ def _definition_keeps_file_path(definition: dict, override: dict) -> bool:
     return FILE_PATH_KEY in definition and stamped_file_path(override) is not None
 
 
-def _merge_dicts(definition: dict, override: dict) -> dict:
+def _merge_dicts(definition: dict, override: dict, path: str) -> dict:
     """Recursively merge two dicts. Override keys win; definition-only keys are preserved,
-    except that ``file_path`` follows ``_definition_keeps_file_path``."""
+    except that ``file_path`` follows ``_definition_keeps_file_path``.
+
+    ``path`` is the location being merged (for error messages); each recursed key extends
+    it with ``.<key>``.
+    """
     keep_file_path = _definition_keeps_file_path(definition, override)
     result: dict = {}
     for key, def_value in definition.items():
@@ -128,7 +195,7 @@ def _merge_dicts(definition: dict, override: dict) -> dict:
             result[key] = (
                 def_value
                 if key == FILE_PATH_KEY and keep_file_path
-                else _deep_merge(def_value, override[key])
+                else _deep_merge(def_value, override[key], f"{path}.{key}")
             )
         else:
             result[key] = copy.deepcopy(def_value)
@@ -138,17 +205,19 @@ def _merge_dicts(definition: dict, override: dict) -> dict:
     return result
 
 
-def _deep_merge(definition: Any, override: Any) -> Any:
+def _deep_merge(definition: Any, override: Any, path: str) -> Any:
     """Recursively merge override into definition, returning a new value.
 
     - dict + dict → recursive key-wise merge
-    - list + list → see _merge_lists for the per-shape strategy
+    - list + list → see _merge_lists (identifier-matched items merge, the rest are unioned)
     - anything else (scalar / type mismatch) → override wins
+
+    ``path`` is the location being merged, threaded through for error messages.
     """
     if isinstance(definition, dict) and isinstance(override, dict):
-        return _merge_dicts(definition, override)
+        return _merge_dicts(definition, override, path)
     if isinstance(definition, list) and isinstance(override, list):
-        return _merge_lists(definition, override)
+        return _merge_lists(definition, override, path)
     return copy.deepcopy(override)
 
 
@@ -172,9 +241,10 @@ def resolve_refs(
     Override merge strategies (controlled by ``override_strategy``):
 
     - ``"merge"`` (default) — sibling fields recursively deep-merge into the
-      definition. Dicts merge key-wise; lists of identifier-bearing dicts merge by
-      ``name`` (or ``$ref``); lists of primitives are unioned with dedupe. Other
-      shapes fall back to replace.
+      definition. Dicts merge key-wise; in lists, an override item whose identifier
+      (``name``, ``alias`` or ``$ref``) matches exactly one definition item merges into
+      it, and every other override item is unioned in (appended unless an equal item is
+      already present). An ambiguous identifier is a ``ResolutionError``.
     - ``"replace"`` — sibling fields shallowly replace top-level keys in the
       definition (legacy behaviour, preserved for backwards compatibility).
 
@@ -291,8 +361,8 @@ def _resolve_inline_defs_strings(
     identity can only come from the dict it resolves to. Pre-resolving these strings
     on both sides of a merge lets ``_merge_lists`` see concrete dicts and align
     items by ``name`` / ``alias`` as intended — without this, an override like
-    ``columns: [$defs/columns/region]`` against a definition list of dicts would
-    hit the shape-mismatch fallback in ``_merge_lists`` and replace the whole list.
+    ``columns: [$defs/columns/region]`` would be compared as an opaque string and
+    unioned in beside the definition's ``region`` column instead of merging into it.
 
     ``$ref`` dicts are intentionally NOT pre-resolved here: their sibling keys
     (``alias``, ``name``) are the *intended* merge identifier as written in YAML,
@@ -328,7 +398,7 @@ def _resolve_inline_defs_strings(
             # would fail. Defer it here so the post-substitution ``_resolve_node`` pass resolves
             # the concrete target. Consequence: unlike a concrete inline string, it is NOT a dict
             # at merge time, so a templated inline string in a list is not merge-aligned by
-            # identifier and an override list replaces it wholesale — use the ``$ref``-dict form
+            # identifier and is unioned in as an extra item — use the ``$ref``-dict form
             # (whose sibling keys drive alignment) if the target is templated AND merged into.
             return node
         return _resolve_inline_defs_string(
@@ -348,10 +418,14 @@ def _resolve_ref(
 
     Inline ``$defs/...`` strings on both sides are pre-resolved before merging so
     that list fields using the catalog-style shorthand still merge by identifier
-    (e.g. ``columns: [$defs/columns/region]`` appends to the definition's column
-    list instead of replacing it). ``$ref`` dicts with sibling keys are deferred
-    to the post-merge resolution pass so explicit ``alias`` / ``name`` siblings
-    drive identifier matching as intended.
+    (e.g. ``columns: [$defs/columns/region]`` merges into the definition's
+    ``region`` column, or is appended if there is none, rather than being unioned in as
+    an opaque string). ``$ref`` dicts with sibling keys are deferred to the post-merge
+    resolution pass so explicit ``alias`` / ``name`` siblings drive identifier
+    matching as intended.
+
+    Under the merge strategy the ``$ref`` target seeds the merge location used in
+    error messages (e.g. ``$defs/schemas/ops|sales.tables``).
     """
     ref_path = node["$ref"]
     if ref_path in visited:
@@ -376,7 +450,7 @@ def _resolve_ref(
         if keep_file_path:
             resolved[FILE_PATH_KEY] = def_file_path
     else:
-        resolved = _merge_dicts(resolved, overrides)
+        resolved = _merge_dicts(resolved, overrides, ref_path)
 
     declared = _declared_vars(definition)
     resolved = _apply_vars(resolved, ref_path, declared, definitions)
