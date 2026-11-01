@@ -105,7 +105,7 @@ Functions defined with these rules return a boolean row predicate, so only `filt
 
 ### Rule fields
 
-Every rule is exactly one of two shapes. Two identical rules in the same list are a config error.
+Every rule is exactly one of two shapes. Two rules in the same list that are identical once resolved (for example, a single principal name and a one-item list, or a defaulted and an explicit `parameter`) are a config error.
 
 A **condition rule** holds a raw boolean SQL expression:
 
@@ -241,7 +241,7 @@ AND (
 A `$ref` override of a function merges its rule lists like any other list (see {ref}`references-and-overrides`):
 
 - A rule written as a `$ref` to a rule definition is merged into the definition's rule with the same `$ref`, if exactly one rule has it. For example, an override can add a key to that rule's `rls_mapping`.
-- Any other rule is added to the list, unless an identical rule is already there. Adding a rule to `match_any_of_rules` widens who can see rows.
+- Any other rule is added to the list, unless a rule written exactly the same way is already there. A rule that is only equivalent once resolved, but written differently (for example, `AMER: amer_readers` against `AMER: [amer_readers]`, or a bare `$defs/rules/x` against `$ref: $defs/rules/x`), is added and then fails config load as a duplicate. Adding a rule to `match_any_of_rules` widens who can see rows.
 - If the `$ref` appears on several of the definition's rules (for example, one rule definition reused for two parameters), the override is ambiguous and config load fails. Redefine the function's rule lists instead.
 
 Rules can't be removed by an override. A `$ref` to a function definition that uses `return` can't be overridden with rule lists either, because the merged function would set both.
