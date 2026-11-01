@@ -120,7 +120,7 @@ An **RLS mapping rule** maps parameter values to the principals allowed to see r
   - `is_account_group_member` (the default): the user is a member of the mapped group.
   - `session_user`: the user is the mapped user or service principal.
   - `session_user_or_member`: the user is a member of the mapped group, or is acting as that group. Use it for a group that has members and can also be assumed by its {ref}`assumers <groups>` as an RBAC exclusive access role. Renders `(session_user() = 'g' OR is_account_group_member('g'))`.
-  - `current_user` (deprecated): renders `current_user() = ...`. `current_user()` is a deprecated alias of `session_user()`, so use `session_user` instead; loading a config that uses `current_user` logs a deprecation warning.
+  - `current_user` (deprecated): renders `current_user() = ...`. `current_user()` is a deprecated alias of `session_user()`, so use `session_user` instead.
 
   `is_member` is not supported, because the engine cannot resolve workspace-local groups.
 
