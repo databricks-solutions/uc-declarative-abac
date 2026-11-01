@@ -4765,6 +4765,28 @@ def test_function_config_accepts_current_user_identity():
     assert fn.match_rules[0].identity == "current_user"
 
 
+def test_function_config_accepts_session_user_identity():
+    """`session_user` is an allowed identity and is the replacement for `current_user`."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(
+            "string",
+            _mapping_rule({"a": "someone@example.com"}, identity="session_user"),
+        )
+    )
+    assert fn.match_rules[0].identity == "session_user"
+
+
+def test_function_config_accepts_session_user_or_member_identity():
+    """`session_user_or_member` is an allowed identity."""
+    fn = FunctionConfig.model_validate(
+        _single_param_fn(
+            "string",
+            _mapping_rule({"a": "group_a"}, identity="session_user_or_member"),
+        )
+    )
+    assert fn.match_rules[0].identity == "session_user_or_member"
+
+
 def test_function_config_coerces_single_principal_to_one_element_list():
     """A single principal name is normalised to a one-element list, so every
     rls_mapping value is a list of principals."""

@@ -116,7 +116,13 @@ An **RLS mapping rule** maps parameter values to the principals allowed to see r
 - **`rls_mapping`** (required): a non-empty map of parameter values to a principal name or a list of principal names (a list means any of them). A `'*'` key matches every row, whatever the parameter value.
 - **`parameter`**: the parameter the keys are compared with. Optional when the function has one parameter, or when the only key is `'*'`; otherwise required.
 - **`operator`**: how a key is compared with the parameter (default `=`), from the list below.
-- **`identity`**: how the querying user is checked against a mapped principal. `is_account_group_member` (the default) checks account group membership; `current_user` compares the querying user's username, or a service principal's application ID, with the mapped user or service principal. `is_member` is not supported, because the engine cannot resolve workspace-local groups.
+- **`identity`**: how the querying user is checked against each mapped principal. Principals are named as everywhere else in config: a user's username, or a group's or service principal's display name. The engine resolves each name and renders the identifier the check compares against, so a service principal's display name becomes its application ID, which is what `session_user()` returns for a service principal.
+  - `is_account_group_member` (the default): the user is a member of the mapped group.
+  - `session_user`: the user is the mapped user or service principal.
+  - `session_user_or_member`: the user is a member of the mapped group, or is acting as that group. Use it for a group that has members and can also be assumed by its {ref}`assumers <groups>` as an RBAC exclusive access role. Renders `(session_user() = 'g' OR is_account_group_member('g'))`.
+  - `current_user` (deprecated): renders `current_user() = ...`. `current_user()` is a deprecated alias of `session_user()`, so use `session_user` instead; loading a config that uses `current_user` logs a deprecation warning.
+
+  `is_member` is not supported, because the engine cannot resolve workspace-local groups.
 
 ### Operators
 
@@ -159,6 +165,54 @@ match_rules:
 ```
 
 With an `int` `sensitivity_level` parameter, `internal_readers` see rows at levels 1 and 2.
+
+Combining an operator with an identity, this function matches array parameters against groups that may be joined or assumed:
+
+```{code-block} yaml
+definitions:
+  functions:
+    region|fn_filter_by_location_department:
+      name: fn_filter_by_location_department
+      parameters:
+        - name: office_locations
+          type: array<string>
+        - name: department_names
+          type: array<string>
+      match_rules:
+        - parameter: office_locations
+          operator: array_contains
+          identity: session_user_or_member
+          rls_mapping:
+            Sydney: grp-location-sydney
+            London: grp-location-london
+            New York: grp-location-newyork
+            Tokyo: grp-location-tokyo
+        - parameter: department_names
+          operator: array_contains
+          identity: session_user_or_member
+          rls_mapping:
+            Finance: grp-dept-finance
+            Trading: grp-dept-trading
+            Marketing: grp-dept-marketing
+            Recruiting: grp-dept-recruiting
+```
+
+A row is visible when one of its office locations maps to a group the user belongs to or is acting as, and one of its departments does too. Renders as:
+
+```{code-block} sql
+(
+  (array_contains(office_locations, 'Sydney') AND (session_user() = 'grp-location-sydney' OR is_account_group_member('grp-location-sydney')))
+  OR (array_contains(office_locations, 'London') AND (session_user() = 'grp-location-london' OR is_account_group_member('grp-location-london')))
+  OR (array_contains(office_locations, 'New York') AND (session_user() = 'grp-location-newyork' OR is_account_group_member('grp-location-newyork')))
+  OR (array_contains(office_locations, 'Tokyo') AND (session_user() = 'grp-location-tokyo' OR is_account_group_member('grp-location-tokyo')))
+)
+AND (
+  (array_contains(department_names, 'Finance') AND (session_user() = 'grp-dept-finance' OR is_account_group_member('grp-dept-finance')))
+  OR (array_contains(department_names, 'Trading') AND (session_user() = 'grp-dept-trading' OR is_account_group_member('grp-dept-trading')))
+  OR (array_contains(department_names, 'Marketing') AND (session_user() = 'grp-dept-marketing' OR is_account_group_member('grp-dept-marketing')))
+  OR (array_contains(department_names, 'Recruiting') AND (session_user() = 'grp-dept-recruiting' OR is_account_group_member('grp-dept-recruiting')))
+)
+```
 
 ### Key types
 

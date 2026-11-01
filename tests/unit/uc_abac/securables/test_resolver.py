@@ -262,6 +262,156 @@ def test_securable_resolver_current_user_compares_application_id_for_service_pri
     assert render_filter_rules(rules) == f"(\n  current_user() = '{app_id}'\n)"
 
 
+def test_securable_resolver_session_user_compares_username_for_user():
+    """``session_user`` identity compares against a user's username."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_user("a@x.com"),)),),
+                identity="session_user",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND session_user() = 'a@x.com')\n)"
+    )
+
+
+def test_securable_resolver_session_user_compares_application_id_for_service_principal():
+    """``session_user`` identity compares against a service principal's application
+    id, not its display name."""
+    app_id = "11111111-2222-3333-4444-555555555555"
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                ((None, (_service_principal("My SP", app_id),)),),
+                parameter=None,
+                identity="session_user",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == f"(\n  session_user() = '{app_id}'\n)"
+
+
+def test_securable_resolver_session_user_ors_several_principals():
+    """Several ``session_user`` principals in one entry are ORed in parentheses, with
+    a user's username and a service principal's application id each used as-is."""
+    app_id = "11111111-2222-3333-4444-555555555555"
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_user("a@x.com"), _service_principal("My SP", app_id))),),
+                identity="session_user",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND (session_user() = 'a@x.com'"
+        f" OR session_user() = '{app_id}'))\n)"
+    )
+
+
+def test_securable_resolver_session_user_or_member_parenthesises_single_group_in_keyed_entry():
+    """``session_user_or_member`` checks each group as either the session user or an
+    account group member, and parenthesises those checks even for a single group."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                (("'AMER'", (_group("finance_readers"),)),),
+                identity="session_user_or_member",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (region = 'AMER' AND (session_user() = 'finance_readers'"
+        " OR is_account_group_member('finance_readers')))\n)"
+    )
+
+
+def test_securable_resolver_session_user_or_member_renders_wildcard_entry():
+    """A wildcard ``session_user_or_member`` entry with one group renders the
+    parenthesised session-user-or-member check alone."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                ((None, (_group("g"),)),),
+                parameter=None,
+                identity="session_user_or_member",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (session_user() = 'g' OR is_account_group_member('g'))\n)"
+    )
+
+
+def test_securable_resolver_session_user_or_member_flattens_several_groups():
+    """Several groups in one ``session_user_or_member`` entry flatten into a single
+    OR list of session-user and group-member checks."""
+    rules = FilterRules(
+        all_of=(
+            _rls(
+                ((None, (_group("a"), _group("b"))),),
+                parameter=None,
+                identity="session_user_or_member",
+            ),
+        )
+    )
+
+    assert render_filter_rules(rules) == (
+        "(\n  (session_user() = 'a' OR is_account_group_member('a')"
+        " OR session_user() = 'b' OR is_account_group_member('b'))\n)"
+    )
+
+
+def test_securable_resolver_renders_docs_location_department_example():
+    """Two keyed ``session_user_or_member`` rules using ``array_contains`` render as
+    two unwrapped rule groups joined with AND, each entry OR-joined."""
+    office_rule = _rls(
+        (
+            ("'Sydney'", (_group("grp-location-sydney"),)),
+            ("'London'", (_group("grp-location-london"),)),
+            ("'New York'", (_group("grp-location-newyork"),)),
+            ("'Tokyo'", (_group("grp-location-tokyo"),)),
+        ),
+        parameter="office_locations",
+        operator="array_contains",
+        identity="session_user_or_member",
+    )
+    department_rule = _rls(
+        (
+            ("'Finance'", (_group("grp-dept-finance"),)),
+            ("'Trading'", (_group("grp-dept-trading"),)),
+            ("'Marketing'", (_group("grp-dept-marketing"),)),
+            ("'Recruiting'", (_group("grp-dept-recruiting"),)),
+        ),
+        parameter="department_names",
+        operator="array_contains",
+        identity="session_user_or_member",
+    )
+    rules = FilterRules(all_of=(office_rule, department_rule))
+
+    assert render_filter_rules(rules) == (
+        "(\n"
+        "  (array_contains(office_locations, 'Sydney') AND (session_user() = 'grp-location-sydney' OR is_account_group_member('grp-location-sydney')))\n"
+        "  OR (array_contains(office_locations, 'London') AND (session_user() = 'grp-location-london' OR is_account_group_member('grp-location-london')))\n"
+        "  OR (array_contains(office_locations, 'New York') AND (session_user() = 'grp-location-newyork' OR is_account_group_member('grp-location-newyork')))\n"
+        "  OR (array_contains(office_locations, 'Tokyo') AND (session_user() = 'grp-location-tokyo' OR is_account_group_member('grp-location-tokyo')))\n"
+        ")\n"
+        "AND (\n"
+        "  (array_contains(department_names, 'Finance') AND (session_user() = 'grp-dept-finance' OR is_account_group_member('grp-dept-finance')))\n"
+        "  OR (array_contains(department_names, 'Trading') AND (session_user() = 'grp-dept-trading' OR is_account_group_member('grp-dept-trading')))\n"
+        "  OR (array_contains(department_names, 'Marketing') AND (session_user() = 'grp-dept-marketing' OR is_account_group_member('grp-dept-marketing')))\n"
+        "  OR (array_contains(department_names, 'Recruiting') AND (session_user() = 'grp-dept-recruiting' OR is_account_group_member('grp-dept-recruiting')))\n"
+        ")"
+    )
+
+
 # ---------------------------------------------------------------------------
 # ConditionRule
 # ---------------------------------------------------------------------------
@@ -682,6 +832,106 @@ def test_securable_resolver_renders_application_id_for_service_principal_current
     assert isinstance(created, Function)
     assert f"current_user() = '{_SP_APPLICATION_ID}'" in created.definition
     assert "etl-bot" not in created.definition
+
+
+def test_securable_resolver_logs_error_when_session_user_identity_resolves_to_group():
+    """session_user with a principal that resolves to a group is an error, and the
+    function is dropped."""
+    desired = _single_rule_function("session_user", "amer_readers")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is True
+    assert diff.securables_to_create == []
+    assert diff.securables_to_replace == []
+
+
+def test_securable_resolver_renders_session_user_identity_for_user():
+    """session_user with a principal that resolves to a user renders that user's
+    name without error."""
+    desired = _single_rule_function("session_user", "jdoe@example.com")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is False
+    assert len(diff.securables_to_create) == 1
+    (created,) = diff.securables_to_create
+    assert isinstance(created, Function)
+    assert "session_user() = 'jdoe@example.com'" in created.definition
+
+
+def test_securable_resolver_renders_application_id_for_service_principal_session_user():
+    """session_user with a service principal renders its application id, not its
+    display name."""
+    desired = _single_rule_function("session_user", "etl-bot")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is False
+    assert len(diff.securables_to_create) == 1
+    (created,) = diff.securables_to_create
+    assert isinstance(created, Function)
+    assert f"session_user() = '{_SP_APPLICATION_ID}'" in created.definition
+    assert "etl-bot" not in created.definition
+
+
+def test_securable_resolver_renders_session_user_or_member_identity_for_group():
+    """session_user_or_member with a principal that resolves to a group renders the
+    parenthesised session-user-or-member check without error."""
+    desired = _single_rule_function("session_user_or_member", "amer_readers")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is False
+    assert len(diff.securables_to_create) == 1
+    (created,) = diff.securables_to_create
+    assert isinstance(created, Function)
+    assert (
+        "(session_user() = 'amer_readers' OR is_account_group_member('amer_readers'))"
+        in created.definition
+    )
+
+
+def test_securable_resolver_logs_error_when_session_user_or_member_identity_resolves_to_user():
+    """session_user_or_member with a principal that resolves to a user is an error,
+    and the function is dropped."""
+    desired = _single_rule_function("session_user_or_member", "jdoe@example.com")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is True
+    assert diff.securables_to_create == []
+    assert diff.securables_to_replace == []
+
+
+def test_securable_resolver_logs_error_when_session_user_or_member_identity_resolves_to_service_principal():
+    """session_user_or_member with a principal that resolves to a service principal is
+    an error, and the function is dropped."""
+    desired = _single_rule_function("session_user_or_member", "etl-bot")
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), {desired}, set(), _filter_rule_resolver(), change_logger
+    )
+
+    assert change_logger.has_errors is True
+    assert diff.securables_to_create == []
+    assert diff.securables_to_replace == []
 
 
 def test_securable_resolver_diffs_return_function_without_filter_rules_as_before():

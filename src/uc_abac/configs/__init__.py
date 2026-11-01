@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uc_abac.configs.consolidator import consolidate_resources
+from uc_abac.configs.deprecations import deprecated_identity_warnings
 from uc_abac.configs.discovery import (
     discover_yaml_files,
     load_raw_configs,
@@ -37,6 +38,7 @@ from uc_abac.configs.models import (
 )
 from uc_abac.configs.resolver import resolve_refs
 from uc_abac.configs.rules import (
+    RLS_DEPRECATED_IDENTITIES,
     RLS_FUNCTION_OPERATORS,
     RLS_WILDCARD,
     render_rls_key_literal,
@@ -48,6 +50,7 @@ from uc_abac.configs.traversal import (
 )
 
 __all__ = [
+    "RLS_DEPRECATED_IDENTITIES",
     "RLS_FUNCTION_OPERATORS",
     "RLS_WILDCARD",
     "BaseFgacPolicyConfig",
@@ -79,6 +82,7 @@ __all__ = [
     "TaggableConfig",
     "VolumeConfig",
     "consolidate_resources",
+    "deprecated_identity_warnings",
     "discover_yaml_files",
     "iter_policy_configs",
     "iter_securable_configs",

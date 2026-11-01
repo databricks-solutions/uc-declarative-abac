@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 
 import pytest
@@ -225,3 +226,121 @@ def test_load_config_rejects_override_repeating_a_rule_for_a_new_list(tmp_yaml_d
 
     with pytest.raises(ValidationError, match=re.escape("match_any_of_rules[1]")):
         load_config(root)
+
+
+# ---------------------------------------------------------------------------
+# Deprecated `identity: current_user` on RLS mapping rules
+# ---------------------------------------------------------------------------
+
+
+def _deprecation_warnings(caplog, function_full_name: str) -> list[str]:
+    """Warning messages that mention the function and the deprecated identity."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and function_full_name in r.getMessage()
+        and "current_user" in r.getMessage()
+    ]
+
+
+def test_load_config_warns_when_function_uses_deprecated_current_user_identity(
+    tmp_yaml_dir, caplog
+):
+    """A function whose RLS rule uses the deprecated `current_user` identity logs a
+    warning naming the function and recommending `session_user`, but still loads."""
+    root = tmp_yaml_dir(
+        {
+            "config.yaml": {
+                "resources": _catalog_with_function(
+                    {
+                        "name": "fn_filter",
+                        "parameters": _REGION_PARAMS,
+                        "match_rules": [
+                            {
+                                "rls_mapping": {"AMER": "someone@example.com"},
+                                "identity": "current_user",
+                            },
+                        ],
+                    }
+                ),
+            },
+        }
+    )
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        config = load_config(root)
+
+    fn = _loaded_function(config)
+    assert fn.match_rules[0].identity == "current_user"
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "cat.sch.fn_filter" in m and "current_user" in m and "session_user" in m
+        for m in messages
+    ), f"no deprecation warning naming cat.sch.fn_filter in {messages}"
+
+
+def test_load_config_does_not_warn_for_session_user_identity(tmp_yaml_dir, caplog):
+    """A function whose RLS rule uses the `session_user` identity logs no deprecation
+    warning."""
+    root = tmp_yaml_dir(
+        {
+            "config.yaml": {
+                "resources": _catalog_with_function(
+                    {
+                        "name": "fn_filter",
+                        "parameters": _REGION_PARAMS,
+                        "match_rules": [
+                            {
+                                "rls_mapping": {"AMER": "someone@example.com"},
+                                "identity": "session_user",
+                            },
+                        ],
+                    }
+                ),
+            },
+        }
+    )
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        load_config(root)
+
+    assert not any(
+        r.levelno == logging.WARNING
+        and ("current_user" in r.getMessage() or "deprecated" in r.getMessage().lower())
+        for r in caplog.records
+    )
+
+
+def test_load_config_warns_once_per_function_using_current_user(tmp_yaml_dir, caplog):
+    """A function using `current_user` in several rules (across match_rules and
+    match_any_of_rules) logs exactly one deprecation warning for that function."""
+    root = tmp_yaml_dir(
+        {
+            "config.yaml": {
+                "resources": _catalog_with_function(
+                    {
+                        "name": "fn_filter",
+                        "parameters": _REGION_PARAMS,
+                        "match_rules": [
+                            {
+                                "rls_mapping": {"AMER": "someone@example.com"},
+                                "identity": "current_user",
+                            },
+                        ],
+                        "match_any_of_rules": [
+                            {
+                                "rls_mapping": {"EMEA": "other@example.com"},
+                                "identity": "current_user",
+                            },
+                        ],
+                    }
+                ),
+            },
+        }
+    )
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        load_config(root)
+
+    assert len(_deprecation_warnings(caplog, "cat.sch.fn_filter")) == 1

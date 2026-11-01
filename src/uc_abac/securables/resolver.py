@@ -49,22 +49,29 @@ _INDENT = "  "
 
 
 def _render_identity_check(identity: str, principal: Principal) -> str:
-    """Render one principal's identity check, e.g. ``is_account_group_member('g')``
-    or ``current_user() = 'u'``. Raises ``OrchestratorError`` for an unresolved
-    principal, whose identifier would otherwise be missing."""
+    """Render one principal's identity check, e.g. ``is_account_group_member('g')``,
+    ``current_user() = 'u'``, ``session_user() = 'u'`` or, for
+    ``session_user_or_member``, ``session_user() = 'g' OR is_account_group_member('g')``.
+    Raises ``OrchestratorError`` for an unresolved principal, whose identifier would
+    otherwise be missing."""
     literal = sql_string_literal(ensure_resolved(principal).identifier)
     if identity == "current_user":
         return f"current_user() = {literal}"
+    if identity == "session_user":
+        return f"session_user() = {literal}"
+    if identity == "session_user_or_member":
+        return f"session_user() = {literal} OR is_account_group_member({literal})"
     return f"{identity}({literal})"
 
 
 def _render_identity_checks(identity: str, principals: tuple[Principal, ...]) -> str:
-    """OR together the identity checks of ``principals``, parenthesised when there
-    is more than one."""
-    checks = [_render_identity_check(identity, p) for p in principals]
-    if len(checks) == 1:
-        return checks[0]
-    return "(" + " OR ".join(checks) + ")"
+    """OR together the identity checks of ``principals``. The result is parenthesised
+    when there is more than one principal, and always for ``session_user_or_member``
+    (whose checks are themselves ORs), so it stays a single unit inside an AND."""
+    joined = " OR ".join(_render_identity_check(identity, p) for p in principals)
+    if len(principals) == 1 and identity != "session_user_or_member":
+        return joined
+    return f"({joined})"
 
 
 def _render_predicate(rule: RlsMappingRule, literal: str) -> str:
@@ -144,8 +151,12 @@ def render_filter_rules(rules: FilterRules) -> str:
 
 
 # Principal types each rls identity function can check membership / identity of.
+# ``session_user`` matches a user's name or a service principal's application id;
+# ``session_user_or_member`` matches a group by name or by membership.
 _IDENTITY_PRINCIPAL_TYPES = {
     "is_account_group_member": frozenset({PrincipalType.GROUP}),
+    "session_user": frozenset({PrincipalType.USER, PrincipalType.SERVICE_PRINCIPAL}),
+    "session_user_or_member": frozenset({PrincipalType.GROUP}),
     "current_user": frozenset({PrincipalType.USER, PrincipalType.SERVICE_PRINCIPAL}),
 }
 
