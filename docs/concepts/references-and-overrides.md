@@ -45,9 +45,13 @@ resources:
 By default, overrides recursively deep-merge into the definition:
 
 - **Maps merge key-wise**: Override keys take precedence; unspecified keys fall back to the definition. For example, you can override a single tag and the other tags from the definition are preserved.
-- **Lists of identifier-bearing items merge by `name` (or `alias`)**: Items in the override that match an item in the definition by identifier are recursively merged with it; unmatched override items are appended; unmatched definition items are preserved. This lets you add a new table to a schema definition's `tables` list, or tweak a single column, without re-listing every existing entry.
-- **Lists of primitives are unioned with dedupe**: Useful for `privileges`, where you want to add `MODIFY` to a definition's `[SELECT]` without dropping `SELECT`.
-- **Other shapes (mixed items, type mismatch, items without identifiers) fall back to replace**: The override wins entirely. There's no sensible way to align items.
+- **Lists always merge**: Each list item is identified by its `name`, else its `alias`, else its `$ref` target. An override item is handled as follows:
+  - If its identifier matches exactly one definition item, it is recursively merged into that item. This lets you tweak a single table or column without re-listing every entry.
+  - Otherwise (it has no identifier, or matches no definition item) it is unioned into the list: added after the definition's items unless an identical item is already there. This lets you add a new table to a schema definition's `tables` list, or `MODIFY` to a definition's `[SELECT]` privileges without dropping `SELECT`.
+  - If its identifier matches several definition items, or the override list repeats an identifier, config load fails: the override is ambiguous. Give the items a distinguishing `name` or `alias`, or redefine the list.
+- **Scalars, type mismatches, and `null` are replaced**: The override value wins.
+
+Overrides can't replace or remove list items: definition items are always kept. To change a list wholesale, redefine the config (for example, a separate definition) instead of overriding it.
 
 #### Merge example
 
