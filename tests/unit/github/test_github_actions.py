@@ -12,8 +12,8 @@ pinned, hash-verified third-party code:
 - only pushes to main save the uv cache;
 - the composite actions install only hash-verified packages and never build the project
   with an unpinned, isolated build backend;
-- Dependabot watches every directory that holds actions and the uv dependencies, checks
-  monthly, and proposes only versions released at least a week ago;
+- Dependabot watches every directory that holds actions, the uv dependencies, and the bun
+  dependencies, checks monthly, and proposes only versions released at least a week ago;
 - uv.lock resolves from no internal Databricks index, so it is installable from anywhere;
 - bun.lock (the ABAC Policy Explorer UI) resolves from no internal Databricks registry;
 - Read the Docs installs the same pinned uv as CI and only the locked packages.
@@ -224,6 +224,14 @@ def test_dependabot_config_covers_uv_dependencies():
     updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
     assert any(
         update["package-ecosystem"] == "uv" and update.get("directory") == "/"
+        for update in updates
+    )
+
+
+def test_dependabot_config_covers_bun_dependencies():
+    updates = _load_yaml(_DEPENDABOT_CONFIG)["updates"]
+    assert any(
+        update["package-ecosystem"] == "bun" and update.get("directory") == "/"
         for update in updates
     )
 
