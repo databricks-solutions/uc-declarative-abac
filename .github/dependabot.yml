@@ -24,3 +24,15 @@ updates:
     groups:
       python:
         patterns: ["*"]
+
+  # The ABAC Policy Explorer UI (package.json + bun.lock).
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: monthly
+    # Only propose versions that have been public for at least a week.
+    cooldown:
+      default-days: 7
+    groups:
+      javascript:
+        patterns: ["*"]
