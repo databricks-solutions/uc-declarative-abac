@@ -374,6 +374,8 @@ class RunContext:
     force: bool
     max_parallel_changes: int
     manage_domain_owners: bool
+    use_catalog_information_schema: bool = False
+    use_proxy_information_schema: str | None = None
 
     @property
     def enable_tag_management(self) -> bool:

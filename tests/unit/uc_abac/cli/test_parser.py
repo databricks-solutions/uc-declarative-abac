@@ -150,6 +150,16 @@ def test_parser_displays_timezone_flag_in_deploy_help(capsys):
     assert "--timezone" in output
 
 
+def test_parser_displays_use_catalog_information_schema_flag_in_deploy_help(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    assert "--use-catalog-information-schema" in output
+
+
+def test_parser_displays_use_catalog_information_schema_flag_in_dump_help(capsys):
+    output = _help_output(["dump", "--help"], capsys)
+    assert "--use-catalog-information-schema" in output
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -306,6 +316,155 @@ def test_parser_accepts_system_catalog_for_deploy_invocations(args):
     namespace = parse_cli_args(args)
 
     assert namespace.system_catalog == "system"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--use-catalog-information-schema",
+        ],
+        [
+            "validate",
+            "--config-dir",
+            "cfg",
+            "--use-catalog-information-schema",
+        ],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--use-catalog-information-schema",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_use_catalog_information_schema_flag_sets_true_when_given(args):
+    namespace = parse_cli_args(args)
+
+    assert namespace.use_catalog_information_schema is True
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"],
+        ["validate", "--config-dir", "cfg"],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_use_catalog_information_schema_flag_leaves_attribute_unset_when_absent(
+    args,
+):
+    namespace = parse_cli_args(args)
+
+    assert not hasattr(namespace, "use_catalog_information_schema")
+
+
+def test_parser_displays_use_proxy_information_schema_flag_in_deploy_help(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    assert "--use-proxy-information-schema" in output
+
+
+def test_parser_displays_use_proxy_information_schema_flag_in_dump_help(capsys):
+    output = _help_output(["dump", "--help"], capsys)
+    assert "--use-proxy-information-schema" in output
+
+
+def test_parser_displays_use_proxy_information_schema_flag_in_validate_help(capsys):
+    output = _help_output(["validate", "--help"], capsys)
+    assert "--use-proxy-information-schema" in output
+
+
+def test_parser_displays_system_catalog_as_deprecated_in_deploy_help(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    system_catalog_help = re.search(
+        r"^\s+--system-catalog\b[\s\S]*?(?=\n\s+--|\Z)", output, re.MULTILINE
+    )
+    assert system_catalog_help is not None
+    assert "deprecated" in system_catalog_help.group(0).lower()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+        ],
+        [
+            "validate",
+            "--config-dir",
+            "cfg",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+        ],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_use_proxy_information_schema_flag_stores_catalog_schema_string(args):
+    namespace = parse_cli_args(args)
+
+    assert namespace.use_proxy_information_schema == "gov.proxy_is"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"],
+        ["validate", "--config-dir", "cfg"],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_use_proxy_information_schema_flag_leaves_attribute_unset_when_absent(
+    args,
+):
+    namespace = parse_cli_args(args)
+
+    assert not hasattr(namespace, "use_proxy_information_schema")
 
 
 def test_parser_global_flag_before_subcommand_is_not_legacy():

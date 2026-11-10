@@ -35,7 +35,31 @@ def _add_system_catalog(parser: argparse.ArgumentParser) -> None:
         "--system-catalog",
         type=str,
         default=argparse.SUPPRESS,
-        help="Catalog containing Unity Catalog system tables [default: system].",
+        help=(
+            "(Deprecated; use --use-proxy-information-schema.) Catalog containing "
+            "Unity Catalog system tables [default: system]."
+        ),
+    )
+    parser.add_argument(
+        "--use-proxy-information-schema",
+        type=str,
+        metavar="CATALOG.SCHEMA",
+        default=argparse.SUPPRESS,
+        help=(
+            "Read state from the views in this existing, fully qualified schema "
+            "instead of system.information_schema."
+        ),
+    )
+    parser.add_argument(
+        "--use-catalog-information-schema",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Read state from each managed catalog's own information_schema (a union "
+            "across catalogs) instead of <system-catalog>.information_schema. For "
+            "proxy catalogs whose information_schema only describes the proxy itself; "
+            "--system-catalog is then ignored."
+        ),
     )
 
 

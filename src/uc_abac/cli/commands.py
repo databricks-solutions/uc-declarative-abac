@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 import traceback
 from dataclasses import dataclass
@@ -412,14 +413,57 @@ def _require_target_schema(settings: RunSettings) -> str:
     return target_schema
 
 
+def _check_information_schema_options(settings: RunSettings) -> None:
+    """Reject conflicting state-source options and warn on deprecated ``--system-catalog``.
+
+    The three sources (default ``system.information_schema``, a proxy schema, the
+    per-catalog union) are mutually exclusive. A non-default ``--system-catalog`` is the
+    deprecated way to name a proxy and cannot be mixed with the new options.
+    """
+    proxy = settings.use_proxy_information_schema
+    union = settings.use_catalog_information_schema
+    custom_system = settings.system_catalog != "system"
+    if proxy is not None:
+        parts = proxy.split(".")
+        plain = all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", p) for p in parts)
+        if len(parts) != 2 or not plain:
+            raise CliUsageError(
+                f"--use-proxy-information-schema must be a two-part "
+                f"<catalog>.<schema> name of plain identifiers, got '{proxy}'."
+            )
+        if parts[1].lower() == "information_schema":
+            raise CliUsageError(
+                "--use-proxy-information-schema cannot name 'information_schema' "
+                "(reserved in every catalog); use a dedicated schema."
+            )
+    if proxy is not None and union:
+        raise CliUsageError(
+            "--use-proxy-information-schema cannot be combined with "
+            "--use-catalog-information-schema."
+        )
+    if custom_system and (proxy is not None or union):
+        raise CliUsageError(
+            "--system-catalog is deprecated and cannot be combined with "
+            "--use-proxy-information-schema or --use-catalog-information-schema."
+        )
+    if custom_system:
+        _logger.warning(
+            "--system-catalog is deprecated; use --use-proxy-information-schema "
+            "<catalog>.<schema> or --use-catalog-information-schema instead."
+        )
+
+
 def _run_kwargs(
     settings: RunSettings, namespaces: dict[str, str], *, dry_run: bool
 ) -> dict:
+    _check_information_schema_options(settings)
     delete_policies = settings.delete_policies_for_namespaces or "*"
     return {
         "config_dir": _require_config_dir(settings),
         "warehouse_id": _require_warehouse_id(settings),
         "system_catalog": settings.system_catalog,
+        "use_catalog_information_schema": settings.use_catalog_information_schema,
+        "use_proxy_information_schema": settings.use_proxy_information_schema,
         "timezone": settings.timezone,
         "dry_run": dry_run,
         "use_workspace_scim": settings.use_workspace_scim,
@@ -489,6 +533,7 @@ def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
     config_dir = _require_config_dir(settings)
     warehouse_id = _require_warehouse_id(settings)
     target_schema = _require_target_schema(settings)
+    _check_information_schema_options(settings)
     workspace_client = WorkspaceClient(profile=settings.profile)
     dump_state(
         workspace_client,
@@ -496,6 +541,8 @@ def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
         warehouse_id=warehouse_id,
         target_schema=target_schema,
         system_catalog=settings.system_catalog,
+        use_catalog_information_schema=settings.use_catalog_information_schema,
+        use_proxy_information_schema=settings.use_proxy_information_schema,
         timezone=settings.timezone,
         ref_override_strategy=settings.ref_override_strategy,
         max_parallel_tables=settings.max_parallel_changes,

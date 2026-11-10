@@ -29,7 +29,15 @@ Pin to a full commit SHA, with the release tag in a trailing comment, rather tha
 * - `system-catalog`
   - no
   - `system`
-  - Catalog containing the `information_schema` views used for actual-state queries
+  - Deprecated; use `use-proxy-information-schema`. Catalog containing the `information_schema` views
+* - `use-proxy-information-schema`
+  - no
+  - empty
+  - Existing `<catalog>.<schema>` holding the views to read state from; see {ref}`system-table-proxy-catalogs`
+* - `use-catalog-information-schema`
+  - no
+  - `false`
+  - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
 ```
 
 ### Feature scope inputs
@@ -320,7 +328,15 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` to snapshot yo
 * - `system-catalog`
   - no
   - `system`
-  - Catalog containing the `information_schema` views used for state queries
+  - Deprecated; use `use-proxy-information-schema`. Catalog containing the `information_schema` views
+* - `use-proxy-information-schema`
+  - no
+  - empty
+  - Existing `<catalog>.<schema>` holding the views to read state from; see {ref}`system-table-proxy-catalogs`
+* - `use-catalog-information-schema`
+  - no
+  - `false`
+  - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
 * - `timezone`
   - no
   - empty (UTC)

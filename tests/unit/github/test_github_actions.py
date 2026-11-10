@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -188,6 +189,103 @@ def test_composite_actions_install_only_hash_verified_packages():
         "--no-deps" in line and "--no-build-isolation" in line
         for line in project_installs
     )
+
+
+# ---
+# use-catalog-information-schema wiring (deploy and dump actions)
+# ---
+
+_PER_CATALOG_INPUT = "use-catalog-information-schema"
+_PER_CATALOG_ENV = "USE_CATALOG_INFORMATION_SCHEMA"
+_PER_CATALOG_ARG = "--use-catalog-information-schema"
+_DEPLOY_AND_DUMP_ACTIONS = {
+    "deploy": _REPO_ROOT / "deploy" / "action.yml",
+    "dump": _REPO_ROOT / "dump" / "action.yml",
+}
+
+
+def _action_run_step(action_path: Path) -> dict[str, Any]:
+    """Return the step of ``action_path`` that builds the args and runs uc-abac."""
+    steps = _load_yaml(action_path)["runs"]["steps"]
+    return next(step for step in steps if "args=(" in step.get("run", ""))
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_use_catalog_information_schema_input_defaulting_to_false(
+    action,
+):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    assert _PER_CATALOG_INPUT in inputs
+    assert inputs[_PER_CATALOG_INPUT]["required"] == "false"
+    assert inputs[_PER_CATALOG_INPUT]["default"] == "false"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_use_catalog_information_schema_input_through_env(
+    action,
+):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    assert env[_PER_CATALOG_ENV] == f"${{{{ inputs.{_PER_CATALOG_INPUT} }}}}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_appends_use_catalog_information_schema_flag_when_true(
+    action,
+):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    guarded_append = re.search(
+        rf'if \[\[ "\${{{_PER_CATALOG_ENV}}}" == "true" \]\]; then\s*'
+        rf"args\+=\({re.escape(_PER_CATALOG_ARG)}\)\s*fi",
+        script,
+    )
+    assert guarded_append, f"{action} action does not append {_PER_CATALOG_ARG}"
+
+
+# ---
+# use-proxy-information-schema wiring (deploy and dump actions)
+# ---
+
+_PROXY_INPUT = "use-proxy-information-schema"
+_PROXY_ENV = "USE_PROXY_INFORMATION_SCHEMA"
+_PROXY_ARG = "--use-proxy-information-schema"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_use_proxy_information_schema_input_defaulting_to_empty(
+    action,
+):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    assert _PROXY_INPUT in inputs
+    assert inputs[_PROXY_INPUT]["required"] == "false"
+    assert inputs[_PROXY_INPUT].get("default") == ""
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_use_proxy_information_schema_input_through_env(
+    action,
+):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    assert env[_PROXY_ENV] == f"${{{{ inputs.{_PROXY_INPUT} }}}}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_appends_use_proxy_information_schema_flag_only_when_non_empty(
+    action,
+):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    guarded_append = re.search(
+        rf'if \[\[ -n "\${{{_PROXY_ENV}}}" \]\]; then\s*'
+        rf'args\+=\({re.escape(_PROXY_ARG)} "\${{{_PROXY_ENV}}}"\)\s*fi',
+        script,
+    )
+    assert guarded_append, f"{action} action does not append {_PROXY_ARG} when set"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_describes_system_catalog_input_as_deprecated(action):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    description = inputs["system-catalog"]["description"].lower()
+    assert "deprecated" in description
 
 
 # ---

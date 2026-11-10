@@ -138,6 +138,16 @@ def test_main_defaults_skip_users_fetch_off(monkeypatch):
     assert captured["skip_users_fetch"] is False
 
 
+def test_main_passes_use_catalog_information_schema_through_to_run(monkeypatch):
+    captured = _run_legacy(monkeypatch, ["--use-catalog-information-schema"])
+    assert captured.get("use_catalog_information_schema") is True
+
+
+def test_main_defaults_use_catalog_information_schema_off(monkeypatch):
+    captured = _run_legacy(monkeypatch, [])
+    assert captured.get("use_catalog_information_schema") is False
+
+
 def test_cli_warns_when_invoked_with_legacy_flat_flags(monkeypatch, caplog):
     monkeypatch.setattr(cli, "run", lambda **_: None)
     monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
@@ -241,6 +251,238 @@ def test_commands_deploy_forwards_system_catalog_from_run_settings_to_orchestrat
 
     assert exit_code == 0
     assert captured["system_catalog"] == "system_catalog_proxy"
+
+
+def test_commands_deploy_forwards_use_catalog_information_schema_from_run_settings_to_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(
+        config_dir=Path("cfg"),
+        warehouse_id="wh",
+        use_catalog_information_schema=True,
+    )
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured.get("use_catalog_information_schema") is True
+
+
+def test_commands_deploy_defaults_use_catalog_information_schema_to_false_for_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(config_dir=Path("cfg"), warehouse_id="wh")
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured.get("use_catalog_information_schema") is False
+
+
+def test_commands_deploy_forwards_use_proxy_information_schema_from_run_settings_to_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(
+        config_dir=Path("cfg"),
+        warehouse_id="wh",
+        use_proxy_information_schema="gov.proxy_is",
+    )
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured.get("use_proxy_information_schema") == "gov.proxy_is"
+
+
+def test_commands_deploy_defaults_use_proxy_information_schema_to_none_for_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(config_dir=Path("cfg"), warehouse_id="wh")
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert "use_proxy_information_schema" in captured
+    assert captured["use_proxy_information_schema"] is None
+
+
+@pytest.mark.parametrize(
+    "proxy_schema", ["gov", "a.b.c", "gov.", ".proxy_is", "gov.x; DROP"]
+)
+def test_commands_deploy_malformed_use_proxy_information_schema_returns_usage_error(
+    monkeypatch, tmp_path: Path, proxy_schema
+):
+    run_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: run_calls.append(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--use-proxy-information-schema",
+            proxy_schema,
+        ],
+    )
+
+    assert exit_code == 2
+    assert run_calls == []
+
+
+def test_commands_deploy_rejects_use_proxy_information_schema_with_use_catalog_information_schema(
+    monkeypatch, tmp_path: Path
+):
+    run_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: run_calls.append(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+            "--use-catalog-information-schema",
+        ],
+    )
+
+    assert exit_code == 2
+    assert run_calls == []
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--use-proxy-information-schema", "gov.proxy_is"],
+        ["--use-catalog-information-schema"],
+    ],
+    ids=["proxy", "per-catalog"],
+)
+def test_commands_deploy_rejects_non_default_system_catalog_combined_with_information_schema_mode(
+    monkeypatch, tmp_path: Path, extra_args
+):
+    run_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: run_calls.append(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--system-catalog",
+            "proxy_cat",
+            *extra_args,
+        ],
+    )
+
+    assert exit_code == 2
+    assert run_calls == []
+
+
+def test_commands_deploy_warns_deprecated_system_catalog_and_forwards_it_unchanged(
+    monkeypatch, tmp_path: Path, caplog
+):
+    captured: dict = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            [
+                "deploy",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--system-catalog",
+                "proxy_cat",
+            ],
+        )
+
+    assert exit_code == 0
+    assert captured["system_catalog"] == "proxy_cat"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "deprecated" in msg.lower()
+        and "--system-catalog" in msg
+        and "--use-proxy-information-schema" in msg
+        for msg in warnings
+    ), warnings
+
+
+def test_commands_deploy_does_not_warn_about_system_catalog_by_default(
+    monkeypatch, tmp_path: Path, caplog
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **_: None)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"]
+        )
+
+    assert exit_code == 0
+    assert not any("--system-catalog" in r.getMessage() for r in caplog.records)
+
+
+def test_commands_deploy_accepts_proxy_information_schema_with_explicit_default_system_catalog(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--system-catalog",
+            "system",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["use_proxy_information_schema"] == "gov.proxy_is"
 
 
 def test_commands_deploy_forwards_timezone_from_run_settings_to_orchestrator(
@@ -1152,6 +1394,236 @@ def test_commands_dump_forwards_timezone_to_dump_state(monkeypatch, tmp_path: Pa
 
     assert exit_code == 0
     assert captured["timezone"] == "Australia/Melbourne"
+
+
+def test_commands_dump_forwards_use_catalog_information_schema_to_dump_state(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--use-catalog-information-schema",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured.get("use_catalog_information_schema") is True
+
+
+def test_commands_dump_defaults_use_catalog_information_schema_to_false(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured.get("use_catalog_information_schema") is False
+
+
+def test_commands_dump_forwards_use_proxy_information_schema_to_dump_state(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured.get("use_proxy_information_schema") == "gov.proxy_is"
+
+
+def test_commands_dump_defaults_use_proxy_information_schema_to_none(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert "use_proxy_information_schema" in captured
+    assert captured["use_proxy_information_schema"] is None
+
+
+@pytest.mark.parametrize(
+    "proxy_schema", ["gov", "a.b.c", "gov.", ".proxy_is", "gov.x; DROP"]
+)
+def test_commands_dump_malformed_use_proxy_information_schema_returns_usage_error(
+    monkeypatch, tmp_path: Path, proxy_schema
+):
+    dump_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", lambda _ws, **kw: dump_calls.append(kw))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            "--use-proxy-information-schema",
+            proxy_schema,
+        ],
+    )
+
+    assert exit_code == 2
+    assert dump_calls == []
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        [
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+            "--use-catalog-information-schema",
+        ],
+        [
+            "--use-proxy-information-schema",
+            "gov.proxy_is",
+            "--system-catalog",
+            "proxy_cat",
+        ],
+        ["--use-catalog-information-schema", "--system-catalog", "proxy_cat"],
+    ],
+    ids=[
+        "proxy-with-per-catalog",
+        "proxy-with-system-catalog",
+        "per-catalog-with-system-catalog",
+    ],
+)
+def test_commands_dump_rejects_conflicting_information_schema_options(
+    monkeypatch, tmp_path: Path, extra_args
+):
+    dump_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", lambda _ws, **kw: dump_calls.append(kw))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "main.state",
+            *extra_args,
+        ],
+    )
+
+    assert exit_code == 2
+    assert dump_calls == []
+
+
+def test_commands_dump_warns_deprecated_system_catalog_and_forwards_it_unchanged(
+    monkeypatch, tmp_path: Path, caplog
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            [
+                "dump",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--target-schema",
+                "main.state",
+                "--system-catalog",
+                "proxy_cat",
+            ],
+        )
+
+    assert exit_code == 0
+    assert captured["system_catalog"] == "proxy_cat"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "deprecated" in msg.lower()
+        and "--system-catalog" in msg
+        and "--use-proxy-information-schema" in msg
+        for msg in warnings
+    ), warnings
 
 
 def test_commands_dump_defaults_timezone_to_utc(monkeypatch, tmp_path: Path):
