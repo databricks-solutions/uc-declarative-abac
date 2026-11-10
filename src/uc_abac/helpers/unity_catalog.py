@@ -621,6 +621,11 @@ def _parse_securable_rows(
     through ``normalise_data_type`` — the same canonicaliser the config side uses —
     so UC's canonical rendering (injected default collation, casing, incidental
     whitespace) matches the hand-written config and stays idempotent.
+
+    For a zero-argument function, the LEFT JOIN against ``parameters`` still contributes
+    one all-null struct. Databricks omits those null fields during JSON serialization, so
+    the aggregate arrives as ``[{}]``. Empty parameter objects are join placeholders and
+    are ignored; non-empty objects remain strict and must contain both projected fields.
     """
     securables: set[Securable] = set()
     attributes: set[SecurableAttributes] = set()
@@ -655,6 +660,7 @@ def _parse_securable_rows(
                 params = tuple(
                     (p["parameter_name"], normalise_data_type(p["full_data_type"]))
                     for p in parsed_params
+                    if p != {}
                 )
             else:
                 params = ()

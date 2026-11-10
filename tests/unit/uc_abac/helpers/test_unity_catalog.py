@@ -79,6 +79,13 @@ def _make_mock_workspace_client(data_array: list[list[str]] | None = None) -> Ma
     return client
 
 
+def _make_catalogs_client(existing: list[str]) -> MagicMock:
+    """Mock WorkspaceClient whose catalogs.list() reports the given catalog names."""
+    client = _make_mock_workspace_client()
+    client.catalogs.list.return_value = [SimpleNamespace(name=n) for n in existing]
+    return client
+
+
 # ---------------------------------------------------------------------------
 # UnityCatalogHelper.fetch_actual_tags
 # ---------------------------------------------------------------------------
@@ -899,6 +906,77 @@ def test_uc_helper_parses_securable_rows_for_functions(mock_fetch):
         ),
     }
     assert securables == expected
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_treats_empty_parameter_struct_as_no_parameters_when_function_has_no_parameters(
+    mock_fetch,
+):
+    """A zero-argument routine represented as one empty struct has no parameters."""
+    mock_fetch.return_value = [
+        [
+            "FUNCTION",
+            "synthetic_catalog.synthetic_schema.zero_arg_function",
+            "synthetic_owner",
+            "[{}]",
+            "RETURN 7",
+            None,
+        ],
+    ]
+    helper = UnityCatalogHelper(
+        _make_catalogs_client(["synthetic_catalog"]),
+        WAREHOUSE_ID,
+        use_catalog_information_schema=True,
+    )
+
+    securables, _ = helper.fetch_actual_securables(["synthetic_catalog"])
+
+    assert securables == {
+        Function(
+            securable_type=SecurableType.FUNCTION,
+            full_name="synthetic_catalog.synthetic_schema.zero_arg_function",
+            parameters=(),
+            definition="RETURN 7",
+            comment=None,
+        )
+    }
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_ignores_empty_parameter_struct_when_valid_parameters_exist(
+    mock_fetch,
+):
+    """Empty parameter structs are ignored without discarding valid parameters."""
+    mock_fetch.return_value = [
+        [
+            "FUNCTION",
+            "synthetic_catalog.synthetic_schema.one_arg_function",
+            "synthetic_owner",
+            (
+                '[{}, {"parameter_name":"input_value",'
+                '"full_data_type":"string collate utf8_binary"}]'
+            ),
+            "RETURN input_value",
+            None,
+        ],
+    ]
+    helper = UnityCatalogHelper(
+        _make_catalogs_client(["synthetic_catalog"]),
+        WAREHOUSE_ID,
+        use_catalog_information_schema=True,
+    )
+
+    securables, _ = helper.fetch_actual_securables(["synthetic_catalog"])
+
+    assert securables == {
+        Function(
+            securable_type=SecurableType.FUNCTION,
+            full_name="synthetic_catalog.synthetic_schema.one_arg_function",
+            parameters=(("input_value", "STRING"),),
+            definition="RETURN input_value",
+            comment=None,
+        )
+    }
 
 
 @patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
@@ -2759,13 +2837,6 @@ _PER_CATALOG_STATE_FETCHES = [
     "fetch_actual_securables",
     "fetch_actual_policies",
 ]
-
-
-def _make_catalogs_client(existing: list[str]) -> MagicMock:
-    """Mock WorkspaceClient whose catalogs.list() reports the given catalog names."""
-    client = _make_mock_workspace_client()
-    client.catalogs.list.return_value = [SimpleNamespace(name=n) for n in existing]
-    return client
 
 
 def _call_state_fetch(helper: UnityCatalogHelper, fetch_method: str, catalogs):
