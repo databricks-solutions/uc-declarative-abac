@@ -138,6 +138,16 @@ def test_main_defaults_skip_users_fetch_off(monkeypatch):
     assert captured["skip_users_fetch"] is False
 
 
+def test_main_passes_per_catalog_information_schema_through_to_run(monkeypatch):
+    captured = _run_legacy(monkeypatch, ["--per-catalog-information-schema"])
+    assert captured.get("per_catalog_information_schema") is True
+
+
+def test_main_defaults_per_catalog_information_schema_off(monkeypatch):
+    captured = _run_legacy(monkeypatch, [])
+    assert captured.get("per_catalog_information_schema") is False
+
+
 def test_cli_warns_when_invoked_with_legacy_flat_flags(monkeypatch, caplog):
     monkeypatch.setattr(cli, "run", lambda **_: None)
     monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
@@ -185,6 +195,79 @@ def test_commands_reports_success_when_config_is_valid(tmp_path: Path, caplog):
     assert "Config validation successful." in output
 
 
+@pytest.mark.parametrize(
+    "information_schema_args",
+    [
+        ["--information-schema", "synthetic_proxy.state_views"],
+        ["--per-catalog-information-schema"],
+        [
+            "--information-schema",
+            "system.information_schema",
+            "--per-catalog-information-schema",
+        ],
+    ],
+    ids=["custom-information-schema", "per-catalog", "per-catalog-with-default"],
+)
+def test_commands_validate_accepts_information_schema_options(
+    tmp_path: Path, information_schema_args
+):
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "resources.yaml").write_text(
+        "resources:\n  catalogs: {}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.run_cli(
+        ["validate", "--config-dir", str(config_dir), *information_schema_args]
+    )
+
+    assert exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "conflicting_args",
+    [
+        [
+            "--information-schema",
+            "synthetic_proxy.state_views",
+            "--per-catalog-information-schema",
+        ],
+        [
+            "--system-catalog",
+            "synthetic_legacy",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+        [
+            "--system-catalog",
+            "synthetic_legacy",
+            "--per-catalog-information-schema",
+        ],
+    ],
+    ids=[
+        "custom-with-per-catalog",
+        "legacy-with-custom",
+        "legacy-with-per-catalog",
+    ],
+)
+def test_commands_validate_rejects_conflicting_information_schema_options(
+    tmp_path: Path, conflicting_args
+):
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "resources.yaml").write_text(
+        "resources:\n  catalogs: {}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.run_cli(
+        ["validate", "--config-dir", str(config_dir), *conflicting_args]
+    )
+
+    assert exit_code == 2
+
+
 def test_commands_return_config_error_code_when_yaml_invalid(tmp_path: Path):
     config_dir = tmp_path / "configs"
     config_dir.mkdir()
@@ -230,7 +313,7 @@ def test_commands_deploy_forwards_system_catalog_from_run_settings_to_orchestrat
     settings = RunSettings(
         config_dir=Path("cfg"),
         warehouse_id="wh",
-        system_catalog="system_catalog_proxy",
+        system_catalog="synthetic_legacy",
     )
 
     monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
@@ -240,7 +323,290 @@ def test_commands_deploy_forwards_system_catalog_from_run_settings_to_orchestrat
     exit_code = cli.run_cli(["deploy"])
 
     assert exit_code == 0
-    assert captured["system_catalog"] == "system_catalog_proxy"
+    assert captured["system_catalog"] == "synthetic_legacy"
+
+
+def test_commands_deploy_forwards_per_catalog_information_schema_to_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(
+        config_dir=Path("cfg"),
+        warehouse_id="wh",
+        per_catalog_information_schema=True,
+    )
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured["per_catalog_information_schema"] is True
+
+
+def test_commands_deploy_defaults_per_catalog_information_schema_to_false(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(config_dir=Path("cfg"), warehouse_id="wh")
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured["per_catalog_information_schema"] is False
+
+
+def test_commands_deploy_forwards_information_schema_to_orchestrator(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(
+        config_dir=Path("cfg"),
+        warehouse_id="wh",
+        information_schema="synthetic_proxy.state_views",
+    )
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "synthetic_proxy.state_views"
+
+
+def test_commands_deploy_defaults_information_schema_to_system_information_schema(
+    monkeypatch,
+):
+    captured: dict = {}
+    settings = RunSettings(config_dir=Path("cfg"), warehouse_id="wh")
+
+    monkeypatch.setattr(cli, "resolve_settings", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(["deploy"])
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "system.information_schema"
+
+
+@pytest.mark.parametrize(
+    "information_schema",
+    [
+        "synthetic_proxy",
+        "synthetic_proxy.state.views",
+        "synthetic_proxy.",
+        ".state_views",
+        "synthetic-proxy.state_views",
+        "synthetic_proxy.state-views",
+        "`synthetic_proxy`.state_views",
+        "synthetic_proxy.`state_views`",
+        "synthetic_proxy.state_views;DROP",
+    ],
+)
+@pytest.mark.parametrize(
+    "command_args",
+    [
+        ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"],
+        ["validate", "--config-dir", "cfg"],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_commands_information_schema_rejects_malformed_names_with_usage_error(
+    monkeypatch, tmp_path: Path, information_schema, command_args
+):
+    downstream_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "load_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: downstream_calls.append(kwargs))
+    monkeypatch.setattr(
+        cli,
+        "dump_state",
+        lambda _workspace_client, **kwargs: downstream_calls.append(kwargs),
+    )
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [*command_args, "--information-schema", information_schema],
+    )
+
+    assert exit_code == 2
+    assert downstream_calls == []
+
+
+def test_commands_deploy_rejects_custom_information_schema_with_per_catalog_mode(
+    monkeypatch, tmp_path: Path
+):
+    run_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: run_calls.append(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+            "--per-catalog-information-schema",
+        ],
+    )
+
+    assert exit_code == 2
+    assert run_calls == []
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--information-schema", "synthetic_proxy.state_views"],
+        ["--per-catalog-information-schema"],
+    ],
+    ids=["custom-information-schema", "per-catalog"],
+)
+def test_commands_deploy_rejects_custom_system_catalog_with_new_information_schema_options(
+    monkeypatch, tmp_path: Path, extra_args
+):
+    run_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: run_calls.append(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--system-catalog",
+            "synthetic_legacy",
+            *extra_args,
+        ],
+    )
+
+    assert exit_code == 2
+    assert run_calls == []
+
+
+def test_commands_deploy_warns_deprecated_system_catalog_and_forwards_it_unchanged(
+    monkeypatch, tmp_path: Path, caplog
+):
+    captured: dict = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            [
+                "deploy",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--system-catalog",
+                "synthetic_legacy",
+            ],
+        )
+
+    assert exit_code == 0
+    assert captured["system_catalog"] == "synthetic_legacy"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "deprecated" in msg.lower()
+        and "--system-catalog" in msg
+        and "--information-schema" in msg
+        for msg in warnings
+    ), warnings
+
+
+def test_commands_deploy_does_not_warn_about_system_catalog_by_default(
+    monkeypatch, tmp_path: Path, caplog
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **_: None)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"]
+        )
+
+    assert exit_code == 0
+    assert not any("--system-catalog" in r.getMessage() for r in caplog.records)
+
+
+def test_commands_deploy_accepts_information_schema_with_default_system_catalog(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--system-catalog",
+            "system",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "synthetic_proxy.state_views"
+
+
+def test_commands_deploy_accepts_per_catalog_mode_with_explicit_default_information_schema(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--information-schema",
+            "system.information_schema",
+            "--per-catalog-information-schema",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "system.information_schema"
+    assert captured["per_catalog_information_schema"] is True
 
 
 def test_commands_deploy_forwards_timezone_from_run_settings_to_orchestrator(
@@ -1152,6 +1518,210 @@ def test_commands_dump_forwards_timezone_to_dump_state(monkeypatch, tmp_path: Pa
 
     assert exit_code == 0
     assert captured["timezone"] == "Australia/Melbourne"
+
+
+def test_commands_dump_forwards_per_catalog_information_schema_to_dump_state(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+            "--per-catalog-information-schema",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["per_catalog_information_schema"] is True
+
+
+def test_commands_dump_defaults_per_catalog_information_schema_to_false(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["per_catalog_information_schema"] is False
+
+
+def test_commands_dump_forwards_information_schema_to_dump_state(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "synthetic_proxy.state_views"
+
+
+def test_commands_dump_defaults_information_schema_to_system_information_schema(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+        ],
+    )
+
+    assert exit_code == 0
+    assert captured["information_schema"] == "system.information_schema"
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        [
+            "--information-schema",
+            "synthetic_proxy.state_views",
+            "--per-catalog-information-schema",
+        ],
+        [
+            "--information-schema",
+            "synthetic_proxy.state_views",
+            "--system-catalog",
+            "synthetic_legacy",
+        ],
+        [
+            "--per-catalog-information-schema",
+            "--system-catalog",
+            "synthetic_legacy",
+        ],
+    ],
+    ids=[
+        "custom-with-per-catalog",
+        "custom-with-system-catalog",
+        "per-catalog-with-system-catalog",
+    ],
+)
+def test_commands_dump_rejects_conflicting_information_schema_options(
+    monkeypatch, tmp_path: Path, extra_args
+):
+    dump_calls: list[dict] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", lambda _ws, **kw: dump_calls.append(kw))
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    exit_code = cli.run_cli(
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+            *extra_args,
+        ],
+    )
+
+    assert exit_code == 2
+    assert dump_calls == []
+
+
+def test_commands_dump_warns_deprecated_system_catalog_and_forwards_it_unchanged(
+    monkeypatch, tmp_path: Path, caplog
+):
+    captured: dict = {}
+
+    def _fake_dump_state(ws_client, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "dump_state", _fake_dump_state)
+    monkeypatch.setattr(cli, "WorkspaceClient", lambda **_: object())
+
+    with caplog.at_level(logging.WARNING, logger="uc_abac"):
+        exit_code = cli.run_cli(
+            [
+                "dump",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--target-schema",
+                "synthetic_output.state",
+                "--system-catalog",
+                "synthetic_legacy",
+            ],
+        )
+
+    assert exit_code == 0
+    assert captured["system_catalog"] == "synthetic_legacy"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "deprecated" in msg.lower()
+        and "--system-catalog" in msg
+        and "--information-schema" in msg
+        for msg in warnings
+    ), warnings
 
 
 def test_commands_dump_defaults_timezone_to_utc(monkeypatch, tmp_path: Path):

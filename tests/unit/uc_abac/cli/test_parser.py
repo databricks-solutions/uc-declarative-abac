@@ -9,6 +9,7 @@ from uc_abac.cli.parser import parse_cli_args
 
 _SHARED_DEFAULT_ANNOTATIONS = (
     r"--system-catalog\b[\s\S]*?\[default: system\]",
+    r"--information-schema\b[\s\S]*?\[default: system\.information_schema\]",
     r"--ref-override-strategy\b[\s\S]*?\[default: merge\]",
     r"--max-parallel-changes\b[\s\S]*?\[default: 8\]",
 )
@@ -72,6 +73,8 @@ def test_parser_displays_polished_validate_help(capsys):
         "--config-dir",
         "--profile",
         "--system-catalog",
+        "--information-schema",
+        "--per-catalog-information-schema",
         "--ref-override-strategy",
         "--max-parallel-changes",
     ):
@@ -148,6 +151,16 @@ def test_parser_displays_timezone_flag_in_validate_help(capsys):
 def test_parser_displays_timezone_flag_in_deploy_help(capsys):
     output = _help_output(["deploy", "--help"], capsys)
     assert "--timezone" in output
+
+
+@pytest.mark.parametrize("command", ["deploy", "validate", "dump"])
+def test_parser_displays_information_schema_flags_in_command_help(command, capsys):
+    output = _help_output([command, "--help"], capsys)
+
+    assert "--information-schema" in output
+    assert "--per-catalog-information-schema" in output
+    assert "--use-proxy-information-schema" not in output
+    assert "--use-catalog-information-schema" not in output
 
 
 @pytest.mark.parametrize(
@@ -306,6 +319,157 @@ def test_parser_accepts_system_catalog_for_deploy_invocations(args):
     namespace = parse_cli_args(args)
 
     assert namespace.system_catalog == "system"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--per-catalog-information-schema",
+        ],
+        [
+            "validate",
+            "--config-dir",
+            "cfg",
+            "--per-catalog-information-schema",
+        ],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+            "--per-catalog-information-schema",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_per_catalog_information_schema_flag_sets_true_when_given(args):
+    namespace = parse_cli_args(args)
+
+    assert namespace.per_catalog_information_schema is True
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"],
+        ["validate", "--config-dir", "cfg"],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_per_catalog_information_schema_flag_leaves_attribute_unset_when_absent(
+    args,
+):
+    namespace = parse_cli_args(args)
+
+    assert not hasattr(namespace, "per_catalog_information_schema")
+
+
+def test_parser_displays_system_catalog_as_deprecated_in_deploy_help(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+    system_catalog_help = re.search(
+        r"^\s+--system-catalog\b[\s\S]*?(?=\n\s+--|\Z)", output, re.MULTILINE
+    )
+    assert system_catalog_help is not None
+    assert "deprecated" in system_catalog_help.group(0).lower()
+    assert "--information-schema" in system_catalog_help.group(0)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+        [
+            "validate",
+            "--config-dir",
+            "cfg",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+            "--information-schema",
+            "synthetic_proxy.state_views",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_information_schema_flag_stores_catalog_schema_string(args):
+    namespace = parse_cli_args(args)
+
+    assert namespace.information_schema == "synthetic_proxy.state_views"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["deploy", "--config-dir", "cfg", "--warehouse-id", "wh"],
+        ["validate", "--config-dir", "cfg"],
+        [
+            "dump",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--target-schema",
+            "synthetic_output.state",
+        ],
+    ],
+    ids=["deploy", "validate", "dump"],
+)
+def test_parser_information_schema_flag_leaves_attribute_unset_when_absent(args):
+    namespace = parse_cli_args(args)
+
+    assert not hasattr(namespace, "information_schema")
+
+
+@pytest.mark.parametrize(
+    ("deprecated_flag", "value"),
+    [
+        ("--use-proxy-information-schema", "synthetic_proxy.state_views"),
+        ("--use-catalog-information-schema", None),
+    ],
+)
+def test_parser_rejects_superseded_information_schema_flags(deprecated_flag, value):
+    args = ["validate", "--config-dir", "cfg", deprecated_flag]
+    if value is not None:
+        args.append(value)
+
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(args)
+
+    assert exc_info.value.code == 2
 
 
 def test_parser_global_flag_before_subcommand_is_not_legacy():

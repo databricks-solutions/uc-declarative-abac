@@ -21,10 +21,23 @@ inputs:
     required: true
   system-catalog:
     description: >-
-      Catalog containing the information_schema views used for actual-state
-      queries. Defaults to the Databricks system catalog.
+      DEPRECATED, use information-schema. Catalog containing the
+      information_schema views used for actual-state queries. Defaults to the
+      Databricks system catalog.
     required: false
     default: system
+  information-schema:
+    description: >-
+      Fully qualified <catalog>.<schema> containing the information_schema
+      views used for actual-state queries.
+    required: false
+    default: system.information_schema
+  per-catalog-information-schema:
+    description: >-
+      If "true", read actual state from each managed catalog's own
+      information_schema as a union across catalogs.
+    required: false
+    default: 'false'
   timezone:
     description: >-
       IANA timezone used to compute the run date for evaluating expiry_date on
@@ -91,6 +104,8 @@ runs:
         WAREHOUSE_ID: ${{ inputs.warehouse-id }}
         TARGET_SCHEMA: ${{ inputs.target-schema }}
         SYSTEM_CATALOG: ${{ inputs.system-catalog }}
+        INFORMATION_SCHEMA: ${{ inputs.information-schema }}
+        PER_CATALOG_INFORMATION_SCHEMA: ${{ inputs.per-catalog-information-schema }}
         TIMEZONE: ${{ inputs.timezone }}
         PROFILE: ${{ inputs.profile }}
         DRY_RUN: ${{ inputs.dry-run }}
@@ -104,6 +119,10 @@ runs:
           --target-schema "${TARGET_SCHEMA}"
           --system-catalog "${SYSTEM_CATALOG}"
         )
+        args+=(--information-schema "${INFORMATION_SCHEMA}")
+        if [[ "${PER_CATALOG_INFORMATION_SCHEMA}" == "true" ]]; then
+          args+=(--per-catalog-information-schema)
+        fi
         if [[ "${DRY_RUN}" == "true" ]]; then
           args+=(--dry-run)
         fi

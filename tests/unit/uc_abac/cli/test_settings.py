@@ -48,6 +48,69 @@ def test_given_system_catalog_sources_when_settings_are_resolved_then_normal_pre
     assert settings.system_catalog == expected
 
 
+@pytest.mark.parametrize(
+    ("file_value", "env_value", "cli_value", "expected"),
+    [
+        pytest.param(None, None, None, False, id="default"),
+        pytest.param(True, None, None, True, id="settings-file"),
+        pytest.param(True, "false", None, False, id="environment-over-file"),
+        pytest.param(False, "true", None, True, id="environment-over-file-enabled"),
+        pytest.param(True, "true", False, False, id="cli-over-environment"),
+    ],
+)
+def test_given_per_catalog_information_schema_sources_when_settings_are_resolved_then_normal_precedence_applies(
+    file_value: bool | None,
+    env_value: str | None,
+    cli_value: bool | None,
+    expected: bool,
+    monkeypatch,
+    tmp_path: Path,
+):
+    # Given
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_PER_CATALOG_INFORMATION_SCHEMA", raising=False)
+    if file_value is not None:
+        (tmp_path / "uc_abac.yml").write_text(
+            yaml.dump({"per_catalog_information_schema": file_value}),
+            encoding="utf-8",
+        )
+    if env_value is not None:
+        monkeypatch.setenv("UC_ABAC_PER_CATALOG_INFORMATION_SCHEMA", env_value)
+    cli_overrides = (
+        {"per_catalog_information_schema": cli_value} if cli_value is not None else {}
+    )
+
+    # When
+    settings = resolve_settings(cli_overrides, settings_file=None)
+
+    # Then
+    assert settings.per_catalog_information_schema is expected
+
+
+def test_settings_loads_per_catalog_information_schema_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_PER_CATALOG_INFORMATION_SCHEMA", "true")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.per_catalog_information_schema is True
+
+
+def test_settings_loads_per_catalog_information_schema_from_file(tmp_path: Path):
+    settings_path = tmp_path / "settings.yml"
+    settings_path.write_text(
+        yaml.dump({"per_catalog_information_schema": True}), encoding="utf-8"
+    )
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.per_catalog_information_schema is True
+
+
+def test_settings_per_catalog_information_schema_defaults_to_false(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_PER_CATALOG_INFORMATION_SCHEMA", raising=False)
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.per_catalog_information_schema is False
+
+
 def test_settings_prefers_cli_flag_over_env_var(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("UC_ABAC_WAREHOUSE_ID", "from-env")
     settings = resolve_settings(
@@ -352,3 +415,105 @@ def test_settings_replace_tables_defaults_to_false(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("UC_ABAC_REPLACE_TABLES", raising=False)
     settings = resolve_settings({}, settings_file=None)
     assert settings.replace_tables is False
+
+
+@pytest.mark.parametrize(
+    ("file_value", "env_value", "cli_value", "expected"),
+    [
+        pytest.param(
+            None,
+            None,
+            None,
+            "system.information_schema",
+            id="default",
+        ),
+        pytest.param(
+            "synthetic_file.state_views",
+            None,
+            None,
+            "synthetic_file.state_views",
+            id="settings-file",
+        ),
+        pytest.param(
+            "synthetic_file.state_views",
+            "synthetic_env.state_views",
+            None,
+            "synthetic_env.state_views",
+            id="environment-over-file",
+        ),
+        pytest.param(
+            "synthetic_file.state_views",
+            "synthetic_env.state_views",
+            "synthetic_cli.state_views",
+            "synthetic_cli.state_views",
+            id="cli-over-environment",
+        ),
+    ],
+)
+def test_given_information_schema_sources_when_settings_are_resolved_then_normal_precedence_applies(
+    file_value: str | None,
+    env_value: str | None,
+    cli_value: str | None,
+    expected: str,
+    monkeypatch,
+    tmp_path: Path,
+):
+    # Given
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_INFORMATION_SCHEMA", raising=False)
+    if file_value is not None:
+        (tmp_path / "uc_abac.yml").write_text(
+            yaml.dump({"information_schema": file_value}),
+            encoding="utf-8",
+        )
+    if env_value is not None:
+        monkeypatch.setenv("UC_ABAC_INFORMATION_SCHEMA", env_value)
+    cli_overrides = {"information_schema": cli_value} if cli_value is not None else {}
+
+    # When
+    settings = resolve_settings(cli_overrides, settings_file=None)
+
+    # Then
+    assert settings.information_schema == expected
+
+
+def test_settings_loads_information_schema_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_INFORMATION_SCHEMA", "synthetic_proxy.state_views")
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.information_schema == "synthetic_proxy.state_views"
+
+
+def test_settings_loads_information_schema_from_file(tmp_path: Path):
+    settings_path = tmp_path / "settings.yml"
+    settings_path.write_text(
+        yaml.dump({"information_schema": "synthetic_proxy.state_views"}),
+        encoding="utf-8",
+    )
+    settings = resolve_settings({}, settings_file=settings_path)
+    assert settings.information_schema == "synthetic_proxy.state_views"
+
+
+def test_settings_information_schema_defaults_to_system_information_schema(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_INFORMATION_SCHEMA", raising=False)
+    settings = resolve_settings({}, settings_file=None)
+    assert settings.information_schema == "system.information_schema"
+
+
+@pytest.mark.parametrize(
+    ("superseded_key", "value"),
+    [
+        ("use_proxy_information_schema", "synthetic_proxy.state_views"),
+        ("use_catalog_information_schema", True),
+    ],
+)
+def test_settings_rejects_superseded_information_schema_keys(
+    tmp_path: Path, superseded_key, value
+):
+    settings_path = tmp_path / "settings.yml"
+    settings_path.write_text(yaml.dump({superseded_key: value}), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        resolve_settings({}, settings_file=settings_path)

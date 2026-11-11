@@ -1540,6 +1540,110 @@ def test_dumper_writer_builds_context_with_run_date_for_timezone(
     )
 
 
+def test_dumper_writer_constructs_unity_catalog_helper_with_per_catalog_information_schema(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state forwards per_catalog_information_schema=True to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    with (
+        patch(
+            "uc_abac.dumper.writer.UnityCatalogHelper",
+            wraps=UnityCatalogHelper,
+        ) as mock_uc_helper,
+        patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch,
+    ):
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            per_catalog_information_schema=True,
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "warehouse-1",
+        system_catalog="system",
+        information_schema="system.information_schema",
+        per_catalog_information_schema=True,
+    )
+
+
+def test_dumper_writer_constructs_unity_catalog_helper_with_information_schema(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state forwards a configured information_schema to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    with (
+        patch(
+            "uc_abac.dumper.writer.UnityCatalogHelper",
+            wraps=UnityCatalogHelper,
+        ) as mock_uc_helper,
+        patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch,
+    ):
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+            information_schema="synthetic_proxy.state_views",
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "warehouse-1",
+        system_catalog="system",
+        information_schema="synthetic_proxy.state_views",
+        per_catalog_information_schema=False,
+    )
+
+
+def test_dumper_writer_constructs_unity_catalog_helper_with_information_schema_defaults(
+    mock_workspace_client: MagicMock, tmp_path: Path
+) -> None:
+    """dump_state forwards the public information-schema defaults to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    config_dir = _build_minimal_config_dir(tmp_path)
+    mock_workspace_client.schemas.get.return_value = MagicMock()  # Schema exists
+
+    with (
+        patch(
+            "uc_abac.dumper.writer.UnityCatalogHelper",
+            wraps=UnityCatalogHelper,
+        ) as mock_uc_helper,
+        patch("uc_abac.dumper.writer.fetch_actual_state") as mock_fetch,
+    ):
+        mock_fetch.return_value = _build_minimal_actual_state()
+
+        dump_state(
+            mock_workspace_client,
+            config_dir=config_dir,
+            warehouse_id="warehouse-1",
+            target_schema="main.state",
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "warehouse-1",
+        system_catalog="system",
+        information_schema="system.information_schema",
+        per_catalog_information_schema=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Schema evolution and replace_tables flag tests
 # ---------------------------------------------------------------------------

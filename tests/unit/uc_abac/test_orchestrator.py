@@ -1177,6 +1177,103 @@ def test_orchestrator_constructs_unity_catalog_helper_with_system_catalog(
         mock_workspace_client,
         "test-warehouse-id",
         system_catalog="system_catalog_proxy",
+        information_schema="system.information_schema",
+        per_catalog_information_schema=False,
+    )
+
+
+def test_orchestrator_constructs_unity_catalog_helper_with_per_catalog_information_schema(
+    tmp_yaml_dir,
+    mock_workspace_client,
+):
+    """run() forwards per_catalog_information_schema=True to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    root = tmp_yaml_dir({"resources/catalog.yaml": {"resources": {}}})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+
+    with patch(
+        "uc_abac.orchestrator.UnityCatalogHelper",
+        wraps=UnityCatalogHelper,
+    ) as mock_uc_helper:
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            per_catalog_information_schema=True,
+            dry_run=True,
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "test-warehouse-id",
+        system_catalog="system",
+        information_schema="system.information_schema",
+        per_catalog_information_schema=True,
+    )
+
+
+def test_orchestrator_constructs_unity_catalog_helper_with_information_schema(
+    tmp_yaml_dir,
+    mock_workspace_client,
+):
+    """run() forwards a configured information_schema to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    root = tmp_yaml_dir({"resources/catalog.yaml": {"resources": {}}})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+
+    with patch(
+        "uc_abac.orchestrator.UnityCatalogHelper",
+        wraps=UnityCatalogHelper,
+    ) as mock_uc_helper:
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            information_schema="synthetic_proxy.state_views",
+            dry_run=True,
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "test-warehouse-id",
+        system_catalog="system",
+        information_schema="synthetic_proxy.state_views",
+        per_catalog_information_schema=False,
+    )
+
+
+def test_orchestrator_constructs_unity_catalog_helper_with_information_schema_defaults(
+    tmp_yaml_dir,
+    mock_workspace_client,
+):
+    """run() forwards the public information-schema defaults to UnityCatalogHelper."""
+    from uc_abac.helpers import UnityCatalogHelper
+
+    root = tmp_yaml_dir({"resources/catalog.yaml": {"resources": {}}})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+
+    with patch(
+        "uc_abac.orchestrator.UnityCatalogHelper",
+        wraps=UnityCatalogHelper,
+    ) as mock_uc_helper:
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            dry_run=True,
+        )
+
+    mock_uc_helper.assert_called_once_with(
+        mock_workspace_client,
+        "test-warehouse-id",
+        system_catalog="system",
+        information_schema="system.information_schema",
+        per_catalog_information_schema=False,
     )
 
 
