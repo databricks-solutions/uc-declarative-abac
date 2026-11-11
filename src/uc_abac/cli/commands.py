@@ -416,40 +416,36 @@ def _require_target_schema(settings: RunSettings) -> str:
 def _check_information_schema_options(settings: RunSettings) -> None:
     """Reject conflicting state-source options and warn on deprecated ``--system-catalog``.
 
-    The three sources (default ``system.information_schema``, a proxy schema, the
-    per-catalog union) are mutually exclusive. A non-default ``--system-catalog`` is the
-    deprecated way to name a proxy and cannot be mixed with the new options.
+    The default information schema may accompany per-catalog mode because it is
+    inert there. Custom information schemas and the per-catalog union are mutually
+    exclusive. A non-default ``--system-catalog`` is the deprecated way to name a
+    state source and cannot be mixed with either new custom source.
     """
-    proxy = settings.use_proxy_information_schema
-    union = settings.use_catalog_information_schema
+    information_schema = settings.information_schema
+    per_catalog = settings.per_catalog_information_schema
+    custom_information_schema = information_schema != "system.information_schema"
     custom_system = settings.system_catalog != "system"
-    if proxy is not None:
-        parts = proxy.split(".")
-        plain = all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", p) for p in parts)
-        if len(parts) != 2 or not plain:
-            raise CliUsageError(
-                f"--use-proxy-information-schema must be a two-part "
-                f"<catalog>.<schema> name of plain identifiers, got '{proxy}'."
-            )
-        if parts[1].lower() == "information_schema":
-            raise CliUsageError(
-                "--use-proxy-information-schema cannot name 'information_schema' "
-                "(reserved in every catalog); use a dedicated schema."
-            )
-    if proxy is not None and union:
+    parts = information_schema.split(".")
+    plain = all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) for part in parts)
+    if len(parts) != 2 or not plain:
         raise CliUsageError(
-            "--use-proxy-information-schema cannot be combined with "
-            "--use-catalog-information-schema."
+            "--information-schema must be a two-part <catalog>.<schema> name of "
+            f"plain identifiers, got '{information_schema}'."
         )
-    if custom_system and (proxy is not None or union):
+    if custom_information_schema and per_catalog:
+        raise CliUsageError(
+            "A custom --information-schema cannot be combined with "
+            "--per-catalog-information-schema."
+        )
+    if custom_system and (custom_information_schema or per_catalog):
         raise CliUsageError(
             "--system-catalog is deprecated and cannot be combined with "
-            "--use-proxy-information-schema or --use-catalog-information-schema."
+            "a custom --information-schema or --per-catalog-information-schema."
         )
     if custom_system:
         _logger.warning(
-            "--system-catalog is deprecated; use --use-proxy-information-schema "
-            "<catalog>.<schema> or --use-catalog-information-schema instead."
+            "--system-catalog is deprecated; use --information-schema "
+            "<catalog>.<schema> instead."
         )
 
 
@@ -462,8 +458,8 @@ def _run_kwargs(
         "config_dir": _require_config_dir(settings),
         "warehouse_id": _require_warehouse_id(settings),
         "system_catalog": settings.system_catalog,
-        "use_catalog_information_schema": settings.use_catalog_information_schema,
-        "use_proxy_information_schema": settings.use_proxy_information_schema,
+        "information_schema": settings.information_schema,
+        "per_catalog_information_schema": settings.per_catalog_information_schema,
         "timezone": settings.timezone,
         "dry_run": dry_run,
         "use_workspace_scim": settings.use_workspace_scim,
@@ -510,6 +506,7 @@ def _run_kwargs(
 
 
 def cmd_validate(settings: RunSettings) -> int:
+    _check_information_schema_options(settings)
     config_dir = _require_config_dir(settings)
     load_config(config_dir, settings.ref_override_strategy)
     _logger.info(format_status("success", "Config validation successful."))
@@ -541,8 +538,8 @@ def cmd_dump(settings: RunSettings, namespace: argparse.Namespace) -> int:
         warehouse_id=warehouse_id,
         target_schema=target_schema,
         system_catalog=settings.system_catalog,
-        use_catalog_information_schema=settings.use_catalog_information_schema,
-        use_proxy_information_schema=settings.use_proxy_information_schema,
+        information_schema=settings.information_schema,
+        per_catalog_information_schema=settings.per_catalog_information_schema,
         timezone=settings.timezone,
         ref_override_strategy=settings.ref_override_strategy,
         max_parallel_tables=settings.max_parallel_changes,

@@ -26,8 +26,8 @@ _EMPTY_MEANINGFUL_FIELDS = frozenset(
 _ENV_FIELD_MAP: dict[str, str] = {
     "config_dir": "CONFIG_DIR",
     "system_catalog": "SYSTEM_CATALOG",
-    "use_catalog_information_schema": "USE_CATALOG_INFORMATION_SCHEMA",
-    "use_proxy_information_schema": "USE_PROXY_INFORMATION_SCHEMA",
+    "information_schema": "INFORMATION_SCHEMA",
+    "per_catalog_information_schema": "PER_CATALOG_INFORMATION_SCHEMA",
     "warehouse_id": "WAREHOUSE_ID",
     "target_schema": "TARGET_SCHEMA",
     "profile": "PROFILE",
@@ -84,8 +84,8 @@ class RunSettings(BaseModel):
 
     config_dir: Path | None = None
     system_catalog: str = "system"
-    use_catalog_information_schema: bool = False
-    use_proxy_information_schema: str | None = None
+    information_schema: str = "system.information_schema"
+    per_catalog_information_schema: bool = False
     warehouse_id: str | None = None
     target_schema: str | None = None
     profile: str | None = None

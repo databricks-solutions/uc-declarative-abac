@@ -192,12 +192,18 @@ def test_composite_actions_install_only_hash_verified_packages():
 
 
 # ---
-# use-catalog-information-schema wiring (deploy and dump actions)
+# information-schema and per-catalog-information-schema wiring (deploy and dump actions)
 # ---
 
-_PER_CATALOG_INPUT = "use-catalog-information-schema"
-_PER_CATALOG_ENV = "USE_CATALOG_INFORMATION_SCHEMA"
-_PER_CATALOG_ARG = "--use-catalog-information-schema"
+_INFORMATION_SCHEMA_INPUT = "information-schema"
+_INFORMATION_SCHEMA_ENV = "INFORMATION_SCHEMA"
+_INFORMATION_SCHEMA_ARG = "--information-schema"
+_PER_CATALOG_INPUT = "per-catalog-information-schema"
+_PER_CATALOG_ENV = "PER_CATALOG_INFORMATION_SCHEMA"
+_PER_CATALOG_ARG = "--per-catalog-information-schema"
+_RETIRED_INPUTS = ("use-proxy-information-schema", "use-catalog-information-schema")
+_RETIRED_ENVS = ("USE_PROXY_INFORMATION_SCHEMA", "USE_CATALOG_INFORMATION_SCHEMA")
+_RETIRED_ARGS = ("--use-proxy-information-schema", "--use-catalog-information-schema")
 _DEPLOY_AND_DUMP_ACTIONS = {
     "deploy": _REPO_ROOT / "deploy" / "action.yml",
     "dump": _REPO_ROOT / "dump" / "action.yml",
@@ -211,7 +217,32 @@ def _action_run_step(action_path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_declares_use_catalog_information_schema_input_defaulting_to_false(
+def test_github_actions_action_declares_information_schema_input_with_system_default(
+    action,
+):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    assert _INFORMATION_SCHEMA_INPUT in inputs
+    assert inputs[_INFORMATION_SCHEMA_INPUT]["required"] == "false"
+    assert inputs[_INFORMATION_SCHEMA_INPUT]["default"] == "system.information_schema"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_information_schema_input_through_env(action):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    expected = f"${{{{ inputs.{_INFORMATION_SCHEMA_INPUT} }}}}"
+    assert env.get(_INFORMATION_SCHEMA_ENV) == expected
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_always_passes_information_schema(action):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    append = f'args+=({_INFORMATION_SCHEMA_ARG} "${{{_INFORMATION_SCHEMA_ENV}}}")'
+    assert append in script
+    assert f'-n "${{{_INFORMATION_SCHEMA_ENV}}}"' not in script
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_per_catalog_information_schema_input_defaulting_to_false(
     action,
 ):
     inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
@@ -221,15 +252,15 @@ def test_github_actions_action_declares_use_catalog_information_schema_input_def
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_passes_use_catalog_information_schema_input_through_env(
+def test_github_actions_action_passes_per_catalog_information_schema_input_through_env(
     action,
 ):
     env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
-    assert env[_PER_CATALOG_ENV] == f"${{{{ inputs.{_PER_CATALOG_INPUT} }}}}"
+    assert env.get(_PER_CATALOG_ENV) == f"${{{{ inputs.{_PER_CATALOG_INPUT} }}}}"
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_appends_use_catalog_information_schema_flag_when_true(
+def test_github_actions_action_appends_per_catalog_information_schema_flag_when_true(
     action,
 ):
     script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
@@ -241,44 +272,35 @@ def test_github_actions_action_appends_use_catalog_information_schema_flag_when_
     assert guarded_append, f"{action} action does not append {_PER_CATALOG_ARG}"
 
 
-# ---
-# use-proxy-information-schema wiring (deploy and dump actions)
-# ---
-
-_PROXY_INPUT = "use-proxy-information-schema"
-_PROXY_ENV = "USE_PROXY_INFORMATION_SCHEMA"
-_PROXY_ARG = "--use-proxy-information-schema"
-
-
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_declares_use_proxy_information_schema_input_defaulting_to_empty(
-    action,
-):
+def test_github_actions_action_declares_no_retired_information_schema_inputs(action):
     inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
-    assert _PROXY_INPUT in inputs
-    assert inputs[_PROXY_INPUT]["required"] == "false"
-    assert inputs[_PROXY_INPUT].get("default") == ""
+    leftovers = [name for name in _RETIRED_INPUTS if name in inputs]
+    assert not leftovers, f"{action} action still declares inputs: {leftovers}"
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_passes_use_proxy_information_schema_input_through_env(
-    action,
-):
+def test_github_actions_action_sets_no_retired_information_schema_env(action):
     env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
-    assert env[_PROXY_ENV] == f"${{{{ inputs.{_PROXY_INPUT} }}}}"
+    leftovers = [name for name in _RETIRED_ENVS if name in env]
+    assert not leftovers, f"{action} action still sets env vars: {leftovers}"
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
-def test_github_actions_action_appends_use_proxy_information_schema_flag_only_when_non_empty(
+def test_github_actions_action_passes_no_retired_information_schema_args(action):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    leftovers = [arg for arg in _RETIRED_ARGS if arg in script]
+    assert not leftovers, f"{action} action still passes args: {leftovers}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_never_mentions_retired_information_schema_names(
     action,
 ):
-    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
-    guarded_append = re.search(
-        rf'if \[\[ -n "\${{{_PROXY_ENV}}}" \]\]; then\s*'
-        rf'args\+=\({re.escape(_PROXY_ARG)} "\${{{_PROXY_ENV}}}"\)\s*fi',
-        script,
-    )
-    assert guarded_append, f"{action} action does not append {_PROXY_ARG} when set"
+    text = _DEPLOY_AND_DUMP_ACTIONS[action].read_text(encoding="utf-8")
+    retired = _RETIRED_INPUTS + _RETIRED_ENVS
+    leftovers = [name for name in retired if name in text]
+    assert not leftovers, f"{action} action still mentions: {leftovers}"
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])
@@ -286,6 +308,7 @@ def test_github_actions_action_describes_system_catalog_input_as_deprecated(acti
     inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
     description = inputs["system-catalog"]["description"].lower()
     assert "deprecated" in description
+    assert _INFORMATION_SCHEMA_INPUT in description
 
 
 # ---

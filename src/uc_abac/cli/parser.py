@@ -30,35 +30,33 @@ def _add_profile(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_system_catalog(parser: argparse.ArgumentParser) -> None:
+def _add_information_schema_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--system-catalog",
         type=str,
         default=argparse.SUPPRESS,
         help=(
-            "(Deprecated; use --use-proxy-information-schema.) Catalog containing "
-            "Unity Catalog system tables [default: system]."
+            "(Deprecated; use --information-schema.) System tables catalog "
+            "[default: system]."
         ),
     )
     parser.add_argument(
-        "--use-proxy-information-schema",
+        "--information-schema",
         type=str,
         metavar="CATALOG.SCHEMA",
         default=argparse.SUPPRESS,
         help=(
-            "Read state from the views in this existing, fully qualified schema "
-            "instead of system.information_schema."
+            "Fully qualified schema used to read Unity Catalog state "
+            "[default: system.information_schema]."
         ),
     )
     parser.add_argument(
-        "--use-catalog-information-schema",
+        "--per-catalog-information-schema",
         action="store_true",
         default=argparse.SUPPRESS,
         help=(
-            "Read state from each managed catalog's own information_schema (a union "
-            "across catalogs) instead of <system-catalog>.information_schema. For "
-            "proxy catalogs whose information_schema only describes the proxy itself; "
-            "--system-catalog is then ignored."
+            "Read state from each managed catalog's own information_schema as a union "
+            "across catalogs."
         ),
     )
 
@@ -96,7 +94,7 @@ def _add_warehouse_id(parser: argparse.ArgumentParser) -> None:
 def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
     """Register optional run flags shared by validate, deploy, and legacy mode."""
     _add_profile(parser)
-    _add_system_catalog(parser)
+    _add_information_schema_options(parser)
     _add_timezone(parser)
     parser.add_argument(
         "--use-workspace-scim",
@@ -637,7 +635,7 @@ def _add_dump_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     _add_profile(parser)
-    _add_system_catalog(parser)
+    _add_information_schema_options(parser)
     _add_timezone(parser)
     _add_max_parallel_changes(
         parser,

@@ -82,12 +82,12 @@ Precede the subcommand name.
 * - `--system-catalog`
   - no
   - `system`
-  - Deprecated; use `--use-proxy-information-schema`. Catalog containing `information_schema` views used for state queries
-* - `--use-proxy-information-schema`
+  - Deprecated; use `--information-schema`. Catalog containing `information_schema` views used for state queries
+* - `--information-schema`
   - no
-  - None
-  - Existing `<catalog>.<schema>` holding the views to read state from instead of `system.information_schema`; see {ref}`system-table-proxy-catalogs`
-* - `--use-catalog-information-schema`
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `--per-catalog-information-schema`
   - no
   - false
   - Read state from each managed catalog's own `information_schema` instead of the system catalog; see {ref}`system-table-proxy-catalogs`
@@ -219,12 +219,12 @@ Databricks.
 * - `--system-catalog`
   - no
   - `system`
-  - Deprecated; use `--use-proxy-information-schema`. Catalog containing `information_schema` views for state queries
-* - `--use-proxy-information-schema`
+  - Deprecated; use `--information-schema`. Catalog containing `information_schema` views for state queries
+* - `--information-schema`
   - no
-  - None
-  - Existing `<catalog>.<schema>` holding the views to read state from instead of `system.information_schema`; see {ref}`system-table-proxy-catalogs`
-* - `--use-catalog-information-schema`
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `--per-catalog-information-schema`
   - no
   - false
   - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`

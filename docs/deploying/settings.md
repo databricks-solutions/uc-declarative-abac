@@ -11,7 +11,7 @@ Place a `uc_abac.yml` file in the working directory (or pass `--settings-file <p
 
 config_dir: ./configs
 warehouse_id: <warehouse-id>
-use_proxy_information_schema: governance.proxy_information_schema
+information_schema: governance.proxy_information_schema
 tag_management_scopes: '*'
 privilege_management_scopes: '*'
 timezone: Australia/Melbourne
@@ -46,25 +46,25 @@ uc-abac deploy --config-dir ./configs --warehouse-id <id> --timezone Australia/M
 (system-table-proxy-catalogs)=
 ## Information schema source
 
-Actual-state SQL reads `system.information_schema` by default. Two options change the source. They are mutually exclusive.
+Actual-state SQL reads `system.information_schema` by default. You can select another schema or read each managed catalog separately.
 
 ### Proxy schema
 
-Set `--use-proxy-information-schema <catalog>.<schema>`, `use_proxy_information_schema` in the settings file, or `UC_ABAC_USE_PROXY_INFORMATION_SCHEMA` to read the views from a curated schema that already exists. The engine never creates or changes that schema. It must be a dedicated schema: `information_schema` is reserved in every catalog, so a proxy cannot be named that.
+Set `--information-schema <catalog>.<schema>`, `information_schema` in the settings file, or `UC_ABAC_INFORMATION_SCHEMA` to read the views from a curated schema that already exists. The engine never creates or changes that schema. The default is `system.information_schema`.
 
 Both parts must be plain identifiers containing only ASCII letters, digits, and underscores, and may not start with a digit.
 
 ### Per-catalog union
 
-A catalog's own `information_schema` only describes objects in that catalog. Set `--use-catalog-information-schema`, `use_catalog_information_schema: true`, or `UC_ABAC_USE_CATALOG_INFORMATION_SCHEMA=true` to read `<catalog>.information_schema.<view>` for each catalog your configs manage, combined with `UNION ALL`. Catalogs that do not exist yet are skipped. You need `USE CATALOG` and the usual `information_schema` visibility on each managed catalog.
+A catalog's own `information_schema` only describes objects in that catalog. Set `--per-catalog-information-schema`, `per_catalog_information_schema: true`, or `UC_ABAC_PER_CATALOG_INFORMATION_SCHEMA=true` to read `<catalog>.information_schema.<view>` for each catalog your configs manage, combined with `UNION ALL`. Catalogs that do not exist yet are skipped. You need `USE CATALOG` and the usual `information_schema` visibility on each managed catalog. Per-catalog mode cannot be combined with a custom `information_schema` value.
 
 ### Deprecated: `system_catalog`
 
-`--system-catalog`, `system_catalog`, and `UC_ABAC_SYSTEM_CATALOG` still work but are deprecated and log a warning. Use a proxy schema instead. They cannot be combined with either option above.
+`--system-catalog`, `system_catalog`, and `UC_ABAC_SYSTEM_CATALOG` still work but are deprecated and log a warning. A custom value reads `<catalog>.information_schema`; use `information_schema` instead. A custom legacy value cannot be combined with a custom `information_schema` or per-catalog mode.
 
 ### Required views
 
-The proxy schema must expose these views:
+The configured information schema must expose these views:
 
 ```{list-table}
 :header-rows: 1
@@ -92,5 +92,5 @@ The views must retain every column projected or filtered by the corresponding Da
 - Policy type and securable-name columns in `abac_policy_definitions`
 
 ```{warning}
-**Visibility warning:** A workspace-scoped proxy must expose every configured object. If it hides rows, existing objects can appear absent and the engine can plan incorrect creates, tag removals, or privilege revokes.
+**Visibility warning:** A workspace-scoped information schema must expose every configured object. If it hides rows, existing objects can appear absent and the engine can plan incorrect creates, tag removals, or privilege revokes.
 ```

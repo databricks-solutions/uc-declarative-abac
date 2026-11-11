@@ -53,6 +53,7 @@ from uc_abac.utils import (
     OrchestratorError,
     classify_rfa_destination,
     normalise_data_type,
+    sql_string_literal,
 )
 
 _logger = logging.getLogger("uc_abac")
@@ -71,10 +72,12 @@ _MAX_COLUMN_COMMENT_WORKERS = 16
 # declare column comments.
 _COLUMN_COMMENT_TABLE_BATCH = 1000
 
+_DEFAULT_INFORMATION_SCHEMA = "system.information_schema"
+
 
 def _build_catalog_in_clause(catalog_names: list[str]) -> str:
     """Build a SQL IN clause from a list of catalog names."""
-    quoted = ", ".join(f"'{name}'" for name in catalog_names)
+    quoted = ", ".join(sql_string_literal(name) for name in catalog_names)
     return f"({quoted})"
 
 
@@ -87,15 +90,14 @@ def _information_schema_source(
     view: str,
     catalog_names: list[str],
     *,
-    system_catalog: str,
+    information_schema: str,
     per_catalog: bool,
-    proxy_schema: str | None = None,
 ) -> str:
     """Return the FROM source for one ``information_schema`` view.
 
     With ``per_catalog=False`` this is the single relation
-    ``{system_catalog}.information_schema.{view}``, unchanged from before the flag
-    existed. With ``per_catalog=True`` it is a parenthesised ``UNION ALL`` of
+    ``{information_schema}.{view}``. With ``per_catalog=True`` it is a parenthesised
+    ``UNION ALL`` of
     ``SELECT * FROM `<catalog>`.information_schema.<view>`` arms, one per distinct
     catalog (sorted, so the statement text is deterministic). Each catalog's own
     information_schema is read instead of the system catalog's aggregate view, so a
@@ -103,16 +105,9 @@ def _information_schema_source(
 
     The returned string is a bare relation or a derived table; callers that alias it
     append the alias after it (``FROM {source} t``).
-
-    ``proxy_schema`` (a validated ``<catalog>.<schema>``) takes precedence: the views are
-    read from that pre-existing schema, which the engine never creates or modifies. A
-    proxy cannot live under ``<catalog>.information_schema``, a reserved name in every
-    catalog, hence the fully qualified schema.
     """
-    if proxy_schema is not None:
-        return f"{proxy_schema}.{view}"
     if not per_catalog:
-        return f"{system_catalog}.information_schema.{view}"
+        return f"{information_schema}.{view}"
     arms = [
         f"SELECT * FROM {_quote_identifier(name)}.information_schema.{view}"
         for name in sorted(set(catalog_names))
@@ -146,9 +141,8 @@ def _build_double_underscore_filter(
 def _build_tags_query(
     catalog_names: list[str],
     *,
-    system_catalog: str = "system",
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
     per_catalog: bool = False,
-    proxy_schema: str | None = None,
 ) -> str:
     """Build a UNION ALL query across all tag system tables for the given catalogs.
 
@@ -216,9 +210,8 @@ def _build_tags_query(
         source = _information_schema_source(
             table,
             catalog_names,
-            system_catalog=system_catalog,
+            information_schema=information_schema,
             per_catalog=per_catalog,
-            proxy_schema=proxy_schema,
         )
         parts.append(
             f"SELECT '{sec_type}' AS securable_type, "
@@ -234,9 +227,8 @@ def _build_tags_query(
 def _build_privileges_query(
     catalog_names: list[str],
     *,
-    system_catalog: str = "system",
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
     per_catalog: bool = False,
-    proxy_schema: str | None = None,
 ) -> str:
     """Build a UNION ALL query across privilege system tables for the given catalogs.
 
@@ -248,9 +240,8 @@ def _build_privileges_query(
         return _information_schema_source(
             view,
             catalog_names,
-            system_catalog=system_catalog,
+            information_schema=information_schema,
             per_catalog=per_catalog,
-            proxy_schema=proxy_schema,
         )
 
     parts = [
@@ -367,9 +358,8 @@ def _fetch_external_links_rows(response: StatementResponse) -> list[list[str]]:
 def _build_securables_query(
     catalog_names: list[str],
     *,
-    system_catalog: str = "system",
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
     per_catalog: bool = False,
-    proxy_schema: str | None = None,
 ) -> str:
     """Build a UNION ALL query for securable attributes, function definitions, and table columns.
 
@@ -413,9 +403,8 @@ def _build_securables_query(
         return _information_schema_source(
             view,
             catalog_names,
-            system_catalog=system_catalog,
+            information_schema=information_schema,
             per_catalog=per_catalog,
-            proxy_schema=proxy_schema,
         )
 
     parts = [
@@ -484,9 +473,8 @@ def _build_securables_query(
 def _build_column_comments_query(
     table_full_names: list[str],
     *,
-    system_catalog: str = "system",
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
     per_catalog: bool = False,
-    proxy_schema: str | None = None,
 ) -> str:
     """Build a targeted query for the **non-empty** comments on the columns of the given tables.
 
@@ -521,9 +509,8 @@ def _build_column_comments_query(
     source = _information_schema_source(
         "columns",
         catalogs,
-        system_catalog=system_catalog,
+        information_schema=information_schema,
         per_catalog=per_catalog,
-        proxy_schema=proxy_schema,
     )
     return (
         "SELECT concat(table_catalog, '.', table_schema, '.', table_name, '.', column_name) "
@@ -702,9 +689,8 @@ def _parse_securable_rows(
 def _build_policy_securables_query(
     catalog_names: list[str],
     *,
-    system_catalog: str = "system",
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
     per_catalog: bool = False,
-    proxy_schema: str | None = None,
 ) -> str:
     """Build a single-scan discovery query against the system table for securables carrying mask/filter policies.
 
@@ -743,9 +729,8 @@ def _build_policy_securables_query(
     source = _information_schema_source(
         "abac_policy_definitions",
         catalog_names,
-        system_catalog=system_catalog,
+        information_schema=information_schema,
         per_catalog=per_catalog,
-        proxy_schema=proxy_schema,
     )
     return (
         "SELECT DISTINCT "
@@ -945,36 +930,55 @@ def _validate_system_catalog(system_catalog: str) -> str:
     return system_catalog
 
 
-def _validate_proxy_information_schema(
-    proxy_schema: str | None, *, use_catalog_information_schema: bool
-) -> str | None:
-    """Validate a fully qualified ``<catalog>.<schema>`` proxy schema (None passes through).
+def _validate_information_schema(information_schema: str) -> str:
+    """Validate a fully qualified information-schema source.
 
-    Both parts must be plain, unquoted identifiers (the value is interpolated into SQL),
-    the schema may not be ``information_schema`` (reserved in every catalog, so it would
-    silently read that catalog's native views), and it cannot be combined with the
-    per-catalog union mode: they are alternative sources for the same views.
+    Both parts must be plain, unquoted identifiers because the source is interpolated
+    into SQL as ``<catalog>.<schema>``. Custom schemas are valid sources, including a
+    schema literally named ``information_schema``.
     """
-    if proxy_schema is None:
-        return None
-    parts = proxy_schema.split(".")
+    parts = information_schema.split(".")
     ident = r"[A-Za-z_][A-Za-z0-9_]*"
     if len(parts) != 2 or not all(re.fullmatch(ident, p) for p in parts):
         raise ValueError(
-            "use_proxy_information_schema must be a two-part <catalog>.<schema> name "
+            "information_schema must be a two-part <catalog>.<schema> name "
             "of plain, unquoted identifiers"
         )
-    if parts[1].lower() == "information_schema":
+    return information_schema
+
+
+def _resolve_information_schema(
+    system_catalog: str,
+    information_schema: str,
+    per_catalog_information_schema: bool,
+) -> str:
+    """Resolve the legacy catalog and new information-schema source options.
+
+    A non-default ``system_catalog`` remains supported by mapping it to
+    ``<system_catalog>.information_schema``. It cannot be combined with either new
+    source option because that would make precedence ambiguous. Likewise, a custom
+    single source and per-catalog mode are mutually exclusive; the public default may
+    coexist with per-catalog mode because it is ignored while unions are enabled.
+    """
+    system_catalog = _validate_system_catalog(system_catalog)
+    information_schema = _validate_information_schema(information_schema)
+    custom_system_catalog = system_catalog != "system"
+    custom_information_schema = information_schema != _DEFAULT_INFORMATION_SCHEMA
+    if custom_system_catalog and (
+        custom_information_schema or per_catalog_information_schema
+    ):
         raise ValueError(
-            "use_proxy_information_schema cannot name 'information_schema', which is "
-            "reserved in every catalog; use a dedicated schema"
+            "custom system_catalog cannot be combined with information_schema or "
+            "per_catalog_information_schema"
         )
-    if use_catalog_information_schema:
+    if custom_information_schema and per_catalog_information_schema:
         raise ValueError(
-            "use_proxy_information_schema cannot be combined with "
-            "use_catalog_information_schema"
+            "custom information_schema cannot be combined with "
+            "per_catalog_information_schema"
         )
-    return proxy_schema
+    if custom_system_catalog:
+        return f"{system_catalog}.information_schema"
+    return information_schema
 
 
 class UnityCatalogHelper:
@@ -983,18 +987,15 @@ class UnityCatalogHelper:
     Uses the Statement Execution API with external links disposition
     for efficient result streaming. Caches results after initial fetch.
 
-    State reads use one of three mutually exclusive sources:
+    State reads use one of two sources:
 
-    - **Default:** every query reads the aggregate ``system.information_schema`` views
-      filtered to the requested catalogs.
-    - **Proxy schema:** every query reads the corresponding view from the existing
-      ``<catalog>.<schema>`` configured by ``use_proxy_information_schema``.
+    - **Single source:** every query reads the corresponding view from the configured
+      ``<catalog>.<schema>``, defaulting to ``system.information_schema``.
     - **Per-catalog:** every query reads ``<catalog>.information_schema`` for each
-      requested catalog when ``use_catalog_information_schema`` is enabled and unions
-      the results. The metastore's catalogs are listed once (cached), and requested
-      catalogs that do not exist are dropped before any SQL is built, since a FROM clause
-      naming a missing catalog fails the whole statement and one stale name in the config
-      would otherwise abort the run.
+      requested catalog and unions the results. The metastore's catalogs are listed once
+      (cached), and requested catalogs that do not exist are dropped before any SQL is
+      built, since a FROM clause naming a missing catalog fails the whole statement and
+      one stale name in the config would otherwise abort the run.
     """
 
     def __init__(
@@ -1003,17 +1004,17 @@ class UnityCatalogHelper:
         warehouse_id: str,
         *,
         system_catalog: str = "system",
-        use_catalog_information_schema: bool = False,
-        use_proxy_information_schema: str | None = None,
+        information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+        per_catalog_information_schema: bool = False,
     ) -> None:
         self._client = workspace_client
         self._warehouse_id = warehouse_id
-        self._system_catalog = _validate_system_catalog(system_catalog)
-        self._use_catalog_information_schema = use_catalog_information_schema
-        self._use_proxy_information_schema = _validate_proxy_information_schema(
-            use_proxy_information_schema,
-            use_catalog_information_schema=use_catalog_information_schema,
+        self._information_schema = _resolve_information_schema(
+            system_catalog,
+            information_schema,
+            per_catalog_information_schema,
         )
+        self._per_catalog_information_schema = per_catalog_information_schema
         self._existing_catalogs_cache: frozenset[str] | None = None
         self._warned_missing_catalogs: set[str] = set()
         self._tags_cache: set[SecurableTag] | None = None
@@ -1073,7 +1074,7 @@ class UnityCatalogHelper:
         is hidden is indistinguishable from a missing one (as in ``system.information_schema``).
         Each skipped name is warned about once per helper so a permission problem is not silent.
         """
-        if not self._use_catalog_information_schema:
+        if not self._per_catalog_information_schema:
             return catalog_names
         existing = self._existing_catalogs()
         requested = set(catalog_names)
@@ -1102,9 +1103,8 @@ class UnityCatalogHelper:
         response = self._execute_and_poll(
             _build_tags_query(
                 catalog_names,
-                system_catalog=self._system_catalog,
-                per_catalog=self._use_catalog_information_schema,
-                proxy_schema=self._use_proxy_information_schema,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         rows = _fetch_external_links_rows(response)
@@ -1131,9 +1131,8 @@ class UnityCatalogHelper:
         response = self._execute_and_poll(
             _build_privileges_query(
                 catalog_names,
-                system_catalog=self._system_catalog,
-                per_catalog=self._use_catalog_information_schema,
-                proxy_schema=self._use_proxy_information_schema,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         rows = _fetch_external_links_rows(response)
@@ -1182,9 +1181,8 @@ class UnityCatalogHelper:
         response = self._execute_and_poll(
             _build_securables_query(
                 catalog_names,
-                system_catalog=self._system_catalog,
-                per_catalog=self._use_catalog_information_schema,
-                proxy_schema=self._use_proxy_information_schema,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         rows = _fetch_external_links_rows(response)
@@ -1248,9 +1246,8 @@ class UnityCatalogHelper:
         response = self._execute_and_poll(
             _build_column_comments_query(
                 table_full_names,
-                system_catalog=self._system_catalog,
-                per_catalog=self._use_catalog_information_schema,
-                proxy_schema=self._use_proxy_information_schema,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         return _fetch_external_links_rows(response)
@@ -1388,9 +1385,8 @@ class UnityCatalogHelper:
         response = self._execute_and_poll(
             _build_policy_securables_query(
                 catalog_names,
-                system_catalog=self._system_catalog,
-                per_catalog=self._use_catalog_information_schema,
-                proxy_schema=self._use_proxy_information_schema,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         rows = _fetch_external_links_rows(response)

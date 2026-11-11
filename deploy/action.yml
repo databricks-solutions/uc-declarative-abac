@@ -14,24 +14,21 @@ inputs:
     required: true
   system-catalog:
     description: >-
-      DEPRECATED, use use-proxy-information-schema. Catalog containing the
+      DEPRECATED, use information-schema. Catalog containing the
       information_schema views used for actual-state queries. Defaults to the
       Databricks system catalog.
     required: false
     default: system
-  use-proxy-information-schema:
+  information-schema:
     description: >-
-      Fully qualified <catalog>.<schema> of an existing schema holding the
-      information_schema views to read actual state from, instead of
-      system.information_schema. Leave empty for the default.
+      Fully qualified <catalog>.<schema> containing the information_schema
+      views used for actual-state queries.
     required: false
-    default: ''
-  use-catalog-information-schema:
+    default: system.information_schema
+  per-catalog-information-schema:
     description: >-
       If "true", read actual state from each managed catalog's own
-      information_schema (a union across catalogs) instead of the
-      system-catalog input. For proxy catalogs whose information_schema only
-      describes the proxy itself.
+      information_schema as a union across catalogs.
     required: false
     default: 'false'
   timezone:
@@ -400,8 +397,8 @@ runs:
         CONFIG_DIR: ${{ inputs.config-dir }}
         WAREHOUSE_ID: ${{ inputs.warehouse-id }}
         SYSTEM_CATALOG: ${{ inputs.system-catalog }}
-        USE_PROXY_INFORMATION_SCHEMA: ${{ inputs.use-proxy-information-schema }}
-        USE_CATALOG_INFORMATION_SCHEMA: ${{ inputs.use-catalog-information-schema }}
+        INFORMATION_SCHEMA: ${{ inputs.information-schema }}
+        PER_CATALOG_INFORMATION_SCHEMA: ${{ inputs.per-catalog-information-schema }}
         TIMEZONE: ${{ inputs.timezone }}
         PROFILE: ${{ inputs.profile }}
         DRY_RUN: ${{ inputs.dry-run }}
@@ -454,11 +451,9 @@ runs:
           --warehouse-id "${WAREHOUSE_ID}"
           --system-catalog "${SYSTEM_CATALOG}"
         )
-        if [[ -n "${USE_PROXY_INFORMATION_SCHEMA}" ]]; then
-          args+=(--use-proxy-information-schema "${USE_PROXY_INFORMATION_SCHEMA}")
-        fi
-        if [[ "${USE_CATALOG_INFORMATION_SCHEMA}" == "true" ]]; then
-          args+=(--use-catalog-information-schema)
+        args+=(--information-schema "${INFORMATION_SCHEMA}")
+        if [[ "${PER_CATALOG_INFORMATION_SCHEMA}" == "true" ]]; then
+          args+=(--per-catalog-information-schema)
         fi
         if [[ "${DRY_RUN}" == "true" ]]; then
           args+=(--dry-run)

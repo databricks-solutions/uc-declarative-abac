@@ -29,12 +29,12 @@ Pin to a full commit SHA, with the release tag in a trailing comment, rather tha
 * - `system-catalog`
   - no
   - `system`
-  - Deprecated; use `use-proxy-information-schema`. Catalog containing the `information_schema` views
-* - `use-proxy-information-schema`
+  - Deprecated; use `information-schema`. Catalog containing the `information_schema` views
+* - `information-schema`
   - no
-  - empty
-  - Existing `<catalog>.<schema>` holding the views to read state from; see {ref}`system-table-proxy-catalogs`
-* - `use-catalog-information-schema`
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `per-catalog-information-schema`
   - no
   - `false`
   - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
@@ -328,12 +328,12 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` to snapshot yo
 * - `system-catalog`
   - no
   - `system`
-  - Deprecated; use `use-proxy-information-schema`. Catalog containing the `information_schema` views
-* - `use-proxy-information-schema`
+  - Deprecated; use `information-schema`. Catalog containing the `information_schema` views
+* - `information-schema`
   - no
-  - empty
-  - Existing `<catalog>.<schema>` holding the views to read state from; see {ref}`system-table-proxy-catalogs`
-* - `use-catalog-information-schema`
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `per-catalog-information-schema`
   - no
   - `false`
   - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`

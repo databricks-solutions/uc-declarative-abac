@@ -926,7 +926,7 @@ def test_uc_helper_fetch_actual_securables_treats_empty_parameter_struct_as_no_p
     helper = UnityCatalogHelper(
         _make_catalogs_client(["synthetic_catalog"]),
         WAREHOUSE_ID,
-        use_catalog_information_schema=True,
+        per_catalog_information_schema=True,
     )
 
     securables, _ = helper.fetch_actual_securables(["synthetic_catalog"])
@@ -963,7 +963,7 @@ def test_uc_helper_fetch_actual_securables_ignores_empty_parameter_struct_when_v
     helper = UnityCatalogHelper(
         _make_catalogs_client(["synthetic_catalog"]),
         WAREHOUSE_ID,
-        use_catalog_information_schema=True,
+        per_catalog_information_schema=True,
     )
 
     securables, _ = helper.fetch_actual_securables(["synthetic_catalog"])
@@ -2828,10 +2828,10 @@ def test_uc_helper_fetch_actual_policies_caches_result(mock_fetch):
 
 
 # ---------------------------------------------------------------------------
-# UnityCatalogHelper — use_catalog_information_schema
+# UnityCatalogHelper — information_schema sources
 # ---------------------------------------------------------------------------
 
-_PER_CATALOG_STATE_FETCHES = [
+_INFORMATION_SCHEMA_STATE_FETCHES = [
     "fetch_actual_tags",
     "fetch_actual_privileges",
     "fetch_actual_securables",
@@ -2857,15 +2857,78 @@ def _all_table_nodes(sql: str) -> list[sqlglot.exp.Table]:
     return list(_parse_sql(sql).find_all(sqlglot.exp.Table))
 
 
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_reads_only_use_catalog_information_schema_when_flag_enabled(
+@pytest.mark.parametrize("fetch_method", _INFORMATION_SCHEMA_STATE_FETCHES)
+def test_uc_helper_reads_system_information_schema_by_default(fetch_method):
+    """Every state read uses system.information_schema unless another source is set."""
+    client = _make_mock_workspace_client()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _call_state_fetch(helper, fetch_method, ["synthetic_catalog"])
+
+    statements = _all_executed_sql(client)
+    assert statements, f"Expected SQL to be executed by {fetch_method}"
+    for sql in statements:
+        tables = _all_table_nodes(sql)
+        assert tables, sql
+        assert {(table.catalog, table.db) for table in tables} == {
+            ("system", "information_schema")
+        }, sql
+    client.catalogs.list.assert_not_called()
+
+
+def test_uc_helper_default_information_schema_round_trips_special_catalog_names():
+    """Catalog scope literals preserve quotes and backslashes through SQL parsing."""
+    catalog_names = ["synthetic'quote", "synthetic\\backslash"]
+    client = _make_mock_workspace_client()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.fetch_actual_tags(catalog_names)
+
+    statement = _parse_sql(_get_executed_sql(client))
+    in_clauses = list(statement.find_all(sqlglot.exp.In))
+    assert in_clauses
+    for in_clause in in_clauses:
+        literals = in_clause.expressions
+        assert all(
+            isinstance(literal, sqlglot.exp.Literal) and literal.is_string
+            for literal in literals
+        )
+        assert {literal.this for literal in literals} == set(catalog_names)
+
+
+@pytest.mark.parametrize("fetch_method", _INFORMATION_SCHEMA_STATE_FETCHES)
+def test_uc_helper_reads_configured_information_schema_for_every_state_fetch(
     fetch_method,
 ):
-    """With the flag on, every state read targets <catalog>.information_schema.* for
-    the existing catalogs and never the system catalog."""
+    """Every state read uses the configured two-part information-schema source."""
+    client = _make_mock_workspace_client()
+    helper = UnityCatalogHelper(
+        client,
+        WAREHOUSE_ID,
+        information_schema="synthetic_proxy.state_views",
+    )
+
+    _call_state_fetch(helper, fetch_method, ["synthetic_catalog"])
+
+    statements = _all_executed_sql(client)
+    assert statements, f"Expected SQL to be executed by {fetch_method}"
+    for sql in statements:
+        tables = _all_table_nodes(sql)
+        assert tables, sql
+        assert {(table.catalog, table.db) for table in tables} == {
+            ("synthetic_proxy", "state_views")
+        }, sql
+    client.catalogs.list.assert_not_called()
+
+
+@pytest.mark.parametrize("fetch_method", _INFORMATION_SCHEMA_STATE_FETCHES)
+def test_uc_helper_reads_each_catalog_information_schema_when_per_catalog_mode_enabled(
+    fetch_method,
+):
+    """Per-catalog mode reads each existing catalog's information_schema views."""
     client = _make_catalogs_client(["cat_a", "cat_b"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     _call_state_fetch(helper, fetch_method, ["cat_a", "cat_b"])
@@ -2883,15 +2946,15 @@ def test_uc_helper_reads_only_use_catalog_information_schema_when_flag_enabled(
     assert queried == {"cat_a", "cat_b"}
 
 
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_unions_one_arm_per_catalog_for_each_view_when_flag_enabled(
+@pytest.mark.parametrize("fetch_method", _INFORMATION_SCHEMA_STATE_FETCHES)
+def test_uc_helper_unions_one_arm_per_catalog_for_each_view_when_per_catalog_mode_enabled(
     fetch_method,
 ):
     """Each information_schema view appears exactly once per existing catalog, so the
     FROM source is a UNION ALL with one arm per catalog."""
     client = _make_catalogs_client(["cat_a", "cat_b"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     _call_state_fetch(helper, fetch_method, ["cat_a", "cat_b"])
@@ -2912,13 +2975,15 @@ def test_uc_helper_unions_one_arm_per_catalog_for_each_view_when_flag_enabled(
         )
 
 
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_excludes_missing_catalog_from_sql_when_flag_enabled(fetch_method):
+@pytest.mark.parametrize("fetch_method", _INFORMATION_SCHEMA_STATE_FETCHES)
+def test_uc_helper_excludes_missing_catalog_from_sql_when_per_catalog_mode_enabled(
+    fetch_method,
+):
     """A requested catalog that does not exist in the metastore is dropped: no arm
     references it and its name never appears in the statement."""
     client = _make_catalogs_client(["cat_a"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     _call_state_fetch(helper, fetch_method, ["cat_a", "cat_missing"])
@@ -2944,7 +3009,7 @@ def test_uc_helper_returns_empty_state_without_sql_when_no_requested_catalog_exi
     executes no SQL at all (securables returns two empty sets)."""
     client = _make_catalogs_client(["other_cat"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     result = _call_state_fetch(helper, fetch_method, ["cat_a"])
@@ -2959,12 +3024,12 @@ def test_uc_helper_returns_empty_state_without_sql_when_no_requested_catalog_exi
     client.policies.list_policies.assert_not_called()
 
 
-def test_uc_helper_lists_catalogs_once_across_state_fetches_when_flag_enabled():
+def test_uc_helper_lists_catalogs_once_across_state_fetches_when_per_catalog_mode_enabled():
     """The existing-catalog listing is fetched at most once per helper, shared by every
     state fetch, and then served from cache."""
     client = _make_catalogs_client(["cat_a"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     helper.fetch_actual_tags(["cat_a"])
@@ -2976,54 +3041,15 @@ def test_uc_helper_lists_catalogs_once_across_state_fetches_when_flag_enabled():
     assert client.catalogs.list.call_count == 1
 
 
-def test_uc_helper_skips_catalog_listing_and_targets_system_catalog_when_flag_disabled():
-    """With the flag off, catalogs.list is never called and every information_schema
-    read still targets system.information_schema."""
-    client = _make_mock_workspace_client()
-    helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=False
-    )
-
-    for fetch_method in _PER_CATALOG_STATE_FETCHES:
-        _call_state_fetch(helper, fetch_method, ["cat_a", "cat_b"])
-
-    client.catalogs.list.assert_not_called()
-    statements = _all_executed_sql(client)
-    assert statements
-    for sql in statements:
-        info_tables = [t for t in _all_table_nodes(sql) if t.db == "information_schema"]
-        assert info_tables, sql
-        assert {t.catalog for t in info_tables} == {"system"}, sql
-
-
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_ignores_system_catalog_override_when_flag_enabled(fetch_method):
-    """The system_catalog kwarg is ignored for state queries once the flag is on: the
-    override name never appears in any executed statement."""
-    client = _make_catalogs_client(["cat_a"])
-    helper = UnityCatalogHelper(
-        client,
-        WAREHOUSE_ID,
-        system_catalog="proxy_cat",
-        use_catalog_information_schema=True,
-    )
-
-    _call_state_fetch(helper, fetch_method, ["cat_a"])
-
-    statements = _all_executed_sql(client)
-    assert statements
-    for sql in statements:
-        assert "proxy_cat" not in sql, sql
-        assert "proxy_cat" not in {t.catalog for t in _all_table_nodes(sql)}
-
-
 @pytest.mark.parametrize("catalog_name", ["my-cat", "we`ird"])
-def test_uc_helper_backtick_quotes_catalog_identifiers_when_flag_enabled(catalog_name):
+def test_uc_helper_backtick_quotes_catalog_identifiers_when_per_catalog_mode_enabled(
+    catalog_name,
+):
     """Catalog identifiers are backtick-quoted, with embedded backticks doubled, so
     names needing quoting still produce a valid per-catalog information_schema arm."""
     client = _make_catalogs_client([catalog_name])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
 
     helper.fetch_actual_tags([catalog_name])
@@ -3037,12 +3063,12 @@ def test_uc_helper_backtick_quotes_catalog_identifiers_when_flag_enabled(catalog
     assert {t.db for t in tables} == {"information_schema"}
 
 
-def test_uc_helper_drops_missing_catalog_tables_from_column_comment_query_when_flag_enabled():
+def test_uc_helper_drops_missing_catalog_tables_from_column_comment_query_when_per_catalog_mode_enabled():
     """Column-comment tables whose catalog is absent from the metastore are dropped from
     the batch; the comment query only reads the existing catalog's columns."""
     client = _make_catalogs_client(["cat_a"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
     securables_rows = [
         ["TABLE", "cat_a.sch.t1", "owner", None, None, None, '["c1"]', None, "MANAGED"],
@@ -3073,12 +3099,12 @@ def test_uc_helper_drops_missing_catalog_tables_from_column_comment_query_when_f
     assert comment_attrs[0].comment == "hello"
 
 
-def test_uc_helper_column_comment_query_unions_columns_per_existing_catalog_when_flag_enabled():
+def test_uc_helper_column_comment_query_unions_columns_per_existing_catalog_when_per_catalog_mode_enabled():
     """The column-comment query reads information_schema.columns once per existing
     catalog that still has tables in the batch."""
     client = _make_catalogs_client(["cat_a", "cat_b"])
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_catalog_information_schema=True
+        client, WAREHOUSE_ID, per_catalog_information_schema=True
     )
     securables_rows = [
         ["TABLE", "cat_a.sch.t1", "owner", None, None, None, "[]", None, "MANAGED"],
@@ -3102,51 +3128,17 @@ def test_uc_helper_column_comment_query_unions_columns_per_existing_catalog_when
 
 
 # ---------------------------------------------------------------------------
-# UnityCatalogHelper — use_proxy_information_schema
+# UnityCatalogHelper — information_schema validation and compatibility
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_reads_only_proxy_schema_when_proxy_information_schema_set(
-    fetch_method,
-):
-    """With a proxy schema configured, every state read targets only the tables in
-    <catalog>.<schema> (gov.proxy_is), never system or information_schema."""
+def test_uc_helper_reads_configured_information_schema_for_column_comments():
+    """The optional column-comment state read uses the configured source too."""
     client = _make_mock_workspace_client()
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_proxy_information_schema="gov.proxy_is"
-    )
-
-    _call_state_fetch(helper, fetch_method, ["cat_a", "cat_b"])
-
-    statements = _all_executed_sql(client)
-    assert statements, f"Expected SQL to be executed by {fetch_method}"
-    for sql in statements:
-        tables = _all_table_nodes(sql)
-        assert tables, sql
-        assert {(t.catalog, t.db) for t in tables} == {("gov", "proxy_is")}, sql
-
-
-@pytest.mark.parametrize("fetch_method", _PER_CATALOG_STATE_FETCHES)
-def test_uc_helper_never_lists_catalogs_when_proxy_information_schema_set(fetch_method):
-    """The proxy mode never consults the metastore catalog list, so catalogs.list is
-    not called for any state read."""
-    client = _make_mock_workspace_client()
-    helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_proxy_information_schema="gov.proxy_is"
-    )
-
-    _call_state_fetch(helper, fetch_method, ["cat_a"])
-
-    client.catalogs.list.assert_not_called()
-
-
-def test_uc_helper_reads_proxy_schema_for_column_comments_when_proxy_information_schema_set():
-    """The column-comment read that follows securables also targets the proxy schema,
-    so no statement in the securables fetch names system or information_schema."""
-    client = _make_mock_workspace_client()
-    helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_proxy_information_schema="gov.proxy_is"
+        client,
+        WAREHOUSE_ID,
+        information_schema="synthetic_proxy.state_views",
     )
     securables_rows = [
         ["TABLE", "cat_a.sch.t1", "owner", None, None, None, '["c1"]', None, "MANAGED"],
@@ -3165,84 +3157,109 @@ def test_uc_helper_reads_proxy_schema_for_column_comments_when_proxy_information
     assert len(statements) == 2
     for sql in statements:
         assert {(t.catalog, t.db) for t in _all_table_nodes(sql)} == {
-            ("gov", "proxy_is")
+            ("synthetic_proxy", "state_views")
         }, sql
     comment_sql = statements[1]
     assert {t.name for t in _all_table_nodes(comment_sql)} == {"columns"}
 
 
 @pytest.mark.parametrize(
-    "proxy_schema",
-    ["gov.proxy_is", "Gov_1.Proxy_IS", "_cat._sch"],
+    "information_schema",
+    [
+        "system.information_schema",
+        "synthetic_proxy.state_views",
+        "Synthetic_1.State_Views",
+        "_synthetic._views",
+    ],
 )
-def test_uc_helper_accepts_plain_two_part_proxy_information_schema_when_constructed(
-    proxy_schema,
+def test_uc_helper_accepts_exactly_two_plain_information_schema_identifiers(
+    information_schema,
 ):
     """A plain, unquoted <catalog>.<schema> pair constructs without error."""
     client = _make_mock_workspace_client()
 
     helper = UnityCatalogHelper(
-        client, WAREHOUSE_ID, use_proxy_information_schema=proxy_schema
+        client, WAREHOUSE_ID, information_schema=information_schema
     )
 
     assert helper is not None
 
 
 @pytest.mark.parametrize(
-    "proxy_schema",
-    ["gov", "a.b.c", "gov.", ".proxy_is", "", "gov.x; DROP", "`gov`.proxy_is"],
+    "information_schema",
+    [
+        "synthetic_proxy",
+        "one.two.three",
+        "synthetic_proxy.",
+        ".state_views",
+        "",
+        "synthetic-proxy.state_views",
+        "synthetic_proxy.state views",
+        "synthetic_proxy.state_views;DROP",
+        "`synthetic_proxy`.state_views",
+        "synthetic_proxy.`state_views`",
+    ],
 )
-def test_uc_helper_rejects_malformed_proxy_information_schema_when_constructed(
-    proxy_schema,
+def test_uc_helper_rejects_malformed_information_schema_when_constructed(
+    information_schema,
 ):
     """Anything other than exactly two plain unquoted identifiers is rejected before it
     can reach SQL interpolation."""
     client = _make_mock_workspace_client()
 
     with pytest.raises(ValueError):
-        UnityCatalogHelper(
-            client, WAREHOUSE_ID, use_proxy_information_schema=proxy_schema
-        )
+        UnityCatalogHelper(client, WAREHOUSE_ID, information_schema=information_schema)
 
 
-@pytest.mark.parametrize(
-    "proxy_schema",
-    ["gov.information_schema", "gov.INFORMATION_SCHEMA", "gov.Information_Schema"],
-)
-def test_uc_helper_rejects_information_schema_as_proxy_schema_when_constructed(
-    proxy_schema,
-):
-    """The reserved information_schema name cannot be the proxy schema, in any casing."""
-    client = _make_mock_workspace_client()
-
-    with pytest.raises(ValueError):
-        UnityCatalogHelper(
-            client, WAREHOUSE_ID, use_proxy_information_schema=proxy_schema
-        )
-
-
-def test_uc_helper_rejects_proxy_information_schema_with_catalog_information_schema_when_constructed():
-    """The proxy mode and the per-catalog mode are mutually exclusive."""
+def test_uc_helper_rejects_custom_information_schema_with_per_catalog_mode():
+    """A custom source and per-catalog mode cannot be enabled together."""
     client = _make_mock_workspace_client()
 
     with pytest.raises(ValueError):
         UnityCatalogHelper(
             client,
             WAREHOUSE_ID,
-            use_proxy_information_schema="gov.proxy_is",
-            use_catalog_information_schema=True,
+            information_schema="synthetic_proxy.state_views",
+            per_catalog_information_schema=True,
         )
 
 
-def test_uc_helper_reads_system_information_schema_when_proxy_information_schema_is_none():
-    """Passing None for the proxy schema keeps the default behaviour: system tables are
-    read and the metastore catalog list is never consulted."""
-    client = _make_mock_workspace_client()
-    helper = UnityCatalogHelper(client, WAREHOUSE_ID, use_proxy_information_schema=None)
+def test_uc_helper_accepts_default_information_schema_with_per_catalog_mode():
+    """The default source value remains valid when per-catalog mode is enabled."""
+    client = _make_catalogs_client(["synthetic_catalog"])
+    helper = UnityCatalogHelper(
+        client,
+        WAREHOUSE_ID,
+        information_schema="system.information_schema",
+        per_catalog_information_schema=True,
+    )
 
-    helper.fetch_actual_tags(["cat_a"])
+    helper.fetch_actual_tags(["synthetic_catalog"])
 
-    client.catalogs.list.assert_not_called()
     tables = _all_table_nodes(_get_executed_sql(client))
     assert tables
-    assert {(t.catalog, t.db) for t in tables} == {("system", "information_schema")}
+    assert {(table.catalog, table.db) for table in tables} == {
+        ("synthetic_catalog", "information_schema")
+    }
+
+
+@pytest.mark.parametrize(
+    "conflicting_options",
+    [
+        {"information_schema": "synthetic_proxy.state_views"},
+        {"per_catalog_information_schema": True},
+    ],
+)
+def test_uc_helper_rejects_custom_legacy_system_catalog_with_new_source_options(
+    conflicting_options,
+):
+    """A custom legacy catalog cannot be combined with either new source option."""
+    client = _make_mock_workspace_client()
+
+    with pytest.raises(ValueError):
+        UnityCatalogHelper(
+            client,
+            WAREHOUSE_ID,
+            system_catalog="synthetic_legacy",
+            **conflicting_options,
+        )
