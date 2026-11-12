@@ -208,6 +208,9 @@ _DEPLOY_AND_DUMP_ACTIONS = {
     "deploy": _REPO_ROOT / "deploy" / "action.yml",
     "dump": _REPO_ROOT / "dump" / "action.yml",
 }
+_WARN_NONEXISTENT_INPUT = "warn-on-nonexistent-securables"
+_WARN_NONEXISTENT_ENV = "WARN_ON_NONEXISTENT_SECURABLES"
+_WARN_NONEXISTENT_ARG = "--warn-on-nonexistent-securables"
 
 
 def _action_run_step(action_path: Path) -> dict[str, Any]:
@@ -270,6 +273,32 @@ def test_github_actions_action_appends_per_catalog_information_schema_flag_when_
         script,
     )
     assert guarded_append, f"{action} action does not append {_PER_CATALOG_ARG}"
+
+
+def test_github_actions_deploy_declares_warn_on_nonexistent_securables_boolean_input():
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["inputs"]
+
+    assert inputs[_WARN_NONEXISTENT_INPUT]["required"] == "false"
+    assert inputs[_WARN_NONEXISTENT_INPUT]["default"] == "false"
+
+
+def test_github_actions_deploy_passes_warn_on_nonexistent_securables_through_env():
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["env"]
+
+    assert env[_WARN_NONEXISTENT_ENV] == (
+        f"${{{{ inputs.{_WARN_NONEXISTENT_INPUT} }}}}"
+    )
+
+
+def test_github_actions_deploy_appends_warn_on_nonexistent_securables_when_true():
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["run"]
+
+    guarded_append = re.search(
+        rf'if \[\[ "\${{{_WARN_NONEXISTENT_ENV}}}" == "true" \]\]; then\s*'
+        rf"args\+=\({re.escape(_WARN_NONEXISTENT_ARG)}\)\s*fi",
+        script,
+    )
+    assert guarded_append
 
 
 @pytest.mark.parametrize("action", ["deploy", "dump"])

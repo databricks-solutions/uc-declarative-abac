@@ -43,6 +43,8 @@ Not all object types are managed the same way:
 
 By default, the engine assumes that securables (catalogs, schemas, tables, volumes) already exist in Unity Catalog and will only manage tags, grants, and policies on them. If you want the engine to create securables that do not yet exist, add their namespaces to `--securable-creation-scopes`.
 
+A configured securable that does not exist and is outside `--securable-creation-scopes` fails the run by default. Set `--warn-on-nonexistent-securables` when one configuration intentionally spans environments where some objects might not exist. The engine then reports each missing object as a non-fatal warning and skips securable, tag, policy, and privilege changes targeting it or its descendants. Existing objects in the same run are still reconciled. A creation request inside `--securable-creation-scopes` still fails if required configuration, such as table columns and their types, is incomplete.
+
 ### Mask and filter policy deletion
 
 Mask and filter policies are additive by default (create and update, never delete). With `--policy-deletion-scopes`, config becomes authoritative over mask and filter policies on in-scope securables: any actual mask or filter policy discovered on an in-scope securable but not declared in config is deleted, regardless of whether that securable declares a `policies` list. Like governed-tag deletion, it requires an interactive `yes` confirmation at the terminal unless `--force` is set. Grant policies are unaffected; their privileges are granted and revoked under `--privilege-management-scopes`.

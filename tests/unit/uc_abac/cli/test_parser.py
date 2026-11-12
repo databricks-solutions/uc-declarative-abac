@@ -664,6 +664,60 @@ def test_parser_accepts_securable_creation_scopes():
     assert namespace.securable_creation_scopes == "main.*"
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "deploy",
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--warn-on-nonexistent-securables",
+        ],
+        [
+            "--config-dir",
+            "cfg",
+            "--warehouse-id",
+            "wh",
+            "--warn-on-nonexistent-securables",
+        ],
+    ],
+    ids=["deploy", "legacy-deploy"],
+)
+def test_parser_accepts_warn_on_nonexistent_securables_for_deploy(args):
+    namespace = parse_cli_args(args)
+
+    assert namespace.warn_on_nonexistent_securables is True
+
+
+def test_parser_deploy_help_includes_warn_on_nonexistent_securables(capsys):
+    output = _help_output(["deploy", "--help"], capsys)
+
+    assert "--warn-on-nonexistent-securables" in output
+
+
+def test_parser_dump_excludes_warn_on_nonexistent_securables(capsys):
+    output = _help_output(["dump", "--help"], capsys)
+    assert "--warn-on-nonexistent-securables" not in output
+
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(
+            [
+                "dump",
+                "--config-dir",
+                "cfg",
+                "--warehouse-id",
+                "wh",
+                "--target-schema",
+                "cat.sch",
+                "--warn-on-nonexistent-securables",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+
+
 def test_parser_help_documents_securable_scopes_do_not_gate_functions(capsys):
     output = _help_output(["deploy", "--help"], capsys)
     # Normalize whitespace for easier substring checking

@@ -364,6 +364,12 @@ inputs:
       system service principals). Empty by default.
     required: false
     default: ''
+  warn-on-nonexistent-securables:
+    description: >-
+      If "true", report missing configured securables outside creation scope as
+      warnings and skip changes targeting them or their descendants. Off by default.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -444,6 +450,7 @@ runs:
         ENABLE_GROUP_MANAGEMENT: ${{ inputs.enable-group-management }}
         ENABLE_GROUP_DELETION: ${{ inputs.enable-group-deletion }}
         IGNORE_UNRESOLVABLE_PRINCIPALS: ${{ inputs.ignore-unresolvable-principals }}
+        WARN_ON_NONEXISTENT_SECURABLES: ${{ inputs.warn-on-nonexistent-securables }}
       run: |
         args=(
           "deploy"
@@ -581,6 +588,9 @@ runs:
         fi
         if [[ -n "${IGNORE_UNRESOLVABLE_PRINCIPALS}" ]]; then
           args+=(--ignore-unresolvable-principals "${IGNORE_UNRESOLVABLE_PRINCIPALS}")
+        fi
+        if [[ "${WARN_ON_NONEXISTENT_SECURABLES}" == "true" ]]; then
+          args+=(--warn-on-nonexistent-securables)
         fi
         if [[ "${FORCE}" == "true" ]]; then
           args+=(--force)

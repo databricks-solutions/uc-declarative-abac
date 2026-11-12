@@ -64,10 +64,12 @@ from uc_abac.securables import (
     Securable,
     SecurableAttributes,
     SecurableDiff,
+    SecurableKey,
     compile_desired_attributes,
     compile_desired_securables,
     compute_securable_diff,
     execute_securable_diff,
+    targets_nonexistent_securable,
 )
 from uc_abac.tags import (
     SecurableTag,
@@ -381,6 +383,7 @@ def _build_run_context(
     domain_modification_scopes: str | None,
     domain_deletion_scopes: str | None,
     retain_tag_prefixes: str,
+    warn_on_nonexistent_securables: bool,
     ref_override_strategy: str,
     force: bool,
     max_parallel_changes: int,
@@ -584,6 +587,7 @@ def _build_run_context(
         force=force,
         max_parallel_changes=max_parallel_changes,
         manage_domain_owners=manage_domain_owners,
+        warn_on_nonexistent_securables=warn_on_nonexistent_securables,
     )
 
 
@@ -621,6 +625,7 @@ def _full_fetch_context() -> RunContext:
         force=False,
         max_parallel_changes=8,
         manage_domain_owners=True,
+        warn_on_nonexistent_securables=False,
     )
 
 
@@ -895,6 +900,144 @@ def _compute_tag_workflow(
     return tag_diff, project_tag_state(actual_tags, tag_diff)
 
 
+def _filter_nonexistent_securable_diff(diff: SecurableDiff) -> SecurableDiff:
+    """Remove securable operations whose target is known not to exist.
+
+    A missing parent suppresses operations for its descendants too. Functions are
+    normally engine-created, but a function below a missing catalog or schema cannot
+    be created and must therefore be removed with the other dependent operations.
+    """
+    nonexistent = diff.nonexistent_securables
+    return SecurableDiff(
+        attributes_to_update=[
+            update
+            for update in diff.attributes_to_update
+            if not targets_nonexistent_securable(
+                update.securable_type, update.full_name, nonexistent
+            )
+        ],
+        securables_to_create=[
+            securable
+            for securable in diff.securables_to_create
+            if not targets_nonexistent_securable(
+                securable.securable_type, securable.full_name, nonexistent
+            )
+        ],
+        securables_to_replace=[
+            securable
+            for securable in diff.securables_to_replace
+            if not targets_nonexistent_securable(
+                securable.securable_type, securable.full_name, nonexistent
+            )
+        ],
+        old_securables={
+            full_name: securable
+            for full_name, securable in diff.old_securables.items()
+            if not targets_nonexistent_securable(
+                securable.securable_type, securable.full_name, nonexistent
+            )
+        },
+        nonexistent_securables=nonexistent,
+    )
+
+
+def _filter_nonexistent_tags(
+    tags: set[SecurableTag],
+    nonexistent: frozenset[SecurableKey],
+) -> set[SecurableTag]:
+    """Exclude tag state whose target is missing or below a missing parent."""
+    return {
+        tag
+        for tag in tags
+        if not targets_nonexistent_securable(
+            tag.securable_type,
+            tag.securable_full_name,
+            nonexistent,
+        )
+    }
+
+
+def _filter_nonexistent_tag_diff(
+    diff: TagDiff,
+    nonexistent: frozenset[SecurableKey],
+) -> TagDiff:
+    """Remove tag operations and prior values for missing targets."""
+
+    return TagDiff(
+        to_add=_filter_nonexistent_tags(diff.to_add, nonexistent),
+        to_update=_filter_nonexistent_tags(diff.to_update, nonexistent),
+        to_remove=_filter_nonexistent_tags(diff.to_remove, nonexistent),
+        old_values={
+            key: value
+            for key, value in diff.old_values.items()
+            if not targets_nonexistent_securable(key[0], key[1], nonexistent)
+        },
+    )
+
+
+def _filter_nonexistent_policy_diff(
+    diff: PolicyDiff,
+    nonexistent: frozenset[SecurableKey],
+) -> PolicyDiff:
+    """Remove policy operations and prior policies for missing targets."""
+
+    def keep_policy(policy: Policy) -> bool:
+        return not targets_nonexistent_securable(
+            policy.securable_type, policy.securable_full_name, nonexistent
+        )
+
+    return PolicyDiff(
+        to_create={policy for policy in diff.to_create if keep_policy(policy)},
+        to_replace={policy for policy in diff.to_replace if keep_policy(policy)},
+        to_delete={policy for policy in diff.to_delete if keep_policy(policy)},
+        old_policies={
+            key: policy
+            for key, policy in diff.old_policies.items()
+            if not targets_nonexistent_securable(key[0], key[1], nonexistent)
+        },
+    )
+
+
+def _filter_nonexistent_privilege_diff(
+    diff: PrivilegeDiff,
+    nonexistent: frozenset[SecurableKey],
+) -> PrivilegeDiff:
+    """Remove privilege grants and revocations for missing targets."""
+
+    def keep_privilege(privilege: SecurablePrivilege) -> bool:
+        return not targets_nonexistent_securable(
+            privilege.securable_type,
+            privilege.securable_full_name,
+            nonexistent,
+        )
+
+    return PrivilegeDiff(
+        to_grant={item for item in diff.to_grant if keep_privilege(item)},
+        to_revoke={item for item in diff.to_revoke if keep_privilege(item)},
+    )
+
+
+def _filter_nonexistent_securable_changes(
+    securable_diff: SecurableDiff,
+    tag_diff: TagDiff,
+    policy_diff: PolicyDiff,
+    privilege_diff: PrivilegeDiff,
+) -> tuple[SecurableDiff, TagDiff, PolicyDiff, PrivilegeDiff]:
+    """Prune every domain's operations after all diffs have been computed.
+
+    Keeping this as a post-diff step ensures all downstream domains use the same
+    missing-object decision, including when an individual differ is replaced by an
+    integration or test double.
+    """
+    nonexistent = securable_diff.nonexistent_securables
+    return (
+        _filter_nonexistent_securable_diff(securable_diff),
+        _filter_nonexistent_tag_diff(tag_diff, nonexistent),
+        _filter_nonexistent_policy_diff(policy_diff, nonexistent),
+        _filter_nonexistent_privilege_diff(privilege_diff, nonexistent),
+    )
+
+
 def _execute_changes(
     config: ResourcesConfig,
     actual_state: ActualState,
@@ -1042,6 +1185,7 @@ def _execute_changes(
         change_logger,
         creation_in_scope_namespaces=settings.securable_creation_scope,
         ignore_unresolvable=ignore_unresolvable,
+        warn_on_nonexistent_securables=settings.warn_on_nonexistent_securables,
     )
 
     # Tags workflow (see _compute_tag_workflow).
@@ -1066,6 +1210,11 @@ def _execute_changes(
 
     # Privileges workflow.
     if settings.enable_privilege_management:
+        if settings.warn_on_nonexistent_securables:
+            tags_for_privilege_matching = _filter_nonexistent_tags(
+                tags_for_privilege_matching,
+                securable_diff.nonexistent_securables,
+            )
         compiled_privileges = compile_desired_privileges(
             config,
             tags_for_privilege_matching,
@@ -1092,6 +1241,16 @@ def _execute_changes(
         )
     else:
         privilege_diff = PrivilegeDiff()
+
+    if settings.warn_on_nonexistent_securables:
+        securable_diff, tag_diff, policy_diff, privilege_diff = (
+            _filter_nonexistent_securable_changes(
+                securable_diff,
+                tag_diff,
+                policy_diff,
+                privilege_diff,
+            )
+        )
 
     # Log and execute (or dry-run) — the groups domain runs first.
     if (
@@ -1236,6 +1395,7 @@ def run(
     domain_modification_scopes: str | None = None,
     domain_deletion_scopes: str | None = None,
     retain_tag_prefixes: str = "class.",
+    warn_on_nonexistent_securables: bool = False,
     force: bool = False,
     ref_override_strategy: Literal["merge", "replace"] = "merge",
     max_parallel_changes: int = 8,
@@ -1314,6 +1474,12 @@ def run(
     (assigners), and domains (business/technical owners) domains. Primarily for
     Databricks-managed system service principals that appear in system tables but
     aren't resolvable via SCIM. Empty by default.
+
+    ``warn_on_nonexistent_securables`` changes missing non-function securables
+    outside ``securable_creation_scopes`` from fatal errors to non-fatal warnings.
+    Every operation targeting the missing object or a descendant is removed from
+    the plan. In-scope creation requests that lack required configuration remain
+    fatal validation errors.
     """
     config = load_config(config_dir, ref_override_strategy)
     settings = _build_run_context(
@@ -1354,6 +1520,7 @@ def run(
         domain_modification_scopes=domain_modification_scopes,
         domain_deletion_scopes=domain_deletion_scopes,
         retain_tag_prefixes=retain_tag_prefixes,
+        warn_on_nonexistent_securables=warn_on_nonexistent_securables,
         ref_override_strategy=ref_override_strategy,
         force=force,
         max_parallel_changes=max_parallel_changes,
