@@ -153,6 +153,69 @@ def test_consolidator_moves_standalone_volume_into_schema():
     assert schema["volumes"][0]["name"] == "files"
 
 
+# --- consolidate_resources: standalone volume policies ---
+
+
+def test_consolidator_moves_standalone_volume_policy_into_matching_volume():
+    """A standalone policy targeting a volume is attached to that volume."""
+    data = {
+        "catalogs": {
+            "my_cat": {
+                "schemas": [
+                    {
+                        "name": "landing",
+                        "volumes": [{"name": "files"}],
+                    }
+                ]
+            }
+        },
+        "policies": {
+            "volume_read": {
+                "catalog_name": "my_cat",
+                "schema_name": "landing",
+                "volume_name": "files",
+                "name": "volume_read",
+                "type": "grant",
+                "privileges": ["read_volume"],
+                "to": ["readers"],
+            }
+        },
+    }
+
+    result = consolidate_resources(data)
+
+    assert "policies" not in result
+    volume = result["catalogs"]["my_cat"]["schemas"][0]["volumes"][0]
+    assert [policy["name"] for policy in volume["policies"]] == ["volume_read"]
+
+
+def test_consolidator_auto_creates_parents_for_standalone_volume_policy():
+    """A standalone volume policy creates its missing catalog, schema, and volume."""
+    data = {
+        "catalogs": {},
+        "policies": {
+            "volume_write": {
+                "catalog_name": "new_cat",
+                "schema_name": "landing",
+                "volume_name": "files",
+                "name": "volume_write",
+                "type": "grant",
+                "privileges": ["write_volume"],
+                "to": ["writers"],
+            }
+        },
+    }
+
+    config = ResourcesConfig.model_validate(consolidate_resources(data))
+
+    catalog = config.catalogs["new_cat"]
+    assert [schema.name for schema in catalog.schemas] == ["landing"]
+    assert [volume.name for volume in catalog.schemas[0].volumes] == ["files"]
+    assert [policy.name for policy in catalog.schemas[0].volumes[0].policies] == [
+        "volume_write"
+    ]
+
+
 # --- consolidate_resources: no-op passthrough ---
 
 
@@ -236,6 +299,54 @@ def test_consolidator_rejects_volume_without_schema_name():
         },
     }
     with pytest.raises(OrchestratorError):
+        consolidate_resources(data)
+
+
+def test_consolidator_rejects_policy_with_table_and_volume_targets():
+    """A standalone policy cannot target both a table and a volume."""
+    data = {
+        "catalogs": {},
+        "policies": {
+            "ambiguous": {
+                "catalog_name": "cat",
+                "schema_name": "schema",
+                "table_name": "table",
+                "volume_name": "volume",
+                "name": "ambiguous",
+                "type": "grant",
+                "privileges": ["read_metadata"],
+                "to": ["readers"],
+            }
+        },
+    }
+
+    with pytest.raises(
+        OrchestratorError,
+        match=r"(?i)(table_name.*volume_name|volume_name.*table_name)",
+    ):
+        consolidate_resources(data)
+
+
+def test_consolidator_rejects_volume_policy_without_schema_name():
+    """A standalone volume policy clearly requires a schema_name."""
+    data = {
+        "catalogs": {},
+        "policies": {
+            "volume_read": {
+                "catalog_name": "cat",
+                "volume_name": "volume",
+                "name": "volume_read",
+                "type": "grant",
+                "privileges": ["read_volume"],
+                "to": ["readers"],
+            }
+        },
+    }
+
+    with pytest.raises(
+        OrchestratorError,
+        match=r"(?i)(volume.*schema_name|schema_name.*volume)",
+    ):
         consolidate_resources(data)
 
 

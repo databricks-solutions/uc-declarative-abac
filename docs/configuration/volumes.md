@@ -46,4 +46,27 @@ resources:
       schema_name: landing
 ```
 
+## Direct volume grants
+
+Volumes accept grant policies through their `policies` list. Omit tag predicates to grant directly on the volume without requiring a tag assignment or matching other volumes in the schema:
+
+```{code-block} yaml
+:caption: definitions/platform/schemas/landing/volumes/raw_events.yaml
+
+definitions:
+  volumes:
+    platform|landing|raw_events:
+      name: raw_events
+      policies:
+        - name: read_raw_events
+          type: grant
+          for: volume
+          privileges:
+            - read_volume
+          to:
+            - event_readers
+```
+
+This produces a `GRANT READ_VOLUME ON VOLUME` for the fully qualified volume. It does not grant `READ_VOLUME` across the containing schema. Mask and filter policies cannot be attached to volumes.
+
 Volume creation is gated by `--securable-creation-scopes`; see {ref}`feature-scopes`.

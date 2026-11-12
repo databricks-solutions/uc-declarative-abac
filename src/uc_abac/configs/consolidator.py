@@ -13,6 +13,57 @@ _DEFAULT_SCHEMA_NAME = "default"
 _DERIVED_FUNCTION_NAME_PREFIX = "abac_"
 
 
+def _new_entry(name: str, file_path: Path | None) -> dict:
+    """Return a minimal auto-created catalog/schema/securable dict attributed to
+    the file of the standalone child that caused its creation, when known."""
+    return with_file_path({"name": name}, file_path)
+
+
+def _ensure_catalog(catalogs: dict, cat_name: str, file_path: Path | None) -> None:
+    """Ensure a catalog entry exists, creating a minimal one if needed."""
+    if cat_name not in catalogs:
+        catalogs[cat_name] = _new_entry(cat_name, file_path)
+
+
+def _find_or_create_schema(
+    catalog: dict, schema_name: str, file_path: Path | None
+) -> dict:
+    """Find a schema by name within a catalog, or create and append one."""
+    schemas = catalog.setdefault("schemas", [])
+    for schema in schemas:
+        if isinstance(schema, dict) and schema.get("name") == schema_name:
+            return schema
+    new_schema = _new_entry(schema_name, file_path)
+    schemas.append(new_schema)
+    return new_schema
+
+
+def _find_or_create_table(
+    schema: dict, table_name: str, file_path: Path | None
+) -> dict:
+    """Find a table by name within a schema, or create and append one."""
+    tables = schema.setdefault("tables", [])
+    for table in tables:
+        if isinstance(table, dict) and table.get("name") == table_name:
+            return table
+    new_table = _new_entry(table_name, file_path)
+    tables.append(new_table)
+    return new_table
+
+
+def _find_or_create_volume(
+    schema: dict, volume_name: str, file_path: Path | None
+) -> dict:
+    """Find a volume by name within a schema, or create and append one."""
+    volumes = schema.setdefault("volumes", [])
+    for volume in volumes:
+        if isinstance(volume, dict) and volume.get("name") == volume_name:
+            return volume
+    new_volume = _new_entry(volume_name, file_path)
+    volumes.append(new_volume)
+    return new_volume
+
+
 def _inline_function_name(policy: dict, function: dict) -> str:
     """Return the name for an inline function, deriving it from the policy when
     the function omits its own ``name``.
@@ -153,8 +204,8 @@ def consolidate_resources(resolved: dict) -> dict:
     """Restructure standalone resource declarations into the nested catalog hierarchy.
 
     Moves top-level schemas, tables, volumes, and policies into their parent
-    catalog/schema/table based on catalog_name, schema_name, and table_name
-    properties. Auto-creates parent catalogs and schemas if they don't exist.
+    catalog/schema/table/volume based on catalog_name, schema_name, table_name,
+    and volume_name properties. Auto-creates missing parents.
 
     Returns the consolidated dict with only the 'catalogs' key remaining.
     """
@@ -209,10 +260,24 @@ def consolidate_resources(resolved: dict) -> dict:
             )
         schema_name = policy.get("schema_name")
         table_name = policy.get("table_name")
+        volume_name = policy.get("volume_name")
+        if table_name and volume_name:
+            raise OrchestratorError(
+                f"Standalone policy '{key}' cannot set both 'table_name' and "
+                "'volume_name'"
+            )
+        if volume_name and not schema_name:
+            raise OrchestratorError(
+                f"Standalone volume policy '{key}' is missing required 'schema_name'"
+            )
         file_path = stamped_file_path(policy)
         _ensure_catalog(catalogs, cat_name, file_path)
 
-        if table_name and schema_name:
+        if volume_name:
+            schema = _find_or_create_schema(catalogs[cat_name], schema_name, file_path)
+            volume = _find_or_create_volume(schema, volume_name, file_path)
+            volume.setdefault("policies", []).append(policy)
+        elif table_name and schema_name:
             schema = _find_or_create_schema(catalogs[cat_name], schema_name, file_path)
             table = _find_or_create_table(schema, table_name, file_path)
             table.setdefault("policies", []).append(policy)
@@ -225,41 +290,3 @@ def consolidate_resources(resolved: dict) -> dict:
     _extract_inline_policy_functions(catalogs)
 
     return resolved
-
-
-def _new_entry(name: str, file_path: Path | None) -> dict:
-    """Return a minimal auto-created catalog/schema/table dict, attributed to the file of
-    the standalone child that caused its creation (when known)."""
-    return with_file_path({"name": name}, file_path)
-
-
-def _ensure_catalog(catalogs: dict, cat_name: str, file_path: Path | None) -> None:
-    """Ensure a catalog entry exists, creating a minimal one if needed."""
-    if cat_name not in catalogs:
-        catalogs[cat_name] = _new_entry(cat_name, file_path)
-
-
-def _find_or_create_schema(
-    catalog: dict, schema_name: str, file_path: Path | None
-) -> dict:
-    """Find a schema by name within a catalog, or create and append one."""
-    schemas = catalog.setdefault("schemas", [])
-    for schema in schemas:
-        if isinstance(schema, dict) and schema.get("name") == schema_name:
-            return schema
-    new_schema = _new_entry(schema_name, file_path)
-    schemas.append(new_schema)
-    return new_schema
-
-
-def _find_or_create_table(
-    schema: dict, table_name: str, file_path: Path | None
-) -> dict:
-    """Find a table by name within a schema, or create and append one."""
-    tables = schema.setdefault("tables", [])
-    for table in tables:
-        if isinstance(table, dict) and table.get("name") == table_name:
-            return table
-    new_table = _new_entry(table_name, file_path)
-    tables.append(new_table)
-    return new_table

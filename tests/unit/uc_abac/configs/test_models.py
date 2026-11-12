@@ -1048,6 +1048,80 @@ def test_volume_config_has_full_name():
     )
 
 
+def test_volume_config_accepts_nested_grant_policy_and_attributes_parent():
+    """A volume grant policy receives its complete parent identity from the volume."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "schemas": [
+                        {
+                            "name": "schema",
+                            "volumes": [
+                                {
+                                    "name": "volume",
+                                    "policies": [
+                                        {
+                                            "name": "volume_read",
+                                            "type": "grant",
+                                            "privileges": ["read_volume"],
+                                            "to": ["data_readers"],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    policy = config.catalogs["cat"].schemas[0].volumes[0].policies[0]
+    assert policy.catalog_name == "cat"
+    assert policy.schema_name == "schema"
+    assert policy.volume_name == "volume"
+    assert policy.parent_full_name == "cat.schema.volume"
+    assert policy.parent_securable_type == SecurableType.VOLUME
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {
+            "name": "volume_mask",
+            "type": "mask",
+            "function": "cat.schema.mask_value",
+            "columns": [{"alias": "value", "has_tags": {"pii": "true"}}],
+        },
+        {
+            "name": "volume_filter",
+            "type": "filter",
+            "function": "cat.schema.filter_rows",
+            "columns": [{"alias": "value", "has_tags": {"pii": "true"}}],
+        },
+    ],
+    ids=["mask", "filter"],
+)
+def test_volume_config_rejects_non_grant_policy(policy):
+    """Volume policy attachments reject mask and filter policies."""
+    with pytest.raises(ValidationError):
+        ResourcesConfig.model_validate(
+            {
+                "catalogs": {
+                    "cat": {
+                        "schemas": [
+                            {
+                                "name": "schema",
+                                "volumes": [{"name": "volume", "policies": [policy]}],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+
+
 def test_column_config_has_full_name():
     """ColumnConfig.full_name returns catalog.schema.table.column."""
     config = ResourcesConfig.model_validate(
@@ -1425,6 +1499,43 @@ def test_schema_config_rejects_duplicate_volume_names():
                                 "volumes": [
                                     {"name": "files"},
                                     {"name": "files"},
+                                ],
+                            }
+                        ],
+                    }
+                }
+            }
+        )
+
+
+def test_volume_config_rejects_duplicate_policy_names():
+    """Two grant policies sharing a name on one volume are rejected."""
+    with pytest.raises(DuplicateResourceError):
+        ResourcesConfig.model_validate(
+            {
+                "catalogs": {
+                    "my_cat": {
+                        "schemas": [
+                            {
+                                "name": "landing",
+                                "volumes": [
+                                    {
+                                        "name": "files",
+                                        "policies": [
+                                            {
+                                                "name": "dup",
+                                                "type": "grant",
+                                                "privileges": ["read_volume"],
+                                                "to": ["readers"],
+                                            },
+                                            {
+                                                "name": "dup",
+                                                "type": "grant",
+                                                "privileges": ["write_volume"],
+                                                "to": ["writers"],
+                                            },
+                                        ],
+                                    }
                                 ],
                             }
                         ],

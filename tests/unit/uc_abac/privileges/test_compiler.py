@@ -62,6 +62,41 @@ def _compile(
     )
 
 
+def _direct_volume_policy_config(
+    privileges: list[str], policy_overrides: dict | None = None
+) -> ResourcesConfig:
+    policy = {
+        "name": "read_volume",
+        "type": "grant",
+        "privileges": privileges,
+        "to": ["team"],
+        **(policy_overrides or {}),
+    }
+    return ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "cat": {
+                    "schemas": [
+                        {
+                            "name": "schema",
+                            "volumes": [{"name": "volume", "policies": [policy]}],
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+
+def _direct_volume_read_privilege() -> SecurablePrivilege:
+    return SecurablePrivilege(
+        securable_type=SecurableType.VOLUME,
+        securable_full_name="cat.schema.volume",
+        principal=Principal(principal_type=PrincipalType.UNKNOWN, name="team"),
+        privilege_type=PrivilegeType.READ_VOLUME,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Resolution of policies into privileges
 # ---------------------------------------------------------------------------
@@ -1098,6 +1133,35 @@ def test_privilege_compiler_grants_directly_to_schema_when_policy_has_no_tags():
         )
         in result
     )
+
+
+def test_privilege_compiler_emits_only_volume_privilege_for_direct_tagless_volume_policy():
+    """A tagless policy attached to a volume grants only on that volume."""
+    config = _direct_volume_policy_config(
+        ["read_volume"], policy_overrides={"has_tags": {}}
+    )
+
+    result = _compile(config, desired_tags=set())
+
+    assert result == {_direct_volume_read_privilege()}
+
+
+def test_privilege_compiler_grants_directly_to_volume_when_has_tags_omitted():
+    """A volume-attached policy does not require a tag match condition."""
+    config = _direct_volume_policy_config(["read_volume"])
+
+    result = _compile(config, desired_tags=set())
+
+    assert result == {_direct_volume_read_privilege()}
+
+
+def test_privilege_compiler_expands_read_abstraction_on_direct_volume_policy():
+    """The read abstraction on a volume expands only to READ_VOLUME."""
+    config = _direct_volume_policy_config(["read"], policy_overrides={"for": "volume"})
+
+    result = _compile(config, desired_tags=set())
+
+    assert result == {_direct_volume_read_privilege()}
 
 
 # ---------------------------------------------------------------------------
@@ -3260,6 +3324,18 @@ def test_privilege_compiler_match_grant_policy_privileges_tagless_policy_grants_
     policy, privileges = result[0]
     assert policy.name == "g"
     assert len(privileges) > 0
+
+
+def test_privilege_compiler_match_grant_policy_privileges_includes_volume_attached_policy():
+    """A direct volume policy is paired with its exact privilege for attribution."""
+    config = _direct_volume_policy_config(["read_volume"])
+
+    result = match_grant_policy_privileges(config, set(), date(2025, 1, 1))
+
+    assert len(result) == 1
+    policy, privileges = result[0]
+    assert policy.name == "read_volume"
+    assert privileges == frozenset({_direct_volume_read_privilege()})
 
 
 def test_privilege_compiler_match_grant_policy_privileges_ignores_ungoverned_tag_check():

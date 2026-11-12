@@ -200,6 +200,30 @@ def test_traversal_yields_policies_in_hierarchy_order():
     assert table_idx > schema_idx
 
 
+def test_traversal_yields_volume_policy_once_in_hierarchy_order():
+    """Volume policies follow catalog, schema, and table policies in the shared walk."""
+    data = _full_config_with_all_types()
+    volume = data["catalogs"]["analytics"]["schemas"][0]["volumes"][0]
+    volume["policies"] = [
+        {
+            "name": "volume_grant",
+            "type": "grant",
+            "privileges": ["read_volume"],
+            "to": ["event_readers"],
+        }
+    ]
+    config = ResourcesConfig.model_validate(data)
+
+    policy_names = [policy.name for policy in iter_policy_configs(config)]
+
+    assert policy_names == [
+        "catalog_grant",
+        "schema_grant",
+        "table_grant",
+        "volume_grant",
+    ]
+
+
 def test_traversal_yields_securables_from_every_catalog():
     """iter_securable_configs handles multiple catalogs correctly."""
     config_dict = {
