@@ -48,15 +48,16 @@ For grant policies, `for` restricts the policy to a securable type. It may be `c
 
 ## Tag scoping by attachment level
 
-When a grant policy is attached at a given level (catalog, schema, or table), the optional `has_tags` property scopes the grant to match only objects at that level or within it:
+When a grant policy is attached at a given level (catalog, schema, table, or volume), the optional `has_tags` property scopes the grant to match only objects at that level or within it:
 
 - A policy on a **catalog** matches the catalog and objects within it (schemas, tables, volumes)
 - A policy on a **schema** matches the schema and its children (tables, volumes)
 - A policy on a **table** matches the table only
+- A policy on a **volume** matches the volume only
 
 If multiple tags are specified, the policy applies only to objects carrying **all** of them (AND semantics). Use `has_any_of_tags` to match objects carrying **any one** of the listed tags (OR semantics); specifying both restricts to objects matching all `has_tags` **and** at least one `has_any_of_tags`.
 
-Omitting tag predicates from a grant policy applies the privileges directly to the object the policy is attached to, regardless of matching.
+Omitting tag predicates from a grant policy applies the privileges directly to the object the policy is attached to, regardless of matching. For example, a tagless `read_volume` policy attached to a volume grants `READ_VOLUME` on that fully qualified volume, not on its containing schema.
 
 (grant-use-cascade)=
 

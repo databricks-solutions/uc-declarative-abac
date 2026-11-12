@@ -986,6 +986,68 @@ def test_orchestrator_runs_privileges_workflow_end_to_end(
     assert len(grant_stmts) > 0, f"Expected GRANT SQL to be executed, got: {executed}"
 
 
+def test_orchestrator_grants_read_volume_on_volume_when_tagless_policy_is_nested_under_volume(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """A tagless grant policy attached to a volume targets that volume directly."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "cat": {
+                    "schemas": [
+                        {
+                            "name": "schema",
+                            "volumes": [
+                                {
+                                    "name": "volume",
+                                    "policies": [
+                                        {
+                                            "name": "grant_volume_reader",
+                                            "type": "grant",
+                                            "privileges": ["read_volume"],
+                                            "to": ["principal-display-name"],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config)
+    _configure_iam(
+        mock_workspace_client,
+        service_principals=[
+            _iam_sp("principal-display-name", "resolved-principal-identifier")
+        ],
+    )
+
+    run(
+        config_dir=root,
+        workspace_client=mock_workspace_client,
+        warehouse_id="test-warehouse-id",
+        privilege_management_scopes="cat.schema.volume",
+    )
+
+    grant_statements = {
+        statement
+        for statement in mock_workspace_client.executed_sql
+        if statement.upper().startswith("GRANT")
+    }
+    assert (
+        "GRANT READ_VOLUME ON VOLUME `cat`.`schema`.`volume` "
+        "TO `resolved-principal-identifier`" in grant_statements
+    )
+    assert not any(
+        statement.upper().startswith("GRANT READ_VOLUME ON SCHEMA")
+        for statement in grant_statements
+    )
+
+
 def test_orchestrator_runs_both_domains_independently(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):

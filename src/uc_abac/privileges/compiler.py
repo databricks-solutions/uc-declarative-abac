@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from uc_abac.configs import (
     GrantPolicyConfig,
     ResourcesConfig,
+    iter_policy_configs,
 )
 from uc_abac.logger import ChangeLogger
 from uc_abac.principals import Principal
@@ -141,19 +142,12 @@ def _build_tag_index(
 
 
 def _collect_policies(config: ResourcesConfig) -> list[GrantPolicyConfig]:
-    """Gather all grant policies across all catalogs, schemas, and tables."""
-    policies: list[GrantPolicyConfig] = []
-    for catalog in config.catalogs.values():
-        policies.extend(_filter_grants(catalog.policies))
-        for schema in catalog.schemas or []:
-            policies.extend(_filter_grants(schema.policies))
-            for table in schema.tables or []:
-                policies.extend(_filter_grants(table.policies))
-    return policies
-
-
-def _filter_grants(policies) -> list[GrantPolicyConfig]:
-    return [p for p in (policies or []) if isinstance(p, GrantPolicyConfig)]
+    """Gather grant policies in catalog, schema, table, and volume order."""
+    return [
+        policy
+        for policy in iter_policy_configs(config)
+        if isinstance(policy, GrantPolicyConfig)
+    ]
 
 
 def _is_within_scope(full_name: str, policy: GrantPolicyConfig) -> bool:
@@ -351,11 +345,11 @@ def match_grant_policy_privileges(
 
     Used by ``uc-abac dump`` to attribute an actual privilege back to the grant
     policy config that produces it, so pairs are returned in config hierarchy order
-    (catalog, then schema, then table policies) and overlapping policies are kept
-    separate. ``tags`` are matched exactly as ``compile_desired_privileges`` matches
-    desired tags. Unlike that function, policies referencing ungoverned tag keys are
-    not dropped: this is attribution, not deployment, so there is nothing to protect.
-    Privileges carry unresolved (config display-name) principals.
+    (catalog, then schema, table, and volume policies) and overlapping policies are
+    kept separate. ``tags`` are matched exactly as ``compile_desired_privileges``
+    matches desired tags. Unlike that function, policies referencing ungoverned tag
+    keys are not dropped: this is attribution, not deployment, so there is nothing
+    to protect. Privileges carry unresolved (config display-name) principals.
     """
     tag_index = _build_tag_index(set(tags))
     return [
