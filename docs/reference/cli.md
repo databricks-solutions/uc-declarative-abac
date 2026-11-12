@@ -170,6 +170,10 @@ Feature scopes gate deployment of each feature type. Each flag accepts comma-sep
   - no
   - (empty)
   - Comma-separated principal identifiers (usernames for users, application_ids for service principals, display names for groups) whose resolution-failure warnings are suppressed. Primarily for Databricks-managed system service principals that appear in system tables but can't be resolved
+* - `--warn-on-nonexistent-securables`
+  - no
+  - `false`
+  - Report configured securables outside `--securable-creation-scopes` that do not exist as non-fatal warnings. Changes targeting a missing object or its descendants are skipped. Invalid in-scope creation requests remain fatal
 * - `--max-parallel-changes`
   - no
   - 8

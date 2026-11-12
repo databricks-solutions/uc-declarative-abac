@@ -849,6 +849,164 @@ def _nonexistent_errors(change_logger: ChangeLogger) -> list:
     ]
 
 
+def _nonexistent_warnings(change_logger: ChangeLogger) -> list:
+    """Extract nonexistent-securable payloads logged as non-fatal warnings."""
+    return [
+        warning.exception
+        for warning in change_logger.warnings
+        if isinstance(warning.exception, NonexistentSecurableError)
+    ]
+
+
+def test_securable_differ_keeps_nonexistent_securables_fatal_by_default():
+    desired = {_sec(SecurableType.CATALOG, "ghost_catalog")}
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(), set(), desired, set(), _resolver(), change_logger
+    )
+
+    assert {
+        (error.securable_type, error.full_name)
+        for error in _nonexistent_errors(change_logger)
+    } == {(SecurableType.CATALOG, "ghost_catalog")}
+    assert change_logger.warnings == []
+    assert diff.nonexistent_securables == frozenset()
+
+
+def test_securable_differ_warns_and_records_each_nonexistent_securable_when_opted_in():
+    desired_existing_table = Table(
+        securable_type=SecurableType.TABLE,
+        full_name="existing.sales.orders",
+        columns=(
+            Column(
+                securable_type=SecurableType.COLUMN,
+                full_name="existing.sales.orders.missing_column",
+                data_type="STRING",
+            ),
+        ),
+    )
+    actual_existing_table = Table(
+        securable_type=SecurableType.TABLE,
+        full_name="existing.sales.orders",
+    )
+    desired = {
+        _sec(SecurableType.CATALOG, "ghost"),
+        _sec(SecurableType.SCHEMA, "ghost.missing_schema"),
+        _sec(SecurableType.TABLE, "ghost.missing_schema.missing_table"),
+        _sec(SecurableType.VOLUME, "ghost.missing_schema.missing_volume"),
+        desired_existing_table,
+    }
+    actual = {actual_existing_table}
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(),
+        set(),
+        desired,
+        actual,
+        _resolver(),
+        change_logger,
+        warn_on_nonexistent_securables=True,
+    )
+
+    expected = frozenset(
+        {
+            (SecurableType.CATALOG, "ghost"),
+            (SecurableType.SCHEMA, "ghost.missing_schema"),
+            (SecurableType.TABLE, "ghost.missing_schema.missing_table"),
+            (SecurableType.VOLUME, "ghost.missing_schema.missing_volume"),
+            (SecurableType.COLUMN, "existing.sales.orders.missing_column"),
+        }
+    )
+    assert change_logger.errors == []
+    assert {
+        (warning.securable_type, warning.full_name)
+        for warning in _nonexistent_warnings(change_logger)
+    } == expected
+    assert all(
+        "skip" in warning.context.lower() and "changes" in warning.context.lower()
+        for warning in change_logger.warnings
+    )
+    assert diff.nonexistent_securables == expected
+
+
+def test_securable_differ_keeps_invalid_in_scope_table_and_column_fatal_when_opted_in():
+    invalid_table = Table(
+        securable_type=SecurableType.TABLE,
+        full_name="cat.sch.new_table",
+        columns=(),
+    )
+    existing_table_with_untyped_column = Table(
+        securable_type=SecurableType.TABLE,
+        full_name="cat.sch.existing_table",
+        columns=(
+            Column(
+                securable_type=SecurableType.COLUMN,
+                full_name="cat.sch.existing_table.new_column",
+            ),
+        ),
+    )
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(),
+        set(),
+        {invalid_table, existing_table_with_untyped_column},
+        {
+            Table(
+                securable_type=SecurableType.TABLE,
+                full_name="cat.sch.existing_table",
+            )
+        },
+        _resolver(),
+        change_logger,
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+        warn_on_nonexistent_securables=True,
+    )
+
+    assert {
+        (error.securable_type, error.full_name)
+        for error in _nonexistent_errors(change_logger)
+    } == {
+        (SecurableType.TABLE, "cat.sch.new_table"),
+        (SecurableType.COLUMN, "cat.sch.existing_table.new_column"),
+    }
+    assert change_logger.warnings == []
+    assert diff.nonexistent_securables == frozenset()
+
+
+def test_securable_differ_does_not_record_valid_in_scope_creation_as_nonexistent():
+    table = Table(
+        securable_type=SecurableType.TABLE,
+        full_name="cat.sch.new_table",
+        columns=(
+            Column(
+                securable_type=SecurableType.COLUMN,
+                full_name="cat.sch.new_table.id",
+                data_type="STRING",
+            ),
+        ),
+    )
+    change_logger = _change_logger()
+
+    diff = compute_securable_diff(
+        set(),
+        set(),
+        {table},
+        set(),
+        _resolver(),
+        change_logger,
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+        warn_on_nonexistent_securables=True,
+    )
+
+    assert diff.securables_to_create == [table]
+    assert diff.nonexistent_securables == frozenset()
+    assert change_logger.errors == []
+    assert change_logger.warnings == []
+
+
 def test_securable_differ_logs_nonexistent_securable_error_when_catalog_does_not_exist():
     """A desired catalog absent from actual is logged (not raised) as a NonexistentSecurableError."""
     desired = {_sec(SecurableType.CATALOG, "ghost_catalog")}
@@ -981,6 +1139,7 @@ def test_securable_differ_does_not_log_error_when_function_is_nonexistent_in_act
     )
 
     assert func in diff.securables_to_create
+    assert diff.nonexistent_securables == frozenset()
     assert _nonexistent_errors(change_logger) == []
 
 

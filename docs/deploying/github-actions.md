@@ -154,6 +154,10 @@ Pin to a full commit SHA, with the release tag in a trailing comment, rather tha
   - no
   - empty
   - Comma-separated actual-state principal identifiers whose resolution-failure warning is suppressed (for example, Databricks-managed system service principals). Empty by default.
+* - `warn-on-nonexistent-securables`
+  - no
+  - `false`
+  - If `true`, report configured securables outside creation scope that do not exist as non-fatal warnings and skip changes targeting them or their descendants. Invalid in-scope creation requests remain fatal.
 * - `max-parallel-changes`
   - no
   - `8`

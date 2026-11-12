@@ -16,6 +16,7 @@ from uc_abac.securables.state import (
     Securable,
     SecurableAttributes,
     SecurableDiff,
+    SecurableKey,
     Table,
 )
 from uc_abac.types import SecurableType
@@ -69,6 +70,7 @@ def compute_securable_diff(
     change_logger: ChangeLogger,
     creation_in_scope_namespaces: Scope = _EMPTY_SCOPE,
     ignore_unresolvable: frozenset[str] = frozenset(),
+    warn_on_nonexistent_securables: bool = False,
 ) -> SecurableDiff:
     """Compute the diff between desired and actual securable state.
 
@@ -84,11 +86,11 @@ def compute_securable_diff(
     only if their namespace is in ``creation_in_scope_namespaces``; out-of-scope
     namespaces (and the all-empty set, which is the default and means "creation
     disabled for everything") log ``NonexistentSecurableError`` and are dropped
-    from ``securables_to_create``. Functions are always engine-managed and flow
-    through regardless of scope. Tables require ≥1 column and every column must
-    have a non-None ``type``. In-scope tables that fail this check are logged
-    as errors (with a hint explaining the requirement) and dropped, surfacing
-    later via ``ExecutionBatchError``.
+    from ``securables_to_create``. With ``warn_on_nonexistent_securables``, those
+    out-of-scope errors become warnings and their typed identities are returned
+    for downstream pruning. Functions are always engine-managed and flow through
+    regardless of scope. Tables require ≥1 column and every column must have a
+    non-None ``type``. In-scope tables that fail this check remain fatal errors.
     """
     desired_attrs = _resolve_attribute_owners(
         desired_attrs, resolver, change_logger, ignore_unresolvable
@@ -108,7 +110,11 @@ def compute_securable_diff(
         creation_in_scope_namespaces,
     )
     creatable = _validate_tables_for_creation(creatable, change_logger)
-    _log_nonexistent_non_function_securables(blocked, change_logger)
+    nonexistent_securables = _log_nonexistent_non_function_securables(
+        blocked,
+        change_logger,
+        warn_on_nonexistent_securables,
+    )
     securables_to_create = creatable
 
     table_full_names_being_created = {
@@ -116,14 +122,16 @@ def compute_securable_diff(
         for s in securables_to_create
         if s.securable_type == SecurableType.TABLE
     }
-    columns_to_create = _diff_table_columns(
+    columns_to_create, nonexistent_columns = _diff_table_columns(
         desired_securables,
         actual_securables,
         table_full_names_being_created,
         change_logger,
         creation_in_scope_namespaces,
+        warn_on_nonexistent_securables,
     )
     securables_to_create.extend(columns_to_create)
+    nonexistent_securables = nonexistent_securables.union(nonexistent_columns)
 
     created_full_names = {s.full_name for s in securables_to_create}
 
@@ -152,6 +160,7 @@ def compute_securable_diff(
         securables_to_create=securables_to_create,
         securables_to_replace=securables_to_replace,
         old_securables=old_securables,
+        nonexistent_securables=nonexistent_securables,
     )
 
 
@@ -260,19 +269,22 @@ def _diff_table_columns(
     table_full_names_being_created: set[str],
     change_logger: ChangeLogger,
     creation_in_scope_namespaces: Scope,
-) -> list[Column]:
+    warn_on_nonexistent_securables: bool,
+) -> tuple[list[Column], frozenset[SecurableKey]]:
     """For each desired Table that already exists in UC (i.e. NOT being created
     this run), compare its declared columns against the columns fetched from UC
     and return any columns that should be added via ALTER TABLE ADD COLUMN.
 
     Logs ``NonexistentSecurableError(COLUMN, ...)`` for missing columns that
     can't be created (namespace out of creation scope, or in scope but column
-    lacks ``data_type``). Columns present in actual but absent from desired
-    are ignored — additive only.
+    lacks ``data_type``). Opted-in out-of-scope warnings are returned as typed
+    identities for downstream pruning; invalid in-scope columns remain errors.
+    Columns present in actual but absent from desired are ignored — additive only.
     """
     actual_tables_by_name = {s.full_name: s for s in actual if isinstance(s, Table)}
 
     columns_to_create: list[Column] = []
+    nonexistent_columns: set[SecurableKey] = set()
     for desired_sec in desired:
         if not isinstance(desired_sec, Table):
             continue
@@ -303,17 +315,24 @@ def _diff_table_columns(
                     )
                 )
             else:
-                change_logger.log_error(
-                    ExecutionError(
-                        context=f"Existence check: COLUMN {col.full_name}",
-                        exception=NonexistentSecurableError(
-                            SecurableType.COLUMN,
-                            col.full_name,
-                        ),
-                    )
+                error = ExecutionError(
+                    context=(
+                        f"Skip changes targeting nonexistent COLUMN {col.full_name}"
+                        if warn_on_nonexistent_securables
+                        else f"Existence check: COLUMN {col.full_name}"
+                    ),
+                    exception=NonexistentSecurableError(
+                        SecurableType.COLUMN,
+                        col.full_name,
+                    ),
                 )
+                if warn_on_nonexistent_securables:
+                    change_logger.log_warning(error)
+                    nonexistent_columns.add((SecurableType.COLUMN, col.full_name))
+                else:
+                    change_logger.log_error(error)
 
-    return columns_to_create
+    return columns_to_create, frozenset(nonexistent_columns)
 
 
 def _partition_by_creation_scope(
@@ -371,30 +390,36 @@ def _validate_tables_for_creation(
 def _log_nonexistent_non_function_securables(
     to_create: list[Securable],
     change_logger: ChangeLogger,
-) -> list[Securable]:
-    """Log one ``NonexistentSecurableError`` per non-function securable in ``to_create``
-    and return the list filtered down to Functions only.
+    warn_on_nonexistent_securables: bool,
+) -> frozenset[SecurableKey]:
+    """Log one ``NonexistentSecurableError`` per absent non-function securable.
 
-    Functions are engine-created, so they legitimately flow through ``to_create`` for
-    the executor to ``CREATE FUNCTION``. Any other type in ``to_create`` means the
-    config references a UC object that does not yet exist; the engine does not
-    support creating those today. We log each offender via ``ChangeLogger.log_error``
-    (so the orchestrator's final ``ExecutionBatchError`` gate surfaces them alongside
-    any other accumulated errors) and drop them from the diff to prevent downstream
-    executors from attempting to touch them.
+    The caller has already separated functions and securables within creation scope,
+    so every item here is an absent object that the run cannot create. The default
+    remains fatal. Opt-in warning mode returns the typed identities so the
+    orchestrator can discard dependent changes across every diff domain.
     """
     nonexistent = sorted(
         [s for s in to_create if not isinstance(s, Function)],
         key=lambda s: (s.securable_type.value, s.full_name),
     )
     for sec in nonexistent:
-        change_logger.log_error(
-            ExecutionError(
-                context=f"Existence check: {sec.securable_type.value} {sec.full_name}",
-                exception=NonexistentSecurableError(sec.securable_type, sec.full_name),
-            )
+        error = ExecutionError(
+            context=(
+                "Skip changes targeting nonexistent "
+                f"{sec.securable_type.value} {sec.full_name}"
+                if warn_on_nonexistent_securables
+                else f"Existence check: {sec.securable_type.value} {sec.full_name}"
+            ),
+            exception=NonexistentSecurableError(sec.securable_type, sec.full_name),
         )
-    return [s for s in to_create if isinstance(s, Function)]
+        if warn_on_nonexistent_securables:
+            change_logger.log_warning(error)
+        else:
+            change_logger.log_error(error)
+    if not warn_on_nonexistent_securables:
+        return frozenset()
+    return frozenset((sec.securable_type, sec.full_name) for sec in nonexistent)
 
 
 def _diff_attributes(

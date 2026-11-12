@@ -45,6 +45,7 @@ _ENV_FIELD_MAP: dict[str, str] = {
     "delete_policies_for_namespaces": "DELETE_POLICIES_FOR_NAMESPACES",
     "retain_tag_prefixes": "RETAIN_TAG_PREFIXES",
     "ignore_unresolvable_principals": "IGNORE_UNRESOLVABLE_PRINCIPALS",
+    "warn_on_nonexistent_securables": "WARN_ON_NONEXISTENT_SECURABLES",
     "enable_group_creation": "ENABLE_GROUP_CREATION",
     "enable_group_management": "ENABLE_GROUP_MANAGEMENT",
     "enable_group_deletion": "ENABLE_GROUP_DELETION",
@@ -103,6 +104,7 @@ class RunSettings(BaseModel):
     delete_policies_for_namespaces: str | None = None
     retain_tag_prefixes: str = "class."
     ignore_unresolvable_principals: str = ""
+    warn_on_nonexistent_securables: bool = False
     enable_group_creation: bool = False
     enable_group_management: bool = False
     enable_group_deletion: bool = False

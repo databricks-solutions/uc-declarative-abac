@@ -6,6 +6,52 @@ from typing import Literal
 from uc_abac.principals import Principal
 from uc_abac.types import SecurableType
 
+SecurableKey = tuple[SecurableType, str]
+
+
+_DESCENDANT_TYPES = {
+    SecurableType.CATALOG: frozenset(
+        {
+            SecurableType.SCHEMA,
+            SecurableType.TABLE,
+            SecurableType.VOLUME,
+            SecurableType.FUNCTION,
+            SecurableType.COLUMN,
+        }
+    ),
+    SecurableType.SCHEMA: frozenset(
+        {
+            SecurableType.TABLE,
+            SecurableType.VOLUME,
+            SecurableType.FUNCTION,
+            SecurableType.COLUMN,
+        }
+    ),
+    SecurableType.TABLE: frozenset({SecurableType.COLUMN}),
+}
+
+
+def targets_nonexistent_securable(
+    securable_type: SecurableType,
+    full_name: str,
+    nonexistent_securables: frozenset[SecurableKey],
+) -> bool:
+    """Return whether a target is an absent securable or one of its descendants.
+
+    The UC hierarchy is type-aware: equal names belonging to different object types
+    are not the same securable, and only catalogs, schemas, and tables have managed
+    descendants. The dot boundary prevents a missing ``cat`` from suppressing changes
+    for a sibling catalog such as ``catalog``.
+    """
+    for missing_type, missing_name in nonexistent_securables:
+        if securable_type == missing_type and full_name == missing_name:
+            return True
+        if securable_type not in _DESCENDANT_TYPES.get(missing_type, frozenset()):
+            continue
+        if full_name.startswith(f"{missing_name}."):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class SecurableAttributes:
@@ -186,9 +232,12 @@ class SecurableDiff:
 
     Organised by operation type, not by securable type. The executor
     dispatches to type-specific logic via Securable polymorphism.
+    ``nonexistent_securables`` identifies warning-only missing targets whose
+    operations and descendants must be removed from every domain diff.
     """
 
     attributes_to_update: list[AttributeUpdate] = field(default_factory=list)
     securables_to_create: list[Securable] = field(default_factory=list)
     securables_to_replace: list[Securable] = field(default_factory=list)
     old_securables: dict[str, Securable] = field(default_factory=dict)
+    nonexistent_securables: frozenset[SecurableKey] = frozenset()

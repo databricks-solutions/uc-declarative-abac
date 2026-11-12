@@ -153,6 +153,25 @@ def test_settings_loads_boolean_from_env(monkeypatch):
     assert settings.enable_tag_management is True
 
 
+def test_settings_warn_on_nonexistent_securables_defaults_to_false(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UC_ABAC_WARN_ON_NONEXISTENT_SECURABLES", raising=False)
+
+    settings = resolve_settings({}, settings_file=None)
+
+    assert settings.warn_on_nonexistent_securables is False
+
+
+def test_settings_loads_warn_on_nonexistent_securables_from_env(monkeypatch):
+    monkeypatch.setenv("UC_ABAC_WARN_ON_NONEXISTENT_SECURABLES", "true")
+
+    settings = resolve_settings({}, settings_file=None)
+
+    assert settings.warn_on_nonexistent_securables is True
+
+
 def test_settings_loads_enable_group_deletion_from_env(monkeypatch):
     monkeypatch.setenv("UC_ABAC_ENABLE_GROUP_DELETION", "true")
     settings = resolve_settings({}, settings_file=None)

@@ -470,6 +470,16 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--warn-on-nonexistent-securables",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Treat configured securables that do not exist and are outside "
+            "--securable-creation-scopes as non-fatal warnings, and skip changes "
+            "that target them or their descendants. Off by default."
+        ),
+    )
+    parser.add_argument(
         "--enable-group-creation",
         action="store_true",
         default=argparse.SUPPRESS,

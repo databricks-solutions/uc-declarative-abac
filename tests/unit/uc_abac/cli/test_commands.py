@@ -138,6 +138,18 @@ def test_main_defaults_skip_users_fetch_off(monkeypatch):
     assert captured["skip_users_fetch"] is False
 
 
+def test_main_passes_warn_on_nonexistent_securables_through_to_run(monkeypatch):
+    captured = _run_legacy(monkeypatch, ["--warn-on-nonexistent-securables"])
+
+    assert captured["warn_on_nonexistent_securables"] is True
+
+
+def test_main_defaults_warn_on_nonexistent_securables_off(monkeypatch):
+    captured = _run_legacy(monkeypatch, [])
+
+    assert captured["warn_on_nonexistent_securables"] is False
+
+
 def test_main_passes_per_catalog_information_schema_through_to_run(monkeypatch):
     captured = _run_legacy(monkeypatch, ["--per-catalog-information-schema"])
     assert captured.get("per_catalog_information_schema") is True
