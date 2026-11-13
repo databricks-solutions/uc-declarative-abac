@@ -271,7 +271,8 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="SCOPES",
         default=argparse.SUPPRESS,
         help=(
-            "Scope attribute updates (owner, comment, rfa_destinations) on existing "
+            "Scope attribute updates (owner, comment, rfa_destinations, "
+            "data_classification_enabled) on existing "
             "catalogs, schemas, tables, volumes, and columns to matching securables. "
             "Updates only — never creates or deletes securables. "
             "Does not gate function management — functions are always managed by the "

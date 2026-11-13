@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from uc_abac.configs import ResourcesConfig
 from uc_abac.principals import Principal
 from uc_abac.securables import (
@@ -728,6 +730,71 @@ def test_securable_compiler_emits_empty_rfa_destinations_when_explicitly_empty_l
         if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
     )
     assert catalog_attrs.rfa_destinations == frozenset()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_securable_compiler_emits_catalog_data_classification_enabled(enabled):
+    """A catalog's data_classification_enabled is carried onto its SecurableAttributes."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "owner": "admin_user",
+                    "data_classification_enabled": enabled,
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    catalog_attrs = next(
+        a
+        for a in result
+        if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
+    )
+    assert catalog_attrs.data_classification_enabled is enabled
+
+
+def test_securable_compiler_data_classification_enabled_is_none_when_absent():
+    """A catalog without data_classification_enabled leaves it None (unmanaged)."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {"my_cat": {"owner": "admin_user"}}}
+    )
+
+    result = compile_desired_attributes(config)
+
+    catalog_attrs = next(
+        a
+        for a in result
+        if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
+    )
+    assert catalog_attrs.data_classification_enabled is None
+
+
+def test_securable_compiler_emits_attributes_when_only_data_classification_enabled_set():
+    """An explicit ``false`` is managed state: a catalog whose only managed
+    attribute is data_classification_enabled still produces a SecurableAttributes."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "disabled": {"data_classification_enabled": False},
+                "without_anything": {},
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert (
+        SecurableAttributes(
+            securable_type=SecurableType.CATALOG,
+            full_name="disabled",
+            data_classification_enabled=False,
+        )
+        in result
+    )
+    assert not any(a.full_name == "without_anything" for a in result)
 
 
 # ---------------------------------------------------------------------------

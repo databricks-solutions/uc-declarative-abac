@@ -1313,6 +1313,7 @@ class SchemaConfig(BaseTaggableConfig):
 
 class CatalogConfig(BaseTaggableConfig):
     location: str | None = None
+    data_classification_enabled: StrictBool | None = None
     policies: list[PolicyConfig] | None = None
     schemas: list[SchemaConfig] | None = None
 

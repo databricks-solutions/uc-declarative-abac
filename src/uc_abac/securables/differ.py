@@ -28,7 +28,12 @@ from uc_abac.utils import (
     Scope,
 )
 
-_GOVERNED_ATTRIBUTES = ["owner", "comment", "rfa_destinations"]
+_GOVERNED_ATTRIBUTES = [
+    "owner",
+    "comment",
+    "rfa_destinations",
+    "data_classification_enabled",
+]
 
 # Empty (inert) scope: the default when creation is disabled — matches nothing.
 _EMPTY_SCOPE = Scope()
@@ -37,8 +42,8 @@ _EMPTY_SCOPE = Scope()
 def _to_frozenset(attr: str, value: object) -> frozenset:
     """Wrap a SecurableAttributes field value into a frozenset for diff comparison.
 
-    Scalar fields (``owner``, ``comment``) become a 1-element frozenset, or
-    an empty frozenset when the value is missing / empty. Collection fields
+    Scalar fields (``owner``, ``comment``, ``data_classification_enabled``) become
+    a 1-element frozenset, or an empty frozenset when the value is missing / empty. Collection fields
     (``rfa_destinations``) pass through as the natural frozenset (``None`` →
     empty). This keeps the diff loop attribute-agnostic and lets the executor
     take a uniform set-shaped value.
@@ -445,6 +450,11 @@ def _diff_attributes(
       is refused — UC doesn't support ``COMMENT ON`` for views via this path;
       logged as an ``ExecutionError`` and dropped. Comments on other types flow
       through as ALTER updates.
+
+    - ``data_classification_enabled`` — catalog-only. Emitted for newly-created
+      catalogs too (the Data Classification config can only be created once the
+      catalog exists); the fetch supplies a ``False`` baseline for such catalogs, so
+      a desired ``False`` on a new catalog produces no update.
 
     ``location`` is creation-only (see ``compile_desired_securables``) and is
     not in ``_GOVERNED_ATTRIBUTES`` — it's never diffed.

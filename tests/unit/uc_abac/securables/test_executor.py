@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from uc_abac.logger import ChangeLogger
 from uc_abac.principals import Principal
 from uc_abac.securables import (
@@ -1495,6 +1497,98 @@ def test_securable_executor_handles_function_securable_type_for_rfa():
 
     assert securable_type_passed == SecurableType.FUNCTION
     assert full_name_passed == "cat.sch.fn"
+
+
+# ---------------------------------------------------------------------------
+# Data classification updates
+# ---------------------------------------------------------------------------
+
+
+def _data_classification_update(
+    enabled: bool, full_name: str = "cat"
+) -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_enabled",
+        old_value=frozenset({not enabled}),
+        new_value=frozenset({enabled}),
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_securable_executor_dispatches_data_classification_to_update_data_classification(
+    enabled,
+):
+    """A data_classification_enabled update calls the helper with the unwrapped bool."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(enabled)])
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification.assert_called_once_with("cat", enabled)
+    uc_helper.execute_sql.assert_not_called()
+
+
+def test_securable_executor_skips_data_classification_update_in_dry_run():
+    """dry_run=True must not call update_data_classification."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(True)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger(), dry_run=True)
+
+    assert stmts == []
+    uc_helper.update_data_classification.assert_not_called()
+
+
+def test_securable_executor_logs_error_and_continues_when_data_classification_update_fails():
+    """A failing update is logged with a descriptive context; other updates still run."""
+    uc_helper = MagicMock()
+
+    def _fail_for_bad(catalog_name, enabled):
+        if catalog_name == "bad":
+            raise RuntimeError("boom")
+
+    uc_helper.update_data_classification.side_effect = _fail_for_bad
+    logger = ChangeLogger()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _data_classification_update(True, "bad"),
+            _data_classification_update(True, "good"),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, logger)
+
+    assert len(logger.errors) == 1
+    assert "update_data_classification" in logger.errors[0].context
+    assert "bad" in logger.errors[0].context
+    uc_helper.update_data_classification.assert_any_call("good", True)
+
+
+def test_securable_executor_returns_empty_statements_for_data_classification_update():
+    """Data classification updates are SDK calls, not SQL."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(True)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    assert stmts == []
+
+
+def test_securable_executor_logs_data_classification_attribute_update():
+    """A successful data classification update is recorded by the change logger."""
+    uc_helper = MagicMock()
+    logger = ChangeLogger()
+    logger.log_attribute_update = MagicMock(wraps=logger.log_attribute_update)
+    update = _data_classification_update(True)
+
+    execute_securable_diff(
+        uc_helper, SecurableDiff(attributes_to_update=[update]), logger
+    )
+
+    logger.log_attribute_update.assert_called_once_with(update)
+    assert logger.errors == []
 
 
 # ---------------------------------------------------------------------------

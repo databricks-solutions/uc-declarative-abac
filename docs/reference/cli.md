@@ -119,7 +119,7 @@ Feature scopes gate deployment of each feature type. Each flag accepts comma-sep
 : Scope GRANT/REVOKE privilege management.
 
 `--securable-modification-scopes`
-: Scope attribute updates (owner, comment, rfa_destinations) on existing catalogs, schemas, tables, volumes, and columns. Functions are always managed by the engine.
+: Scope attribute updates (owner, comment, rfa_destinations, data_classification_enabled) on existing catalogs, schemas, tables, volumes, and columns. Functions are always managed by the engine.
 
 `--securable-creation-scopes`
 : Scope creation of missing catalogs, schemas, tables, volumes, and columns. Functions are always created by the engine.

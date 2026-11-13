@@ -325,6 +325,11 @@ def _attribute_update_context(update: AttributeUpdate, stmt: str | None) -> str:
             f"update_rfa_destinations("
             f"{update.securable_type.value}, {update.full_name})"
         )
+    if update.attribute == "data_classification_enabled":
+        return (
+            f"update_data_classification("
+            f"{update.securable_type.value}, {update.full_name})"
+        )
     return (
         f"Unknown attribute {update.attribute!r} on "
         f"{update.securable_type.value} {update.full_name}"
@@ -355,6 +360,10 @@ def _run_attribute_update(
                 update.securable_type,
                 update.full_name,
                 update.new_value,
+            )
+        case "data_classification_enabled":
+            uc_helper.update_data_classification(
+                update.full_name, next(iter(update.new_value))
             )
         case _:
             raise OrchestratorError(
@@ -700,7 +709,7 @@ def execute_securable_diff(
     Attribute updates are split into sub-batches keyed by
     ``(depth, owner-first)`` and run sequentially in that order — catalogs
     before schemas before tables/volumes/functions, and within each depth all
-    owner changes complete before any comment/RFA change starts. This lets the
+    owner changes complete before any other attribute change starts. This lets the
     engine take ownership of a parent before it tries to alter its children.
 
     Within each depth bucket of creates, and within each of the replaces and

@@ -12,6 +12,7 @@ from uc_abac.configs import (
     ResourcesConfig,
     RlsMappingRuleConfig,
 )
+from uc_abac.orchestrator import load_config
 from uc_abac.types import PrivilegeType, SecurableType
 from uc_abac.utils import DuplicateResourceError
 
@@ -331,6 +332,100 @@ def test_config_file_preserves_explicit_catalog_name():
     config = ResourcesConfig.model_validate(data)
 
     assert config.catalogs["ops_prod"].name == "operations_production"
+
+
+# ---------------------------------------------------------------------------
+# CatalogConfig.data_classification_enabled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_catalog_config_accepts_data_classification_enabled(value):
+    """data_classification_enabled accepts an explicit boolean on a catalog."""
+    data = {"catalogs": {"cat": _minimal_catalog(data_classification_enabled=value)}}
+    config = ResourcesConfig.model_validate(data)
+
+    assert config.catalogs["cat"].data_classification_enabled is value
+
+
+def test_catalog_config_data_classification_enabled_defaults_to_none():
+    """An absent data_classification_enabled is None (unmanaged)."""
+    config = ResourcesConfig.model_validate({"catalogs": {"cat": _minimal_catalog()}})
+
+    assert config.catalogs["cat"].data_classification_enabled is None
+
+
+@pytest.mark.parametrize("value", ["yes", "true", 1])
+def test_catalog_config_rejects_non_bool_data_classification_enabled(value):
+    """Non-boolean values (strings, ints) are rejected rather than coerced."""
+    data = {"catalogs": {"cat": _minimal_catalog(data_classification_enabled=value)}}
+
+    with pytest.raises(ValidationError, match="data_classification_enabled"):
+        ResourcesConfig.model_validate(data)
+
+
+def test_schema_config_rejects_data_classification_enabled():
+    """data_classification_enabled is catalog-only: a schema carrying it fails."""
+    data = {
+        "catalogs": {
+            "cat": _minimal_catalog(
+                schemas=[{"name": "s", "data_classification_enabled": True}]
+            )
+        }
+    }
+
+    with pytest.raises(ValidationError, match="data_classification_enabled"):
+        ResourcesConfig.model_validate(data)
+
+
+def test_table_config_rejects_data_classification_enabled():
+    """data_classification_enabled is catalog-only: a table carrying it fails."""
+    data = {
+        "catalogs": {
+            "cat": _minimal_catalog(
+                schemas=[
+                    {
+                        "name": "s",
+                        "tables": [{"name": "t", "data_classification_enabled": True}],
+                    }
+                ]
+            )
+        }
+    }
+
+    with pytest.raises(ValidationError, match="data_classification_enabled"):
+        ResourcesConfig.model_validate(data)
+
+
+def test_catalog_config_data_classification_enabled_overridable_via_ref(
+    tmp_yaml_dir,
+):
+    """A $ref override on a catalog resource replaces the definition's value."""
+    root = tmp_yaml_dir(
+        {
+            "definitions/catalogs.yaml": {
+                "definitions": {
+                    "catalogs": {"base": {"data_classification_enabled": True}}
+                }
+            },
+            "resources/catalogs.yaml": {
+                "resources": {
+                    "catalogs": {
+                        "enabled": {"$ref": "$defs/catalogs/base"},
+                        "disabled": {
+                            "$ref": "$defs/catalogs/base",
+                            "data_classification_enabled": False,
+                        },
+                    }
+                }
+            },
+        }
+    )
+
+    config = load_config(root)
+
+    assert config.catalogs["enabled"].data_classification_enabled is True
+    assert config.catalogs["disabled"].data_classification_enabled is False
 
 
 # ---------------------------------------------------------------------------

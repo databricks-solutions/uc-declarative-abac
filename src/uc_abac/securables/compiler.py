@@ -37,9 +37,10 @@ def _emit_attributes(
 ) -> SecurableAttributes | None:
     """Return a SecurableAttributes if any managed (updatable) attribute is set, else None.
 
-    Managed attributes: ``owner``, ``comment``, and ``rfa_destinations``. Owner is
-    emitted as an unresolved Principal (principal_type=UNKNOWN) carrying the
-    display name from config; resolution happens post-fetch. ``comment`` is read
+    Managed attributes: ``owner``, ``comment``, ``rfa_destinations``, and
+    ``data_classification_enabled``. Owner is emitted as an unresolved Principal
+    (principal_type=UNKNOWN) carrying the display name from config; resolution
+    happens post-fetch. ``comment`` is read
     directly from the config and only applies to the four taggable types
     (catalogs, schemas, tables, volumes); for functions only ``owner`` and
     ``rfa_destinations`` are emitted here (the function's comment lives on the
@@ -49,6 +50,8 @@ def _emit_attributes(
     validation is needed here. An absent field stays ``None`` (unmanaged —
     existing destinations are left untouched), while an explicitly-empty list
     compiles to an empty frozenset, signalling "remove all destinations".
+    ``data_classification_enabled`` exists only on catalogs; an absent field stays
+    ``None`` (unmanaged), while an explicit ``False`` is managed ("disabled").
 
     ``location`` is **not** a managed attribute — it's only consulted at CREATE
     time (see ``compile_desired_securables``), never diffed.
@@ -65,8 +68,14 @@ def _emit_attributes(
 
     raw_rfa = getattr(obj, "rfa_destinations", None)
     rfa_destinations = frozenset(raw_rfa) if raw_rfa is not None else None
+    data_classification_enabled = getattr(obj, "data_classification_enabled", None)
 
-    if owner is None and comment is None and rfa_destinations is None:
+    if (
+        owner is None
+        and comment is None
+        and rfa_destinations is None
+        and data_classification_enabled is None
+    ):
         return None
     return SecurableAttributes(
         securable_type=securable_type,
@@ -74,6 +83,7 @@ def _emit_attributes(
         owner=owner,
         comment=comment,
         rfa_destinations=rfa_destinations,
+        data_classification_enabled=data_classification_enabled,
     )
 
 

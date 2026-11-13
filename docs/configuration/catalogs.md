@@ -2,7 +2,7 @@
 
 # Catalogs
 
-Catalogs are the top-level organizational unit in Unity Catalog. Catalog definitions capture the canonical shape of a catalog, including its tags, owner, RFA destinations, catalog-level policies, and the schemas it contains.
+Catalogs are the top-level organizational unit in Unity Catalog. Catalog definitions capture the canonical shape of a catalog, including its tags, owner, RFA destinations, data classification, catalog-level policies, and the schemas it contains.
 
 ## Definitions
 
@@ -20,6 +20,7 @@ definitions:
       location: s3://operations-managed/operations
       rfa_destinations:
         - data-governance@company.com
+      data_classification_enabled: true
       policies:
         - $defs/policies/domain|grant_finance_read
         - $defs/policies/pii|mask_pii_email
@@ -29,6 +30,14 @@ definitions:
 ```
 
 The optional `location` sets the catalog's managed storage location (`MANAGED LOCATION`). It is applied only when the engine creates the catalog.
+
+The optional `data_classification_enabled` turns [Data Classification](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification) on or off for the catalog:
+
+- `true` enables it with the default settings (all schemas scanned, no auto-tagging). If it is already enabled, its existing settings are left untouched.
+- `false` disables it.
+- Omitting the field leaves the catalog's Data Classification state unmanaged.
+
+Like other catalog attributes, it is gated by `--securable-modification-scopes`; see {ref}`feature-scopes`.
 
 ## Resources
 

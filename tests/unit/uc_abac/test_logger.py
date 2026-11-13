@@ -687,6 +687,28 @@ def test_logger_renders_attribute_update_for_rfa_destinations_attribute() -> Non
     assert "bob@y.com" in log_line
 
 
+def test_logger_renders_attribute_update_for_data_classification_enabled_attribute() -> (
+    None
+):
+    """A data_classification_enabled toggle renders its attribute name and both
+    boolean values."""
+    cl, mock_logger = _make_change_logger()
+    cl.log_attribute_update(
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="my_cat",
+            attribute="data_classification_enabled",
+            old_value=frozenset({False}),
+            new_value=frozenset({True}),
+        )
+    )
+
+    log_line = "\n".join(_info_messages(mock_logger))
+    assert "data_classification_enabled" in log_line
+    assert "False" in log_line
+    assert "True" in log_line
+
+
 def test_logger_logs_securable_create() -> None:
     """log_securable_create increments _securables_created counter."""
     cl, _ = _make_change_logger()
