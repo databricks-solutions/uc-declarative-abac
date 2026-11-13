@@ -762,12 +762,16 @@ def fetch_actual_state(
             or a.securable_type == SecurableType.FUNCTION
         )
     }
-    # Catalogs that declare ``data_classification_enabled`` (true or false). It is a
-    # managed catalog attribute, so it shares the securable-modification gate.
+    # Catalogs managing Data Classification (enabled, or only auto-tagging, which
+    # needs to know whether a config exists). These are managed catalog attributes,
+    # so they share the securable-modification gate.
     data_classification_targets: set[str] = {
         a.full_name
         for a in desired_attributes
-        if a.data_classification_enabled is not None
+        if (
+            a.data_classification_enabled is not None
+            or a.data_classification_auto_tagging_tags is not None
+        )
         and ctx.enable_securable_modification
     }
     # Parent tables of every in-scope column that declares a comment. Column comments

@@ -21,6 +21,7 @@ definitions:
       rfa_destinations:
         - data-governance@company.com
       data_classification_enabled: true
+      auto_tagging_enabled: true
       policies:
         - $defs/policies/domain|grant_finance_read
         - $defs/policies/pii|mask_pii_email
@@ -33,11 +34,17 @@ The optional `location` sets the catalog's managed storage location (`MANAGED LO
 
 The optional `data_classification_enabled` turns [Data Classification](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification) on or off for the catalog:
 
-- `true` enables it, with no auto-tagging. Every schema is scanned except those that set `data_classification_enabled: false` (see {ref}`schemas`). If it is already enabled, any list of included schemas set outside config is removed so that every other schema is scanned; auto-tagging settings are left untouched.
+- `true` enables it. Every schema is scanned except those that set `data_classification_enabled: false` (see {ref}`schemas`). If it is already enabled, any list of included schemas set outside config is removed so that every other schema is scanned.
 - `false` disables it.
 - Omitting the field leaves the catalog's Data Classification state unmanaged.
 
-Like other catalog attributes, it is gated by `--securable-modification-scopes`; see {ref}`feature-scopes`.
+The optional `auto_tagging_enabled` controls whether Data Classification automatically tags the columns it detects:
+
+- `true` auto-tags with exactly the governed tags that set `auto_tagging_enabled: true` (see {ref}`governed-tags`). Tags auto-tagged outside config are removed. Auto-tagging requires Data Classification, so `true` also enables Data Classification when `data_classification_enabled` is omitted; combining it with `data_classification_enabled: false` is a config error.
+- `false` turns auto-tagging off.
+- Omitting the field leaves the catalog's auto-tagging settings unmanaged.
+
+Like other catalog attributes, both fields are gated by `--securable-modification-scopes`; see {ref}`feature-scopes`.
 
 ## Resources
 

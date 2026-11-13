@@ -32,16 +32,38 @@ from uc_abac.types import (
 )
 
 
-def _excluded_schemas(catalog: CatalogConfig) -> frozenset[str] | None:
+def _auto_tagging_opted_in_tags(config: ResourcesConfig) -> frozenset[str]:
+    """Return the governed tags opting into auto-tagging (``auto_tagging_enabled``)."""
+    return frozenset(
+        gt.name
+        for gt in (config.governed_tags or {}).values()
+        if gt.auto_tagging_enabled
+    )
+
+
+def _effective_data_classification_enabled(catalog: CatalogConfig) -> bool | None:
+    """Return the catalog's Data Classification setting as the engine applies it.
+
+    ``auto_tagging_enabled: true`` implies Data Classification, so an unset
+    ``data_classification_enabled`` is treated as ``True`` (config validation has
+    already rejected auto-tagging alongside an explicit ``False``).
+    """
+    if catalog.data_classification_enabled is None and catalog.auto_tagging_enabled:
+        return True
+    return catalog.data_classification_enabled
+
+
+def _excluded_schemas(
+    catalog: CatalogConfig, enabled: bool | None
+) -> frozenset[str] | None:
     """Return the schemas to exclude from the catalog's Data Classification scan.
 
-    Exclusions are managed only under a catalog declaring
-    ``data_classification_enabled: true``: the list is then exactly the schemas
-    declaring ``false`` (``true`` and unset schemas are scanned), so an empty
-    frozenset means "exclude nothing". Any other catalog value leaves the list
-    unmanaged (``None``).
+    Exclusions are managed only when Data Classification is (effectively)
+    enabled: the list is then exactly the schemas declaring ``false`` (``true``
+    and unset schemas are scanned), so an empty frozenset means "exclude
+    nothing". Otherwise the list is unmanaged (``None``).
     """
-    if catalog.data_classification_enabled is not True:
+    if enabled is not True:
         return None
     return frozenset(
         schema.name
@@ -50,27 +72,46 @@ def _excluded_schemas(catalog: CatalogConfig) -> frozenset[str] | None:
     )
 
 
-def _data_classification_fields(
-    obj: SecurableConfig,
-) -> tuple[bool | None, frozenset[str] | None, frozenset[str] | None]:
-    """Return the catalog's ``(enabled, excluded_schemas, included_schemas)``.
+def _auto_tagging_tags(
+    catalog: CatalogConfig, opted_in_tags: frozenset[str]
+) -> frozenset[str] | None:
+    """Return the governed tags the catalog auto-applies: every opted-in tag when
+    ``auto_tagging_enabled`` is true, none when false, unmanaged when unset."""
+    if catalog.auto_tagging_enabled is None:
+        return None
+    return opted_in_tags if catalog.auto_tagging_enabled else frozenset()
 
-    All three are catalog attributes: a schema's ``data_classification_enabled``
-    only feeds its catalog's exclusion list and is never a schema-level toggle.
-    Under an enabled catalog every non-excluded schema is scanned, so the include
-    list is managed as empty (an include list set outside config is cleared, since
-    it is mutually exclusive with exclusions); otherwise it is unmanaged.
+
+def _data_classification_fields(
+    obj: SecurableConfig, opted_in_tags: frozenset[str]
+) -> dict[str, object]:
+    """Return the catalog's Data Classification ``SecurableAttributes`` fields.
+
+    All are catalog attributes (an empty dict for any other securable): a
+    schema's ``data_classification_enabled`` only feeds its catalog's exclusion
+    list and is never a schema-level toggle. Under an enabled catalog every
+    non-excluded schema is scanned, so the include list is managed as empty (an
+    include list set outside config is cleared, since it is mutually exclusive
+    with exclusions); otherwise it is unmanaged.
     """
     if not isinstance(obj, CatalogConfig):
-        return None, None, None
-    excluded = _excluded_schemas(obj)
-    included = frozenset() if excluded is not None else None
-    return obj.data_classification_enabled, excluded, included
+        return {}
+    enabled = _effective_data_classification_enabled(obj)
+    excluded = _excluded_schemas(obj, enabled)
+    return {
+        "data_classification_enabled": enabled,
+        "data_classification_excluded_schemas": excluded,
+        "data_classification_included_schemas": (
+            frozenset() if excluded is not None else None
+        ),
+        "data_classification_auto_tagging_tags": _auto_tagging_tags(obj, opted_in_tags),
+    }
 
 
 def _emit_attributes(
     securable_type: SecurableType,
     obj: SecurableConfig,
+    opted_in_tags: frozenset[str] = frozenset(),
 ) -> SecurableAttributes | None:
     """Return a SecurableAttributes if any managed (updatable) attribute is set, else None.
 
@@ -88,8 +129,9 @@ def _emit_attributes(
     existing destinations are left untouched), while an explicitly-empty list
     compiles to an empty frozenset, signalling "remove all destinations".
     The Data Classification attributes are emitted on catalogs only (see
-    ``_data_classification_fields``); an absent ``data_classification_enabled``
-    stays ``None`` (unmanaged), while an explicit ``False`` is managed ("disabled").
+    ``_data_classification_fields``; ``opted_in_tags`` are the governed tags
+    opting into auto-tagging); an absent ``data_classification_enabled`` stays
+    ``None`` (unmanaged), while an explicit ``False`` is managed ("disabled").
 
     ``location`` is **not** a managed attribute — it's only consulted at CREATE
     time (see ``compile_desired_securables``), never diffed.
@@ -106,15 +148,13 @@ def _emit_attributes(
 
     raw_rfa = getattr(obj, "rfa_destinations", None)
     rfa_destinations = frozenset(raw_rfa) if raw_rfa is not None else None
-    data_classification_enabled, excluded_schemas, included_schemas = (
-        _data_classification_fields(obj)
-    )
+    data_classification = _data_classification_fields(obj, opted_in_tags)
 
     if (
         owner is None
         and comment is None
         and rfa_destinations is None
-        and data_classification_enabled is None
+        and all(value is None for value in data_classification.values())
     ):
         return None
     return SecurableAttributes(
@@ -123,18 +163,19 @@ def _emit_attributes(
         owner=owner,
         comment=comment,
         rfa_destinations=rfa_destinations,
-        data_classification_enabled=data_classification_enabled,
-        data_classification_excluded_schemas=excluded_schemas,
-        data_classification_included_schemas=included_schemas,
+        **data_classification,
     )
 
 
 def compile_desired_attributes(config: ResourcesConfig) -> set[SecurableAttributes]:
     """Walk the config tree and emit SecurableAttributes for each securable with managed attributes."""
     attrs: set[SecurableAttributes] = set()
+    opted_in_tags = _auto_tagging_opted_in_tags(config)
 
     for catalog in config.catalogs.values():
-        if (attr := _emit_attributes(SecurableType.CATALOG, catalog)) is not None:
+        if (
+            attr := _emit_attributes(SecurableType.CATALOG, catalog, opted_in_tags)
+        ) is not None:
             attrs.add(attr)
 
         for schema in catalog.schemas or []:

@@ -2109,6 +2109,67 @@ def test_uc_helper_fetch_actual_securables_sets_empty_included_schemas_when_none
     )
 
 
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_auto_tagging_tags_from_enabled_configs_only(
+    mock_fetch,
+):
+    """Only tags whose auto-tagging mode is ENABLED count as auto-tagged."""
+    from databricks.sdk.service.dataclassification import (
+        AutoTaggingConfig,
+        AutoTaggingConfigAutoTaggingMode,
+    )
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mode = AutoTaggingConfigAutoTaggingMode
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        auto_tag_configs=[
+            AutoTaggingConfig("class.email_address", mode.AUTO_TAGGING_ENABLED),
+            AutoTaggingConfig("class.phone_number", mode.AUTO_TAGGING_DISABLED),
+        ]
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
+@pytest.mark.parametrize("missing", [True, False])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_auto_tagging_tags_when_none_set(
+    mock_fetch, missing
+):
+    """No config, or a config without auto-tagging, yields an empty tag set."""
+    from databricks.sdk.errors import NotFound
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    if missing:
+        client.data_classification.get_catalog_config.side_effect = NotFound("x")
+    else:
+        client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_auto_tagging_tags == (
+        frozenset()
+    )
+
+
 # ---------------------------------------------------------------------------
 # UnityCatalogHelper.fetch_actual_securables — column-comment fetch
 # ---------------------------------------------------------------------------
@@ -2509,6 +2570,45 @@ def test_uc_helper_update_data_classification_included_schemas_clears_with_updat
     assert kwargs["name"] == "catalogs/my_catalog/config"
     assert kwargs["catalog_config"].included_schemas is None
     assert kwargs["update_mask"].paths == ["included_schemas"]
+
+
+def test_uc_helper_update_data_classification_auto_tagging_patches_with_update_mask():
+    """Auto-tagging is replaced via a partial update masked to auto_tag_configs,
+    with every tag enabled."""
+    from databricks.sdk.service.dataclassification import (
+        AutoTaggingConfigAutoTaggingMode,
+    )
+
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_auto_tagging(
+        "my_catalog", frozenset({"class.phone_number", "class.email_address"})
+    )
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    configs = kwargs["catalog_config"].auto_tag_configs
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert kwargs["update_mask"].paths == ["auto_tag_configs"]
+    assert sorted(c.classification_tag for c in configs) == [
+        "class.email_address",
+        "class.phone_number",
+    ]
+    assert {c.auto_tagging_mode for c in configs} == {
+        AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+    }
+
+
+def test_uc_helper_update_data_classification_auto_tagging_clears_when_empty():
+    """An empty set clears auto-tagging: the mask is sent with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_auto_tagging("my_catalog", frozenset())
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    assert not kwargs["catalog_config"].auto_tag_configs
+    assert kwargs["update_mask"].paths == ["auto_tag_configs"]
 
 
 def _get_rfa_update_call(client: MagicMock):

@@ -1,0 +1,5 @@
+resources:
+  governed_tags:
+    class|date_of_birth:
+      name: class.date_of_birth
+      auto_tagging_enabled: true

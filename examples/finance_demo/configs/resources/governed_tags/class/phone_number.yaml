@@ -1,0 +1,5 @@
+resources:
+  governed_tags:
+    class|phone_number:
+      name: class.phone_number
+      auto_tagging_enabled: true

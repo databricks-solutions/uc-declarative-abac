@@ -1729,6 +1729,50 @@ def test_securable_executor_clears_included_schemas_before_excluded_schemas_upda
     ]
 
 
+def _auto_tagging_update(
+    tags: frozenset[str], full_name: str = "cat"
+) -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_auto_tagging_tags",
+        old_value=frozenset(),
+        new_value=tags,
+    )
+
+
+def test_securable_executor_dispatches_auto_tagging_to_helper():
+    """An auto-tagging update calls the helper with the full set of tags."""
+    uc_helper = MagicMock()
+    tags = frozenset({"class.email_address"})
+    diff = SecurableDiff(attributes_to_update=[_auto_tagging_update(tags)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification_auto_tagging.assert_called_once_with(
+        "cat", tags
+    )
+    assert stmts == []
+
+
+def test_securable_executor_runs_data_classification_enable_before_auto_tagging_update():
+    """The config must exist before auto-tagging is patched onto it."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _auto_tagging_update(frozenset({"class.email_address"})),
+            _data_classification_update(True),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), max_parallel_changes=1)
+
+    assert _helper_call_order(uc_helper) == [
+        "update_data_classification",
+        "update_data_classification_auto_tagging",
+    ]
+
+
 def test_securable_executor_still_runs_owner_updates_before_data_classification():
     """Owner changes keep running first, ahead of the Data Classification toggle."""
     uc_helper = MagicMock()

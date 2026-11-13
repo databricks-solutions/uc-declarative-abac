@@ -901,6 +901,81 @@ def test_securable_compiler_included_schemas_is_none_when_catalog_data_classific
     assert _catalog_attrs_for(result).data_classification_included_schemas is None
 
 
+_AUTO_TAGGING_GOVERNED_TAGS = {
+    "email": {"name": "class.email_address", "auto_tagging_enabled": True},
+    "phone": {"name": "class.phone_number", "auto_tagging_enabled": False},
+    "pii": {"name": "pii"},
+}
+
+
+def _auto_tagging_config(catalog_fields: dict) -> ResourcesConfig:
+    return ResourcesConfig.model_validate(
+        {
+            "catalogs": {"my_cat": {"owner": "admin_user", **catalog_fields}},
+            "governed_tags": _AUTO_TAGGING_GOVERNED_TAGS,
+        }
+    )
+
+
+def test_securable_compiler_emits_auto_tagging_tags_for_opted_in_governed_tags():
+    """An auto-tagging catalog applies exactly the governed tags opting in."""
+    config = _auto_tagging_config(
+        {"data_classification_enabled": True, "auto_tagging_enabled": True}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
+def test_securable_compiler_emits_empty_auto_tagging_tags_when_catalog_auto_tagging_false():
+    """auto_tagging_enabled: false manages an empty list (auto-tagging off)."""
+    config = _auto_tagging_config(
+        {"data_classification_enabled": True, "auto_tagging_enabled": False}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags == (
+        frozenset()
+    )
+
+
+def test_securable_compiler_auto_tagging_tags_is_none_when_unset():
+    """An unset catalog auto_tagging_enabled leaves the list unmanaged."""
+    config = _auto_tagging_config({"data_classification_enabled": True})
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags is None
+
+
+def test_securable_compiler_treats_data_classification_as_enabled_when_only_auto_tagging_true():
+    """auto_tagging_enabled: true implies Data Classification: it is emitted as
+    enabled and schema exclusions are managed as for an explicit true."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "auto_tagging_enabled": True,
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                }
+            },
+            "governed_tags": _AUTO_TAGGING_GOVERNED_TAGS,
+        }
+    )
+
+    attrs = _catalog_attrs_for(compile_desired_attributes(config))
+
+    assert attrs.data_classification_enabled is True
+    assert attrs.data_classification_excluded_schemas == frozenset({"raw"})
+    assert attrs.data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
 def test_securable_compiler_does_not_emit_data_classification_enabled_on_schema_attributes():
     """A schema's data_classification_enabled feeds the catalog's exclusion list
     and is never itself a schema-level toggle."""

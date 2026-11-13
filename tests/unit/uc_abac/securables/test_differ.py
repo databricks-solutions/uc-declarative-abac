@@ -2033,6 +2033,104 @@ def test_securable_differ_ignores_included_schemas_when_desired_is_none():
 
 
 # ---------------------------------------------------------------------------
+# data_classification_auto_tagging_tags diff tests
+# ---------------------------------------------------------------------------
+
+
+def _auto_tagging_updates(desired: dict, actual: dict, **kwargs) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(**desired)},
+        {_catalog_attrs(**actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+        **kwargs,
+    )
+    return [
+        u
+        for u in diff.attributes_to_update
+        if u.attribute == "data_classification_auto_tagging_tags"
+    ]
+
+
+def test_securable_differ_detects_auto_tagging_tags_change():
+    """A changed opted-in tag set emits an update carrying the full desired set."""
+    updates = _auto_tagging_updates(
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a", "b"}),
+        },
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a", "c"}),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].old_value == frozenset({"a", "c"})
+    assert updates[0].new_value == frozenset({"a", "b"})
+
+
+def test_securable_differ_clears_auto_tagging_tags_when_disabled():
+    """auto_tagging_enabled: false on a catalog with a config clears the list,
+    including when the catalog's Data Classification is left unmanaged."""
+    updates = _auto_tagging_updates(
+        {"data_classification_auto_tagging_tags": frozenset()},
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset()
+
+
+def test_securable_differ_skips_auto_tagging_update_when_config_will_not_exist():
+    """No update when the catalog will have no config: Data Classification is
+    being disabled, or is unmanaged and not currently enabled."""
+    being_disabled = _auto_tagging_updates(
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+    )
+    never_enabled = _auto_tagging_updates(
+        {"data_classification_auto_tagging_tags": frozenset({"a"})},
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+    )
+
+    assert being_disabled == []
+    assert never_enabled == []
+
+
+def test_securable_differ_emits_auto_tagging_update_for_newly_enabled_catalog():
+    """Enabling Data Classification and auto-tagging in the same run sets the tags
+    against the fetch's empty baseline."""
+    updates = _auto_tagging_updates(
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"a"})
+
+
+# ---------------------------------------------------------------------------
 # Regression: owner resolution must preserve non-owner fields
 # ---------------------------------------------------------------------------
 

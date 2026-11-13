@@ -76,6 +76,7 @@ class SecurableAttributes:
     data_classification_enabled: bool | None = None
     data_classification_excluded_schemas: frozenset[str] | None = None
     data_classification_included_schemas: frozenset[str] | None = None
+    data_classification_auto_tagging_tags: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)

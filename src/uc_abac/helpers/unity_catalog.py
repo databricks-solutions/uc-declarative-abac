@@ -23,9 +23,13 @@ from databricks.sdk.service.catalog import (
 )
 from databricks.sdk.service.catalog import SecurableType as SdkSecurableType
 from databricks.sdk.service.dataclassification import (
+    AutoTaggingConfig,
+    AutoTaggingConfigAutoTaggingMode,
+    CatalogConfigSchemaNames,
+)
+from databricks.sdk.service.dataclassification import (
     CatalogConfig as SdkCatalogConfig,
 )
-from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
 from databricks.sdk.service.sql import (
     Disposition,
     ExecuteStatementRequestOnWaitTimeout,
@@ -936,16 +940,37 @@ def _schema_name_set(schema_names: CatalogConfigSchemaNames | None) -> frozenset
     return frozenset(schema_names.names or ())
 
 
-def _data_classification_state(
-    enabled: bool,
-    excluded: CatalogConfigSchemaNames | None,
-    included: CatalogConfigSchemaNames | None,
-) -> dict[str, object]:
-    """Build one catalog's Data Classification attributes, keyed by field name."""
+def _auto_tagged_tags(configs: list[AutoTaggingConfig] | None) -> frozenset[str]:
+    """Return the classification tags with auto-tagging enabled (DISABLED entries
+    count as not auto-tagged)."""
+    enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+    return frozenset(
+        c.classification_tag for c in configs or () if c.auto_tagging_mode == enabled
+    )
+
+
+def _data_classification_state(config: SdkCatalogConfig | None) -> dict[str, object]:
+    """Build one catalog's Data Classification attributes, keyed by field name.
+
+    ``config`` is ``None`` when the catalog has no Data Classification config
+    (disabled, with empty lists).
+    """
+    if config is None:
+        config = SdkCatalogConfig()
+        enabled = False
+    else:
+        enabled = True
     return {
         "data_classification_enabled": enabled,
-        "data_classification_excluded_schemas": _schema_name_set(excluded),
-        "data_classification_included_schemas": _schema_name_set(included),
+        "data_classification_excluded_schemas": _schema_name_set(
+            config.excluded_schemas
+        ),
+        "data_classification_included_schemas": _schema_name_set(
+            config.included_schemas
+        ),
+        "data_classification_auto_tagging_tags": _auto_tagged_tags(
+            config.auto_tag_configs
+        ),
     }
 
 
@@ -1404,10 +1429,10 @@ class UnityCatalogHelper:
         """Return one catalog's Data Classification attributes, keyed by field name.
 
         Enabled means a catalog config exists; its excluded and included schema
-        names are read from the config (empty when unset). ``NotFound`` (HTTP 404 —
+        names and auto-tagged tags are read from the config (empty when unset). ``NotFound`` (HTTP 404 —
         no config, i.e. disabled) and ``InvalidParameterValue`` (HTTP 400 — the
         catalog doesn't exist yet, e.g. scheduled for creation on this same run)
-        both mean disabled with empty schema lists. Other SDK errors propagate so
+        both mean disabled with empty lists. Other SDK errors propagate so
         the run fails rather than diffing against a guess.
         """
         try:
@@ -1415,31 +1440,35 @@ class UnityCatalogHelper:
                 name=f"catalogs/{catalog_name}/config"
             )
         except (NotFound, InvalidParameterValue):
-            return _data_classification_state(False, None, None)
-        return _data_classification_state(
-            True, config.excluded_schemas, config.included_schemas
+            return _data_classification_state(None)
+        return _data_classification_state(config)
+
+    def _update_catalog_config_field(
+        self, catalog_name: str, field: str, value: object
+    ) -> None:
+        """Replace one field of a catalog's Data Classification config.
+
+        A partial update masked to ``field``, so the config's other settings are
+        untouched. A ``None`` value sends the mask with no value, clearing the field.
+        """
+        name = f"catalogs/{catalog_name}/config"
+        self._client.data_classification.update_catalog_config(
+            name=name,
+            catalog_config=SdkCatalogConfig(name=name, **{field: value}),
+            update_mask=FieldMask([field]),
         )
 
     def _update_catalog_config_schemas(
         self, catalog_name: str, field: str, schema_names: frozenset[str]
     ) -> None:
-        """Replace one schema-list field of a catalog's Data Classification config.
-
-        A partial update masked to ``field``, so the config's other settings are
-        untouched. The API rejects an empty names list, so an empty set sends the
-        mask with no value, clearing the field.
-        """
-        name = f"catalogs/{catalog_name}/config"
+        """Replace one schema-list field; the API rejects an empty names list, so an
+        empty set clears the field."""
         names = (
             CatalogConfigSchemaNames(names=sorted(schema_names))
             if schema_names
             else None
         )
-        self._client.data_classification.update_catalog_config(
-            name=name,
-            catalog_config=SdkCatalogConfig(name=name, **{field: names}),
-            update_mask=FieldMask([field]),
-        )
+        self._update_catalog_config_field(catalog_name, field, names)
 
     def update_data_classification(self, catalog_name: str, enabled: bool) -> None:
         """Enable or disable Data Classification on a catalog.
@@ -1481,6 +1510,21 @@ class UnityCatalogHelper:
         """
         self._update_catalog_config_schemas(
             catalog_name, "included_schemas", schema_names
+        )
+
+    def update_data_classification_auto_tagging(
+        self, catalog_name: str, tag_names: frozenset[str]
+    ) -> None:
+        """Replace the governed tags a catalog's Data Classification auto-applies.
+
+        Every listed tag is written in ``AUTO_TAGGING_ENABLED`` mode; the list is
+        replaced wholesale, so tags no longer listed (including any in
+        ``AUTO_TAGGING_DISABLED`` mode) are removed. An empty set clears it.
+        """
+        enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+        configs = [AutoTaggingConfig(tag, enabled) for tag in sorted(tag_names)]
+        self._update_catalog_config_field(
+            catalog_name, "auto_tag_configs", configs or None
         )
 
     def update_owner(

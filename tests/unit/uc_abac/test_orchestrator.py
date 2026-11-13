@@ -4296,6 +4296,40 @@ def test_orchestrator_passes_data_classification_targets_when_only_schemas_decla
     assert data_classification_targets == frozenset({"enabled_cat"})
 
 
+def test_orchestrator_passes_data_classification_targets_for_catalogs_declaring_only_auto_tagging(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """A catalog declaring only auto_tagging_enabled (true or false) is fetched, so
+    the engine knows whether a config exists to enable or clear auto-tagging on."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "auto_on": {"auto_tagging_enabled": True},
+                "auto_off": {"auto_tagging_enabled": False},
+                "unset_cat": {"comment": "nothing data classification related"},
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=True,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset({"auto_on", "auto_off"})
+
+
 def test_orchestrator_passes_empty_data_classification_targets_when_taggable_management_off(
     tmp_yaml_dir,
     mock_workspace_client,

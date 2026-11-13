@@ -7,4 +7,4 @@ resources:
       $vars:
         env: prod
       comment: Financial services governed catalog (production).
-      data_classification_enabled: true
+      auto_tagging_enabled: true

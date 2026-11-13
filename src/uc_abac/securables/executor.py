@@ -50,6 +50,7 @@ _HELPER_ATTRIBUTE_METHODS = {
     "data_classification_included_schemas": (
         "update_data_classification_included_schemas"
     ),
+    "data_classification_auto_tagging_tags": "update_data_classification_auto_tagging",
 }
 
 # ``information_schema.tables.table_type`` values that don't support

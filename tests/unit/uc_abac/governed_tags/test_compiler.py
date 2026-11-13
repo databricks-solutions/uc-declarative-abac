@@ -182,3 +182,23 @@ def test_governed_tag_compiler_deduplicates_assigners():
             Principal(PrincipalType.UNKNOWN, name="data_engineers"),
         }
     )
+
+
+def test_governed_tag_compiler_ignores_auto_tagging_enabled():
+    """auto_tagging_enabled is a catalog Data Classification input, not part of the
+    tag policy: it doesn't change the compiled governed tag."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {},
+            "governed_tags": {
+                "on": {"name": "pii", "auto_tagging_enabled": True},
+            },
+        }
+    )
+    baseline = ResourcesConfig.model_validate(
+        {"catalogs": {}, "governed_tags": {"on": {"name": "pii"}}}
+    )
+
+    assert compile_desired_governed_tags(config) == compile_desired_governed_tags(
+        baseline
+    )

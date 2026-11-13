@@ -1315,6 +1315,7 @@ class SchemaConfig(BaseTaggableConfig):
 class CatalogConfig(BaseTaggableConfig):
     location: str | None = None
     data_classification_enabled: StrictBool | None = None
+    auto_tagging_enabled: StrictBool | None = None
     policies: list[PolicyConfig] | None = None
     schemas: list[SchemaConfig] | None = None
 
@@ -1342,6 +1343,19 @@ class CatalogConfig(BaseTaggableConfig):
             if isinstance(policy_dict, dict):
                 policy_dict.setdefault("catalog_name", catalog_name)
         return data
+
+    @model_validator(mode="after")
+    def _require_data_classification_for_auto_tagging(self) -> CatalogConfig:
+        """Auto-tagging is part of Data Classification, so it can't be enabled on a
+        catalog that explicitly disables Data Classification. (Leaving
+        ``data_classification_enabled`` unset is fine: auto-tagging implies it.)"""
+        if self.auto_tagging_enabled and self.data_classification_enabled is False:
+            raise ValueError(
+                f"Catalog '{self.name}' sets auto_tagging_enabled: true but "
+                "data_classification_enabled: false; auto-tagging requires Data "
+                "Classification. Remove data_classification_enabled or set it to true."
+            )
+        return self
 
     @computed_field
     @property
@@ -1478,6 +1492,7 @@ class GovernedTagConfig(BaseConfig):
     )
     allowed_values: list[str] = Field(default_factory=list)
     assigners: list[str] | None = None
+    auto_tagging_enabled: StrictBool | None = None
 
     @model_validator(mode="after")
     def _reject_allowed_values_on_system_tag(self) -> GovernedTagConfig:

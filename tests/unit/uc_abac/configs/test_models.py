@@ -416,6 +416,71 @@ def test_table_config_rejects_data_classification_enabled():
         ResourcesConfig.model_validate(data)
 
 
+@pytest.mark.parametrize("value", [True, False])
+def test_catalog_config_accepts_auto_tagging_enabled(value):
+    """auto_tagging_enabled accepts an explicit boolean on a catalog."""
+    data = {"catalogs": {"cat": _minimal_catalog(auto_tagging_enabled=value)}}
+    config = ResourcesConfig.model_validate(data)
+
+    assert config.catalogs["cat"].auto_tagging_enabled is value
+
+
+def test_catalog_config_auto_tagging_enabled_defaults_to_none():
+    """An absent auto_tagging_enabled is None (unmanaged)."""
+    config = ResourcesConfig.model_validate({"catalogs": {"cat": _minimal_catalog()}})
+
+    assert config.catalogs["cat"].auto_tagging_enabled is None
+
+
+@pytest.mark.parametrize("value", ["yes", 1])
+def test_catalog_config_rejects_non_bool_auto_tagging_enabled(value):
+    """Non-boolean auto_tagging_enabled values are rejected rather than coerced."""
+    data = {"catalogs": {"cat": _minimal_catalog(auto_tagging_enabled=value)}}
+
+    with pytest.raises(ValidationError, match="auto_tagging_enabled"):
+        ResourcesConfig.model_validate(data)
+
+
+def test_catalog_config_rejects_auto_tagging_when_data_classification_disabled():
+    """Data Classification is a prerequisite: auto-tagging on with it explicitly
+    off is a config error."""
+    data = {
+        "catalogs": {
+            "cat": _minimal_catalog(
+                auto_tagging_enabled=True, data_classification_enabled=False
+            )
+        }
+    }
+
+    with pytest.raises(ValidationError, match="data_classification_enabled"):
+        ResourcesConfig.model_validate(data)
+
+
+@pytest.mark.parametrize("data_classification", [True, None])
+def test_catalog_config_allows_auto_tagging_when_data_classification_not_disabled(
+    data_classification,
+):
+    """Auto-tagging is valid with Data Classification enabled or unset (implied)."""
+    data = {
+        "catalogs": {
+            "cat": _minimal_catalog(
+                auto_tagging_enabled=True,
+                data_classification_enabled=data_classification,
+            )
+        }
+    }
+
+    config = ResourcesConfig.model_validate(data)
+
+    assert config.catalogs["cat"].auto_tagging_enabled is True
+
+
+def test_schema_config_rejects_auto_tagging_enabled():
+    """auto_tagging_enabled is catalog-only: a schema carrying it fails."""
+    with pytest.raises(ValidationError, match="auto_tagging_enabled"):
+        ResourcesConfig.model_validate(_catalog_with_schema(auto_tagging_enabled=True))
+
+
 def test_catalog_config_data_classification_enabled_overridable_via_ref(
     tmp_yaml_dir,
 ):
@@ -3287,6 +3352,19 @@ def test_governed_tag_config_accepts_assigners():
 
     gt = config.governed_tags["pii"]
     assert gt.assigners == ["data_governance_team", "user@company.com"]
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_governed_tag_config_accepts_auto_tagging_enabled(value):
+    """A governed tag accepts an explicit auto_tagging_enabled boolean."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {},
+            "governed_tags": {"pii": {"name": "pii", "auto_tagging_enabled": value}},
+        }
+    )
+
+    assert config.governed_tags["pii"].auto_tagging_enabled is value
 
 
 def test_governed_tag_config_assigners_defaults_to_none():

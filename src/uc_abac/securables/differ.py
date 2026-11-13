@@ -35,6 +35,7 @@ _GOVERNED_ATTRIBUTES = [
     "data_classification_enabled",
     "data_classification_excluded_schemas",
     "data_classification_included_schemas",
+    "data_classification_auto_tagging_tags",
 ]
 
 # Governed attributes whose value is already a frozenset (diffed as a whole set).
@@ -43,6 +44,7 @@ _COLLECTION_ATTRIBUTES = frozenset(
         "rfa_destinations",
         "data_classification_excluded_schemas",
         "data_classification_included_schemas",
+        "data_classification_auto_tagging_tags",
     }
 )
 
@@ -438,6 +440,16 @@ def _log_nonexistent_non_function_securables(
     return frozenset((sec.securable_type, sec.full_name) for sec in nonexistent)
 
 
+def _data_classification_config_will_exist(
+    desired: SecurableAttributes, actual: SecurableAttributes | None
+) -> bool:
+    """Return whether the catalog will have a Data Classification config after the
+    run: it is (effectively) enabled in config, or unmanaged and already enabled."""
+    if desired.data_classification_enabled is not None:
+        return desired.data_classification_enabled
+    return actual is not None and actual.data_classification_enabled is True
+
+
 def _diff_attributes(
     desired_attrs: set[SecurableAttributes],
     actual_attrs: set[SecurableAttributes],
@@ -472,6 +484,10 @@ def _diff_attributes(
     - ``data_classification_included_schemas`` — catalog-only; always desired
       empty under an enabled catalog, so an include list set outside config is
       cleared (it is mutually exclusive with exclusions).
+    - ``data_classification_auto_tagging_tags`` — catalog-only and authoritative.
+      Dropped when the catalog will have no Data Classification config after the
+      run (see ``_data_classification_config_will_exist``): auto-tagging is then
+      off anyway, and there is no config to patch.
 
     ``location`` is creation-only (see ``compile_desired_securables``) and is
     not in ``_GOVERNED_ATTRIBUTES`` — it's never diffed.
@@ -497,6 +513,10 @@ def _diff_attributes(
         for attr in _GOVERNED_ATTRIBUTES:
             desired_raw = getattr(desired, attr)
             if desired_raw is None:
+                continue
+            if attr == "data_classification_auto_tagging_tags" and not (
+                _data_classification_config_will_exist(desired, actual)
+            ):
                 continue
 
             actual_raw = getattr(actual, attr, None) if actual is not None else None
