@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uc_abac.configs import (
     RLS_WILDCARD,
+    CatalogConfig,
     ColumnConfig,
     ConditionRuleConfig,
     FilterRuleConfig,
@@ -31,14 +32,50 @@ from uc_abac.types import (
 )
 
 
+def _excluded_schemas(catalog: CatalogConfig) -> frozenset[str] | None:
+    """Return the schemas to exclude from the catalog's Data Classification scan.
+
+    Exclusions are managed only under a catalog declaring
+    ``data_classification_enabled: true``: the list is then exactly the schemas
+    declaring ``false`` (``true`` and unset schemas are scanned), so an empty
+    frozenset means "exclude nothing". Any other catalog value leaves the list
+    unmanaged (``None``).
+    """
+    if catalog.data_classification_enabled is not True:
+        return None
+    return frozenset(
+        schema.name
+        for schema in catalog.schemas or []
+        if schema.data_classification_enabled is False
+    )
+
+
+def _data_classification_fields(
+    obj: SecurableConfig,
+) -> tuple[bool | None, frozenset[str] | None, frozenset[str] | None]:
+    """Return the catalog's ``(enabled, excluded_schemas, included_schemas)``.
+
+    All three are catalog attributes: a schema's ``data_classification_enabled``
+    only feeds its catalog's exclusion list and is never a schema-level toggle.
+    Under an enabled catalog every non-excluded schema is scanned, so the include
+    list is managed as empty (an include list set outside config is cleared, since
+    it is mutually exclusive with exclusions); otherwise it is unmanaged.
+    """
+    if not isinstance(obj, CatalogConfig):
+        return None, None, None
+    excluded = _excluded_schemas(obj)
+    included = frozenset() if excluded is not None else None
+    return obj.data_classification_enabled, excluded, included
+
+
 def _emit_attributes(
     securable_type: SecurableType,
     obj: SecurableConfig,
 ) -> SecurableAttributes | None:
     """Return a SecurableAttributes if any managed (updatable) attribute is set, else None.
 
-    Managed attributes: ``owner``, ``comment``, ``rfa_destinations``, and
-    ``data_classification_enabled``. Owner is emitted as an unresolved Principal
+    Managed attributes: ``owner``, ``comment``, ``rfa_destinations``, and the
+    catalog's Data Classification attributes. Owner is emitted as an unresolved Principal
     (principal_type=UNKNOWN) carrying the display name from config; resolution
     happens post-fetch. ``comment`` is read
     directly from the config and only applies to the four taggable types
@@ -50,8 +87,9 @@ def _emit_attributes(
     validation is needed here. An absent field stays ``None`` (unmanaged —
     existing destinations are left untouched), while an explicitly-empty list
     compiles to an empty frozenset, signalling "remove all destinations".
-    ``data_classification_enabled`` exists only on catalogs; an absent field stays
-    ``None`` (unmanaged), while an explicit ``False`` is managed ("disabled").
+    The Data Classification attributes are emitted on catalogs only (see
+    ``_data_classification_fields``); an absent ``data_classification_enabled``
+    stays ``None`` (unmanaged), while an explicit ``False`` is managed ("disabled").
 
     ``location`` is **not** a managed attribute — it's only consulted at CREATE
     time (see ``compile_desired_securables``), never diffed.
@@ -68,7 +106,9 @@ def _emit_attributes(
 
     raw_rfa = getattr(obj, "rfa_destinations", None)
     rfa_destinations = frozenset(raw_rfa) if raw_rfa is not None else None
-    data_classification_enabled = getattr(obj, "data_classification_enabled", None)
+    data_classification_enabled, excluded_schemas, included_schemas = (
+        _data_classification_fields(obj)
+    )
 
     if (
         owner is None
@@ -84,6 +124,8 @@ def _emit_attributes(
         comment=comment,
         rfa_destinations=rfa_destinations,
         data_classification_enabled=data_classification_enabled,
+        data_classification_excluded_schemas=excluded_schemas,
+        data_classification_included_schemas=included_schemas,
     )
 
 

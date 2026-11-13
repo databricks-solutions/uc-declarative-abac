@@ -364,18 +364,37 @@ def test_catalog_config_rejects_non_bool_data_classification_enabled(value):
         ResourcesConfig.model_validate(data)
 
 
-def test_schema_config_rejects_data_classification_enabled():
-    """data_classification_enabled is catalog-only: a schema carrying it fails."""
-    data = {
-        "catalogs": {
-            "cat": _minimal_catalog(
-                schemas=[{"name": "s", "data_classification_enabled": True}]
-            )
-        }
+def _catalog_with_schema(**schema_fields):
+    """Return a ResourcesConfig dict with one catalog holding one schema ``s``."""
+    return {
+        "catalogs": {"cat": _minimal_catalog(schemas=[{"name": "s", **schema_fields}])}
     }
 
+
+@pytest.mark.parametrize("value", [True, False])
+def test_schema_config_accepts_data_classification_enabled(value):
+    """data_classification_enabled accepts an explicit boolean on a schema."""
+    config = ResourcesConfig.model_validate(
+        _catalog_with_schema(data_classification_enabled=value)
+    )
+
+    assert config.catalogs["cat"].schemas[0].data_classification_enabled is value
+
+
+def test_schema_config_data_classification_enabled_defaults_to_none():
+    """An absent schema-level data_classification_enabled is None."""
+    config = ResourcesConfig.model_validate(_catalog_with_schema())
+
+    assert config.catalogs["cat"].schemas[0].data_classification_enabled is None
+
+
+@pytest.mark.parametrize("value", ["no", "false", 0])
+def test_schema_config_rejects_non_bool_data_classification_enabled(value):
+    """Non-boolean schema values are rejected rather than coerced."""
     with pytest.raises(ValidationError, match="data_classification_enabled"):
-        ResourcesConfig.model_validate(data)
+        ResourcesConfig.model_validate(
+            _catalog_with_schema(data_classification_enabled=value)
+        )
 
 
 def test_table_config_rejects_data_classification_enabled():

@@ -1257,6 +1257,7 @@ class VolumeConfig(BaseTaggableConfig):
 class SchemaConfig(BaseTaggableConfig):
     catalog_name: str
     location: str | None = None
+    data_classification_enabled: StrictBool | None = None
     policies: list[PolicyConfig] | None = None
     tables: list[TableConfig] | None = None
     volumes: list[VolumeConfig] | None = None

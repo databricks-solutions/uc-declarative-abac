@@ -4217,6 +4217,44 @@ def test_orchestrator_passes_data_classification_targets_for_catalogs_declaring_
     assert data_classification_targets == frozenset({"enabled_cat", "disabled_cat"})
 
 
+def test_orchestrator_passes_data_classification_targets_when_only_schemas_declare_it_under_enabled_catalog(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """Schema-level false values are managed via the enabled catalog's own fetch;
+    a catalog that is unset is not fetched even when its schemas declare false."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "enabled_cat": {
+                    "data_classification_enabled": True,
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                },
+                "unset_cat": {
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                },
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=True,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset({"enabled_cat"})
+
+
 def test_orchestrator_passes_empty_data_classification_targets_when_taggable_management_off(
     tmp_yaml_dir,
     mock_workspace_client,

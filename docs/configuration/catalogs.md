@@ -33,7 +33,7 @@ The optional `location` sets the catalog's managed storage location (`MANAGED LO
 
 The optional `data_classification_enabled` turns [Data Classification](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification) on or off for the catalog:
 
-- `true` enables it with the default settings (all schemas scanned, no auto-tagging). If it is already enabled, its existing settings are left untouched.
+- `true` enables it, with no auto-tagging. Every schema is scanned except those that set `data_classification_enabled: false` (see {ref}`schemas`). If it is already enabled, any list of included schemas set outside config is removed so that every other schema is scanned; auto-tagging settings are left untouched.
 - `false` disables it.
 - Omitting the field leaves the catalog's Data Classification state unmanaged.
 

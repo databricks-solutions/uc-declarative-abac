@@ -42,6 +42,16 @@ _SECURABLE_DEPTH: dict[SecurableType, int] = {
     SecurableType.COLUMN: 3,
 }
 
+# Catalog schema-list attributes applied via ``uc_helper.<method>(catalog, names)``.
+_HELPER_ATTRIBUTE_METHODS = {
+    "data_classification_excluded_schemas": (
+        "update_data_classification_excluded_schemas"
+    ),
+    "data_classification_included_schemas": (
+        "update_data_classification_included_schemas"
+    ),
+}
+
 # ``information_schema.tables.table_type`` values that don't support
 # ``ALTER TABLE … ALTER COLUMN … COMMENT``. Column comments on these are applied
 # one-per-column via ``COMMENT ON COLUMN`` instead of a single batched ALTER.
@@ -330,6 +340,11 @@ def _attribute_update_context(update: AttributeUpdate, stmt: str | None) -> str:
             f"update_data_classification("
             f"{update.securable_type.value}, {update.full_name})"
         )
+    if update.attribute in _HELPER_ATTRIBUTE_METHODS:
+        return (
+            f"{_HELPER_ATTRIBUTE_METHODS[update.attribute]}("
+            f"{update.securable_type.value}, {update.full_name})"
+        )
     return (
         f"Unknown attribute {update.attribute!r} on "
         f"{update.securable_type.value} {update.full_name}"
@@ -365,6 +380,9 @@ def _run_attribute_update(
             uc_helper.update_data_classification(
                 update.full_name, next(iter(update.new_value))
             )
+        case attribute if attribute in _HELPER_ATTRIBUTE_METHODS:
+            method = getattr(uc_helper, _HELPER_ATTRIBUTE_METHODS[attribute])
+            method(update.full_name, update.new_value)
         case _:
             raise OrchestratorError(
                 f"No executor branch for attribute {update.attribute!r}"
@@ -599,26 +617,39 @@ def _attribute_update_stmt(update: AttributeUpdate) -> str | None:
     )
 
 
+# Attribute ranks within a depth (lower runs first); unlisted attributes rank last.
+_ATTRIBUTE_RANK = {
+    "owner": 0,
+    "data_classification_enabled": 1,
+    "data_classification_included_schemas": 2,
+}
+_DEFAULT_ATTRIBUTE_RANK = 3
+
+
 def _attribute_update_sort_key(update: AttributeUpdate) -> tuple[int, int]:
-    """Sort key for ordering attribute updates: ``(depth, owner-first)``.
+    """Sort key for ordering attribute updates: ``(depth, attribute rank)``.
 
     Depth uses the shared ``_SECURABLE_DEPTH`` topology so catalogs run before
     schemas, which run before tables/volumes/functions. Within each depth,
-    owner updates sort before other attributes so the engine can take
-    ownership of a securable before altering its other attributes.
+    owner updates run first so the engine can take ownership of a securable
+    before altering its other attributes; then ``data_classification_enabled``,
+    so a catalog's Data Classification config exists before its schema lists are
+    patched; then ``data_classification_included_schemas``, so an include list
+    is cleared before ``data_classification_excluded_schemas`` sets exclusions
+    (the two are mutually exclusive); then everything else.
 
     Unknown securable types fall back to depth 99, mirroring
     ``_creation_sort_key``.
     """
     depth = _SECURABLE_DEPTH.get(update.securable_type, 99)
-    owner_priority = 0 if update.attribute == "owner" else 1
-    return (depth, owner_priority)
+    rank = _ATTRIBUTE_RANK.get(update.attribute, _DEFAULT_ATTRIBUTE_RANK)
+    return (depth, rank)
 
 
 def _bucket_attribute_updates(
     updates: list[AttributeUpdate],
 ) -> dict[tuple[int, int], list[AttributeUpdate]]:
-    """Bucket attribute updates by ``(depth, owner-first)``, preserving input order within each bucket."""
+    """Bucket attribute updates by ``(depth, attribute rank)``, preserving input order within each bucket."""
     by_key: dict[tuple[int, int], list[AttributeUpdate]] = defaultdict(list)
     for update in updates:
         by_key[_attribute_update_sort_key(update)].append(update)
@@ -632,7 +663,7 @@ def _run_attribute_update_sub_batch(
     dry_run: bool,
     max_workers: int,
 ) -> list[str]:
-    """Execute one (depth, owner|other) bucket of attribute updates in parallel; stream logs and return input-order statements."""
+    """Execute one (depth, attribute rank) bucket of attribute updates in parallel; stream logs and return input-order statements."""
     work_items: list[tuple[AttributeUpdate, str | None]] = [
         (update, _attribute_update_stmt(update)) for update in updates
     ]
@@ -704,13 +735,14 @@ def execute_securable_diff(
     """Execute securable creates, replaces, and attribute updates from a SecurableDiff.
 
     Execution order: creates (SQL, parent-first by depth) → replaces (SQL) →
-    attribute updates (depth-ordered, owner-first within each depth).
+    attribute updates (depth-ordered, ranked by attribute within each depth).
 
     Attribute updates are split into sub-batches keyed by
-    ``(depth, owner-first)`` and run sequentially in that order — catalogs
+    ``(depth, attribute rank)`` and run sequentially in that order — catalogs
     before schemas before tables/volumes/functions, and within each depth all
-    owner changes complete before any other attribute change starts. This lets the
-    engine take ownership of a parent before it tries to alter its children.
+    owner changes complete before any other attribute change starts (see
+    ``_attribute_update_sort_key``). This lets the engine take ownership of a
+    parent before it tries to alter its children.
 
     Within each depth bucket of creates, and within each of the replaces and
     attribute-update sub-batches, items run in parallel up to
@@ -757,7 +789,7 @@ def execute_securable_diff(
 
     # Column comment updates are handled by a dedicated final phase (batched one ALTER
     # per base table; COMMENT ON COLUMN for view-family tables); every other attribute
-    # update flows through the generic depth/owner-first bucketing.
+    # update flows through the generic depth/attribute-rank bucketing.
     column_comment_updates = [
         u for u in diff.attributes_to_update if _is_column_comment_update(u)
     ]

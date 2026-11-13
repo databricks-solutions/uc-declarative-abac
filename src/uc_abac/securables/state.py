@@ -74,6 +74,8 @@ class SecurableAttributes:
     comment: str | None = None
     rfa_destinations: frozenset[str] | None = None
     data_classification_enabled: bool | None = None
+    data_classification_excluded_schemas: frozenset[str] | None = None
+    data_classification_included_schemas: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)

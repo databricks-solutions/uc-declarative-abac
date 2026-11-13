@@ -1984,6 +1984,131 @@ def test_uc_helper_fetch_actual_securables_propagates_unexpected_data_classifica
         )
 
 
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_excluded_schemas_from_catalog_config(
+    mock_fetch,
+):
+    """The catalog config's excluded schema names are merged onto the CATALOG row."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+    from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        excluded_schemas=CatalogConfigSchemaNames(names=["raw", "tmp"])
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    attr = _catalog_attribute(attributes)
+    assert attr.data_classification_enabled is True
+    assert attr.data_classification_excluded_schemas == frozenset({"raw", "tmp"})
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_excluded_schemas_when_config_has_none(
+    mock_fetch,
+):
+    """A config without excluded schemas yields an empty (not None) exclusion list."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_excluded_schemas == (
+        frozenset()
+    )
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_excluded_schemas_when_config_missing(
+    mock_fetch,
+):
+    """No config (or a catalog not yet created) means nothing is excluded."""
+    from databricks.sdk.errors import NotFound
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.side_effect = NotFound("missing")
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog", "new_catalog"],
+        data_classification_targets={"my_catalog", "new_catalog"},
+    )
+
+    for name in ("my_catalog", "new_catalog"):
+        attr = _catalog_attribute(attributes, name)
+        assert attr.data_classification_excluded_schemas == frozenset()
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_included_schemas_from_catalog_config(
+    mock_fetch,
+):
+    """The catalog config's included schema names are merged onto the CATALOG row."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+    from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        included_schemas=CatalogConfigSchemaNames(names=["gold"])
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    attr = _catalog_attribute(attributes)
+    assert attr.data_classification_included_schemas == frozenset({"gold"})
+    assert attr.data_classification_excluded_schemas == frozenset()
+
+
+@pytest.mark.parametrize("missing", [True, False])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_included_schemas_when_none_set(
+    mock_fetch, missing
+):
+    """A config without an include list, or no config at all, yields an empty list."""
+    from databricks.sdk.errors import NotFound
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    if missing:
+        client.data_classification.get_catalog_config.side_effect = NotFound("x")
+    else:
+        client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_included_schemas == (
+        frozenset()
+    )
+
+
 # ---------------------------------------------------------------------------
 # UnityCatalogHelper.fetch_actual_securables — column-comment fetch
 # ---------------------------------------------------------------------------
@@ -2339,6 +2464,51 @@ def test_uc_helper_update_data_classification_deletes_config_when_disabled():
         name="catalogs/my_catalog/config"
     )
     client.data_classification.create_catalog_config.assert_not_called()
+
+
+def _get_excluded_schemas_update_call(client: MagicMock):
+    """Return the kwargs from the most recent update_catalog_config call."""
+    return client.data_classification.update_catalog_config.call_args.kwargs
+
+
+def test_uc_helper_update_data_classification_excluded_schemas_patches_with_update_mask():
+    """Exclusions are replaced via a partial update masked to excluded_schemas."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_excluded_schemas(
+        "my_catalog", frozenset({"tmp", "raw"})
+    )
+
+    kwargs = _get_excluded_schemas_update_call(client)
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert sorted(kwargs["catalog_config"].excluded_schemas.names) == ["raw", "tmp"]
+    assert kwargs["update_mask"].paths == ["excluded_schemas"]
+
+
+def test_uc_helper_update_data_classification_excluded_schemas_clears_when_empty():
+    """An empty set clears the exclusions: the mask is sent with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_excluded_schemas("my_catalog", frozenset())
+
+    kwargs = _get_excluded_schemas_update_call(client)
+    assert kwargs["catalog_config"].excluded_schemas is None
+    assert kwargs["update_mask"].paths == ["excluded_schemas"]
+
+
+def test_uc_helper_update_data_classification_included_schemas_clears_with_update_mask():
+    """Clearing the include list sends the included_schemas mask with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_included_schemas("my_catalog", frozenset())
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert kwargs["catalog_config"].included_schemas is None
+    assert kwargs["update_mask"].paths == ["included_schemas"]
 
 
 def _get_rfa_update_call(client: MagicMock):

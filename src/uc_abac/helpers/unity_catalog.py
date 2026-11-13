@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.common.types.fieldmask import FieldMask
 from databricks.sdk.errors import InvalidParameterValue, NotFound
 from databricks.sdk.service.catalog import (
     AccessRequestDestinations,
@@ -24,6 +25,7 @@ from databricks.sdk.service.catalog import SecurableType as SdkSecurableType
 from databricks.sdk.service.dataclassification import (
     CatalogConfig as SdkCatalogConfig,
 )
+from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
 from databricks.sdk.service.sql import (
     Disposition,
     ExecuteStatementRequestOnWaitTimeout,
@@ -927,6 +929,26 @@ def _merge_attribute_values(
     return set(by_key.values())
 
 
+def _schema_name_set(schema_names: CatalogConfigSchemaNames | None) -> frozenset[str]:
+    """Return a CatalogConfig schema-list field as a frozenset (empty when unset)."""
+    if schema_names is None:
+        return frozenset()
+    return frozenset(schema_names.names or ())
+
+
+def _data_classification_state(
+    enabled: bool,
+    excluded: CatalogConfigSchemaNames | None,
+    included: CatalogConfigSchemaNames | None,
+) -> dict[str, object]:
+    """Build one catalog's Data Classification attributes, keyed by field name."""
+    return {
+        "data_classification_enabled": enabled,
+        "data_classification_excluded_schemas": _schema_name_set(excluded),
+        "data_classification_included_schemas": _schema_name_set(included),
+    }
+
+
 def _validate_system_catalog(system_catalog: str) -> str:
     """Validate and return a plain, unquoted Unity Catalog identifier."""
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", system_catalog) is None:
@@ -1179,9 +1201,10 @@ class UnityCatalogHelper:
         ``data_classification_targets`` is the optional set of catalog names that
         declare ``data_classification_enabled`` in config. When supplied, the helper
         fans out one ``data_classification.get_catalog_config`` call per catalog (in
-        parallel) and merges the result onto each CATALOG row, inserting fresh rows
-        for catalogs absent from info_schema (about to be created). When omitted or
-        empty, no call fires and ``data_classification_enabled`` stays ``None``.
+        parallel) and merges ``data_classification_enabled`` and the excluded /
+        included schema lists onto each CATALOG row, inserting fresh rows for
+        catalogs absent from info_schema (about to be created). When omitted or
+        empty, no call fires and those fields stay ``None``.
         """
         if self._securables_cache is not None and self._attributes_cache is not None:
             return self._securables_cache, self._attributes_cache
@@ -1209,10 +1232,9 @@ class UnityCatalogHelper:
             )
 
         if data_classification_targets:
-            enabled_map = self._fetch_data_classification(data_classification_targets)
-            attributes = _merge_attribute_values(
-                attributes, "data_classification_enabled", enabled_map
-            )
+            fetched = self._fetch_data_classification(data_classification_targets)
+            for field, values_by_key in fetched.items():
+                attributes = _merge_attribute_values(attributes, field, values_by_key)
 
         if column_comment_tables:
             # Baseline every managed table's columns to comment=None (from the columns the
@@ -1357,41 +1379,74 @@ class UnityCatalogHelper:
 
     def _fetch_data_classification(
         self, catalog_names: set[str]
-    ) -> dict[tuple[SecurableType, str], bool]:
-        """Fan out one ``data_classification.get_catalog_config`` call per catalog."""
+    ) -> dict[str, dict[tuple[SecurableType, str], object]]:
+        """Fan out one ``data_classification.get_catalog_config`` call per catalog.
+
+        Returns ``{attribute: {(CATALOG, catalog_name): value}}`` for every
+        Data Classification attribute, ready for ``_merge_attribute_values``.
+        """
         with ThreadPoolExecutor(max_workers=_MAX_DATA_CLASSIFICATION_WORKERS) as pool:
             futures = {
-                pool.submit(self._get_data_classification_enabled, name): name
+                pool.submit(self._get_data_classification_state, name): name
                 for name in catalog_names
             }
-            return {
+            states = {
                 (SecurableType.CATALOG, futures[future]): future.result()
                 for future in as_completed(futures)
             }
+        by_attribute: dict[str, dict[tuple[SecurableType, str], object]] = {}
+        for key, state in states.items():
+            for attribute, value in state.items():
+                by_attribute.setdefault(attribute, {})[key] = value
+        return by_attribute
 
-    def _get_data_classification_enabled(self, catalog_name: str) -> bool:
-        """Return whether a Data Classification config exists for one catalog.
+    def _get_data_classification_state(self, catalog_name: str) -> dict[str, object]:
+        """Return one catalog's Data Classification attributes, keyed by field name.
 
-        ``NotFound`` (HTTP 404 — no config, i.e. disabled) and
-        ``InvalidParameterValue`` (HTTP 400 — the catalog doesn't exist yet, e.g.
-        scheduled for creation on this same run) both mean disabled. Other SDK
-        errors propagate so the run fails rather than diffing against a guess.
+        Enabled means a catalog config exists; its excluded and included schema
+        names are read from the config (empty when unset). ``NotFound`` (HTTP 404 —
+        no config, i.e. disabled) and ``InvalidParameterValue`` (HTTP 400 — the
+        catalog doesn't exist yet, e.g. scheduled for creation on this same run)
+        both mean disabled with empty schema lists. Other SDK errors propagate so
+        the run fails rather than diffing against a guess.
         """
         try:
-            self._client.data_classification.get_catalog_config(
+            config = self._client.data_classification.get_catalog_config(
                 name=f"catalogs/{catalog_name}/config"
             )
         except (NotFound, InvalidParameterValue):
-            return False
-        return True
+            return _data_classification_state(False, None, None)
+        return _data_classification_state(
+            True, config.excluded_schemas, config.included_schemas
+        )
+
+    def _update_catalog_config_schemas(
+        self, catalog_name: str, field: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace one schema-list field of a catalog's Data Classification config.
+
+        A partial update masked to ``field``, so the config's other settings are
+        untouched. The API rejects an empty names list, so an empty set sends the
+        mask with no value, clearing the field.
+        """
+        name = f"catalogs/{catalog_name}/config"
+        names = (
+            CatalogConfigSchemaNames(names=sorted(schema_names))
+            if schema_names
+            else None
+        )
+        self._client.data_classification.update_catalog_config(
+            name=name,
+            catalog_config=SdkCatalogConfig(name=name, **{field: names}),
+            update_mask=FieldMask([field]),
+        )
 
     def update_data_classification(self, catalog_name: str, enabled: bool) -> None:
         """Enable or disable Data Classification on a catalog.
 
         Enabling creates a catalog config with default settings (every schema
-        scanned, no auto-tagging); disabling deletes the catalog config. Only the
-        config's existence is managed — an existing config's contents are never
-        modified.
+        scanned, no auto-tagging); disabling deletes the catalog config. The
+        schema lists are managed separately by the two update methods below.
         """
         if enabled:
             self._client.data_classification.create_catalog_config(
@@ -1402,6 +1457,31 @@ class UnityCatalogHelper:
             self._client.data_classification.delete_catalog_config(
                 name=f"catalogs/{catalog_name}/config"
             )
+
+    def update_data_classification_excluded_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas excluded from a catalog's Data Classification scan.
+
+        Fails (and is logged by the executor) if the config still uses
+        ``included_schemas``, which is mutually exclusive with exclusions; the
+        executor clears the include list first in the same run.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "excluded_schemas", schema_names
+        )
+
+    def update_data_classification_included_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas a catalog's Data Classification scan is limited to.
+
+        The engine only ever clears this (an empty set): an enabled catalog scans
+        every schema not explicitly excluded.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "included_schemas", schema_names
+        )
 
     def update_owner(
         self, securable_type: SecurableType, full_name: str, new_owner: str

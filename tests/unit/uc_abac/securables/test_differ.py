@@ -1896,6 +1896,143 @@ def test_securable_differ_preserves_data_classification_enabled_when_owner_resol
 
 
 # ---------------------------------------------------------------------------
+# data_classification_excluded_schemas diff tests
+# ---------------------------------------------------------------------------
+
+
+def _excluded_schemas_updates(updates: list[AttributeUpdate]) -> list:
+    return [u for u in updates if u.attribute == "data_classification_excluded_schemas"]
+
+
+def _diff_excluded_schemas(desired: frozenset | None, actual: frozenset) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_excluded_schemas=desired)},
+        {_catalog_attrs(data_classification_excluded_schemas=actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+    return _excluded_schemas_updates(diff.attributes_to_update)
+
+
+def test_securable_differ_detects_excluded_schemas_addition():
+    """A newly-disabled schema emits an update carrying the full desired list."""
+    updates = _diff_excluded_schemas(frozenset({"raw", "tmp"}), frozenset({"raw"}))
+
+    assert updates == [
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="cat",
+            attribute="data_classification_excluded_schemas",
+            old_value=frozenset({"raw"}),
+            new_value=frozenset({"raw", "tmp"}),
+        )
+    ]
+
+
+def test_securable_differ_detects_excluded_schemas_removal():
+    """An exclusion absent from config (re-enabled schema, or added outside config)
+    is removed — the list is authoritative."""
+    updates = _diff_excluded_schemas(frozenset({"raw"}), frozenset({"raw", "manual"}))
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"raw"})
+
+
+def test_securable_differ_detects_excluded_schemas_clear():
+    """An empty desired list against existing exclusions emits a clearing update."""
+    updates = _diff_excluded_schemas(frozenset(), frozenset({"raw"}))
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset()
+
+
+def test_securable_differ_ignores_matching_excluded_schemas_in_any_order():
+    """Equal lists produce no update, including two empty lists."""
+    assert _diff_excluded_schemas(frozenset({"b", "a"}), frozenset({"a", "b"})) == []
+    assert _diff_excluded_schemas(frozenset(), frozenset()) == []
+
+
+def test_securable_differ_ignores_excluded_schemas_when_desired_is_none():
+    """Unmanaged (None) exclusions leave the actual list untouched."""
+    assert _diff_excluded_schemas(None, frozenset({"raw"})) == []
+
+
+def test_securable_differ_emits_excluded_schemas_update_for_newly_created_catalog():
+    """A catalog created this run gets its exclusions set after creation (the fetch
+    supplies an empty baseline)."""
+    catalog = Securable(securable_type=SecurableType.CATALOG, full_name="new_cat")
+
+    diff = compute_securable_diff(
+        {
+            _catalog_attrs(
+                "new_cat",
+                data_classification_enabled=True,
+                data_classification_excluded_schemas=frozenset({"raw"}),
+            )
+        },
+        {
+            _catalog_attrs(
+                "new_cat",
+                data_classification_enabled=False,
+                data_classification_excluded_schemas=frozenset(),
+            )
+        },
+        {catalog},
+        set(),
+        _resolver(),
+        _change_logger(),
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+    )
+
+    updates = _excluded_schemas_updates(diff.attributes_to_update)
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"raw"})
+
+
+def _included_schemas_updates(desired: frozenset | None, actual: frozenset) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_included_schemas=desired)},
+        {_catalog_attrs(data_classification_included_schemas=actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+    return [
+        u
+        for u in diff.attributes_to_update
+        if u.attribute == "data_classification_included_schemas"
+    ]
+
+
+def test_securable_differ_clears_included_schemas_set_outside_config():
+    """An include list on the actual config is cleared, recording the removed names."""
+    updates = _included_schemas_updates(frozenset(), frozenset({"a", "b"}))
+
+    assert updates == [
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="cat",
+            attribute="data_classification_included_schemas",
+            old_value=frozenset({"a", "b"}),
+            new_value=frozenset(),
+        )
+    ]
+
+
+def test_securable_differ_ignores_included_schemas_when_already_empty():
+    """No include list on the actual config means no update."""
+    assert _included_schemas_updates(frozenset(), frozenset()) == []
+
+
+def test_securable_differ_ignores_included_schemas_when_desired_is_none():
+    """An unmanaged include list (catalog not true) is left untouched."""
+    assert _included_schemas_updates(None, frozenset({"a"})) == []
+
+
+# ---------------------------------------------------------------------------
 # Regression: owner resolution must preserve non-owner fields
 # ---------------------------------------------------------------------------
 

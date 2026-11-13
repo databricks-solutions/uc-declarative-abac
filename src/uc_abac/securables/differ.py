@@ -33,7 +33,18 @@ _GOVERNED_ATTRIBUTES = [
     "comment",
     "rfa_destinations",
     "data_classification_enabled",
+    "data_classification_excluded_schemas",
+    "data_classification_included_schemas",
 ]
+
+# Governed attributes whose value is already a frozenset (diffed as a whole set).
+_COLLECTION_ATTRIBUTES = frozenset(
+    {
+        "rfa_destinations",
+        "data_classification_excluded_schemas",
+        "data_classification_included_schemas",
+    }
+)
 
 # Empty (inert) scope: the default when creation is disabled — matches nothing.
 _EMPTY_SCOPE = Scope()
@@ -43,12 +54,12 @@ def _to_frozenset(attr: str, value: object) -> frozenset:
     """Wrap a SecurableAttributes field value into a frozenset for diff comparison.
 
     Scalar fields (``owner``, ``comment``, ``data_classification_enabled``) become
-    a 1-element frozenset, or an empty frozenset when the value is missing / empty. Collection fields
-    (``rfa_destinations``) pass through as the natural frozenset (``None`` →
-    empty). This keeps the diff loop attribute-agnostic and lets the executor
+    a 1-element frozenset, or an empty frozenset when the value is missing / empty.
+    Collection fields (``_COLLECTION_ATTRIBUTES``) pass through as the natural
+    frozenset (``None`` → empty). This keeps the diff loop attribute-agnostic and lets the executor
     take a uniform set-shaped value.
     """
-    if attr == "rfa_destinations":
+    if attr in _COLLECTION_ATTRIBUTES:
         return value if value is not None else frozenset()
     if value is None or value == "":
         return frozenset()
@@ -455,6 +466,12 @@ def _diff_attributes(
       catalogs too (the Data Classification config can only be created once the
       catalog exists); the fetch supplies a ``False`` baseline for such catalogs, so
       a desired ``False`` on a new catalog produces no update.
+    - ``data_classification_excluded_schemas`` — catalog-only and authoritative
+      (the whole set is replaced). Like ``data_classification_enabled``, emitted
+      for newly-created catalogs against the fetch's empty baseline.
+    - ``data_classification_included_schemas`` — catalog-only; always desired
+      empty under an enabled catalog, so an include list set outside config is
+      cleared (it is mutually exclusive with exclusions).
 
     ``location`` is creation-only (see ``compile_desired_securables``) and is
     not in ``_GOVERNED_ATTRIBUTES`` — it's never diffed.
