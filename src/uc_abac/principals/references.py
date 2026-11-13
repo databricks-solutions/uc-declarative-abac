@@ -37,7 +37,9 @@ def _domain_owners(config: ResourcesConfig) -> set[str]:
 
 def _governed_tag_assigners(config: ResourcesConfig) -> set[str]:
     return {
-        name for tag in (config.governed_tags or {}).values() for name in tag.assigners
+        name
+        for tag in (config.governed_tags or {}).values()
+        for name in tag.assigners or ()
     }
 
 

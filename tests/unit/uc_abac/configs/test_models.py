@@ -3289,6 +3289,24 @@ def test_governed_tag_config_accepts_assigners():
     assert gt.assigners == ["data_governance_team", "user@company.com"]
 
 
+def test_governed_tag_config_assigners_defaults_to_none():
+    """Omitted assigners are None (unmanaged), not an empty list."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {}, "governed_tags": {"pii": {"name": "pii"}}}
+    )
+
+    assert config.governed_tags["pii"].assigners is None
+
+
+def test_governed_tag_config_accepts_empty_assigners():
+    """An explicit empty assigners list is kept as [] (remove all)."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {}, "governed_tags": {"pii": {"name": "pii", "assigners": []}}}
+    )
+
+    assert config.governed_tags["pii"].assigners == []
+
+
 # ---------------------------------------------------------------------------
 # rfa_destinations validation
 # ---------------------------------------------------------------------------

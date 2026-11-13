@@ -12,7 +12,7 @@ Governed tags specify a tag name with an enforced set of allowed values. They ar
 
 **`allowed_values`**: The fixed list of values that can be assigned to this tag. ABAC policies reference these tag key-value pairs to determine which columns to mask, which rows to filter, or which objects to grant access on.
 
-**`assigners`**: A list of principals (users, groups, or service principals by display name) who are permitted to assign the tag to Unity Catalog objects. Principals listed here receive the `ASSIGN` role on the tag policy; those not listed have it revoked. This is useful for letting users test tag assignments in `dev` catalogs that aren't governed by this framework; a governed tag assigned by hand to an object that *is* governed is reverted on the next run. Assigners are only managed on tags declared in config; tags that exist in the account but not in config keep their existing assigners.
+**`assigners`**: A list of principals (users, groups, or service principals by display name) who are permitted to assign the tag to Unity Catalog objects. Principals listed here receive the `ASSIGN` role on the tag policy; those not listed have it revoked. Omitting `assigners` leaves the tag's existing assigners untouched; an explicit empty list `[]` removes all of them. This is useful for letting users test tag assignments in `dev` catalogs that aren't governed by this framework; a governed tag assigned by hand to an object that *is* governed is reverted on the next run. Assigners are only managed on tags declared in config; tags that exist in the account but not in config keep their existing assigners.
 
 ## Samples
 

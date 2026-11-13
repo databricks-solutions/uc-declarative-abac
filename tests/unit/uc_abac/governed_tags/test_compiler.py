@@ -40,6 +40,7 @@ def test_governed_tag_compiler_emits_governed_tag_from_config():
             name="pii",
             description="PII data",
             allowed_values=frozenset({"name", "email"}),
+            assigners=None,
         )
         in result
     )
@@ -104,12 +105,27 @@ def test_governed_tag_compiler_deduplicates_allowed_values_via_frozenset():
 # ---------------------------------------------------------------------------
 
 
-def test_governed_tag_compiler_emits_empty_assigners_when_field_missing():
-    """A governed tag without assigners compiles to an empty frozenset."""
+def test_governed_tag_compiler_assigners_is_none_when_omitted():
+    """A governed tag without assigners compiles to None (unmanaged)."""
     config = ResourcesConfig.model_validate(
         {
             "catalogs": {"cat": {"name": "cat"}},
             "governed_tags": {"pii": {"name": "pii"}},
+        }
+    )
+
+    result = compile_desired_governed_tags(config)
+
+    pii = next(gt for gt in result if gt.name == "pii")
+    assert pii.assigners is None
+
+
+def test_governed_tag_compiler_emits_empty_assigners_for_explicit_empty_list():
+    """An explicit empty assigners list compiles to an empty frozenset (remove all)."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {"cat": {"name": "cat"}},
+            "governed_tags": {"pii": {"name": "pii", "assigners": []}},
         }
     )
 

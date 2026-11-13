@@ -737,7 +737,13 @@ def fetch_actual_state(
 
     catalog_names = [c.full_name for c in config.catalogs.values()]
     desired_groups = compile_desired_groups(config, run_date=ctx.run_date)
-    governed_tag_fetch_names = {gt.name for gt in compile_desired_governed_tags(config)}
+    # Assigner rule sets are fetched only for tags managing them (the full fetch reads
+    # every declared or referenced tag's assigners for the current-state view).
+    governed_tag_fetch_names = {
+        gt.name
+        for gt in compile_desired_governed_tags(config)
+        if full_fetch or gt.assigners is not None
+    }
     if full_fetch:
         governed_tag_fetch_names |= collect_referenced_tag_keys(config)
     desired_attributes = compile_desired_attributes(config)

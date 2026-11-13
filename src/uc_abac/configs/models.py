@@ -1477,7 +1477,7 @@ class GovernedTagConfig(BaseConfig):
         validation_alias=AliasChoices("description", "comment"),
     )
     allowed_values: list[str] = Field(default_factory=list)
-    assigners: list[str] = Field(default_factory=list)
+    assigners: list[str] | None = None
 
     @model_validator(mode="after")
     def _reject_allowed_values_on_system_tag(self) -> GovernedTagConfig:

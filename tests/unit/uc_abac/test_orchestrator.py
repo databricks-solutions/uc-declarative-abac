@@ -759,6 +759,47 @@ def test_orchestrator_reads_domain_owners_after_principal_maps_are_built(
     assert result.domain_diff.to_update == set()
 
 
+def test_orchestrator_fetches_assigners_only_for_tags_managing_them(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """Assigner rule sets are fetched only for governed tags that declare assigners
+    (including an explicit []); tags with omitted assigners are not fetched."""
+    config = {
+        "resources": {
+            "catalogs": {},
+            "governed_tags": {
+                "managed": {"assigners": ["data_engineers"]},
+                "cleared": {"assigners": []},
+                "unmanaged": {"description": "no assigners key"},
+            },
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config)
+    _setup_mock_empty_principals(mock_workspace_client)
+
+    # The mock workspace can't resolve data_engineers; only the fetch matters here.
+    with (
+        patch.object(
+            WorkspaceHelper,
+            "fetch_actual_governed_tags",
+            autospec=True,
+            return_value=set(),
+        ) as fetch,
+        pytest.raises(ExecutionBatchError),
+    ):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            dry_run=True,
+        )
+
+    fetched_names = fetch.call_args.args[1]
+    assert set(fetched_names) == {"managed", "cleared"}
+
+
 def test_orchestrator_does_not_create_undeclared_domain_for_actual_only_governed_tag_selected_for_deletion(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
