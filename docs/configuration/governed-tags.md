@@ -17,8 +17,10 @@ Governed tags specify a tag name with an enforced set of allowed values. They ar
 **`auto_tagging_enabled`**: (optional) Set to `true` to have Data Classification automatically apply this tag to the columns it detects, in every catalog that also sets `auto_tagging_enabled: true` (see {ref}`catalogs`). The tag is declared in config only to opt it in, so this works for system tags such as `class.email_address`; omit `assigners` to leave the tag's existing assigners untouched.
 
 ```{note}
-Built-in classes use the system `class.*` governed tags. Any other governed tag needs a matching [custom classifier](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification-custom-classifiers), created first in the Data Classification UI; otherwise enabling auto-tagging with that tag fails.
+Built-in classes use the system `class.*` governed tags; see the [list of built-in classification tags](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification-tags). Any other governed tag needs a matching [custom classifier](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification-custom-classifiers), created first in the Data Classification UI; otherwise enabling auto-tagging with that tag fails.
 ```
+
+To stop a specific false-positive detection from being auto-tagged (for example, one column flagged as an email address), exclude that detection in the Data Classification UI; see [Exclude detections](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification#exclude-detections). Exclusions are not managed by this framework.
 
 ## Samples
 
