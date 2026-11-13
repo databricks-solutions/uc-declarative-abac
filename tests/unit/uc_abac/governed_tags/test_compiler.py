@@ -40,6 +40,7 @@ def test_governed_tag_compiler_emits_governed_tag_from_config():
             name="pii",
             description="PII data",
             allowed_values=frozenset({"name", "email"}),
+            assigners=None,
         )
         in result
     )
@@ -104,12 +105,27 @@ def test_governed_tag_compiler_deduplicates_allowed_values_via_frozenset():
 # ---------------------------------------------------------------------------
 
 
-def test_governed_tag_compiler_emits_empty_assigners_when_field_missing():
-    """A governed tag without assigners compiles to an empty frozenset."""
+def test_governed_tag_compiler_assigners_is_none_when_omitted():
+    """A governed tag without assigners compiles to None (unmanaged)."""
     config = ResourcesConfig.model_validate(
         {
             "catalogs": {"cat": {"name": "cat"}},
             "governed_tags": {"pii": {"name": "pii"}},
+        }
+    )
+
+    result = compile_desired_governed_tags(config)
+
+    pii = next(gt for gt in result if gt.name == "pii")
+    assert pii.assigners is None
+
+
+def test_governed_tag_compiler_emits_empty_assigners_for_explicit_empty_list():
+    """An explicit empty assigners list compiles to an empty frozenset (remove all)."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {"cat": {"name": "cat"}},
+            "governed_tags": {"pii": {"name": "pii", "assigners": []}},
         }
     )
 
@@ -165,4 +181,24 @@ def test_governed_tag_compiler_deduplicates_assigners():
         {
             Principal(PrincipalType.UNKNOWN, name="data_engineers"),
         }
+    )
+
+
+def test_governed_tag_compiler_ignores_auto_tagging_enabled():
+    """auto_tagging_enabled is a catalog Data Classification input, not part of the
+    tag policy: it doesn't change the compiled governed tag."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {},
+            "governed_tags": {
+                "on": {"name": "pii", "auto_tagging_enabled": True},
+            },
+        }
+    )
+    baseline = ResourcesConfig.model_validate(
+        {"catalogs": {}, "governed_tags": {"on": {"name": "pii"}}}
+    )
+
+    assert compile_desired_governed_tags(config) == compile_desired_governed_tags(
+        baseline
     )

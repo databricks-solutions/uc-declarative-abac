@@ -12,6 +12,7 @@ definitions:
         layer: bronze
       name: transactions_bronze_${region}
       comment: Transaction bronze zone for the ${region} region.
+      data_classification_enabled: false
       tags:
         uc_abac_region: ${region}
       policies:

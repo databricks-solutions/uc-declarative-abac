@@ -1,0 +1,5 @@
+resources:
+  governed_tags:
+    class|name:
+      name: class.name
+      auto_tagging_enabled: true

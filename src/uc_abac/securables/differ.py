@@ -28,7 +28,25 @@ from uc_abac.utils import (
     Scope,
 )
 
-_GOVERNED_ATTRIBUTES = ["owner", "comment", "rfa_destinations"]
+_GOVERNED_ATTRIBUTES = [
+    "owner",
+    "comment",
+    "rfa_destinations",
+    "data_classification_enabled",
+    "data_classification_excluded_schemas",
+    "data_classification_included_schemas",
+    "data_classification_auto_tagging_tags",
+]
+
+# Governed attributes whose value is already a frozenset (diffed as a whole set).
+_COLLECTION_ATTRIBUTES = frozenset(
+    {
+        "rfa_destinations",
+        "data_classification_excluded_schemas",
+        "data_classification_included_schemas",
+        "data_classification_auto_tagging_tags",
+    }
+)
 
 # Empty (inert) scope: the default when creation is disabled — matches nothing.
 _EMPTY_SCOPE = Scope()
@@ -37,13 +55,13 @@ _EMPTY_SCOPE = Scope()
 def _to_frozenset(attr: str, value: object) -> frozenset:
     """Wrap a SecurableAttributes field value into a frozenset for diff comparison.
 
-    Scalar fields (``owner``, ``comment``) become a 1-element frozenset, or
-    an empty frozenset when the value is missing / empty. Collection fields
-    (``rfa_destinations``) pass through as the natural frozenset (``None`` →
-    empty). This keeps the diff loop attribute-agnostic and lets the executor
+    Scalar fields (``owner``, ``comment``, ``data_classification_enabled``) become
+    a 1-element frozenset, or an empty frozenset when the value is missing / empty.
+    Collection fields (``_COLLECTION_ATTRIBUTES``) pass through as the natural
+    frozenset (``None`` → empty). This keeps the diff loop attribute-agnostic and lets the executor
     take a uniform set-shaped value.
     """
-    if attr == "rfa_destinations":
+    if attr in _COLLECTION_ATTRIBUTES:
         return value if value is not None else frozenset()
     if value is None or value == "":
         return frozenset()
@@ -422,6 +440,16 @@ def _log_nonexistent_non_function_securables(
     return frozenset((sec.securable_type, sec.full_name) for sec in nonexistent)
 
 
+def _data_classification_config_will_exist(
+    desired: SecurableAttributes, actual: SecurableAttributes | None
+) -> bool:
+    """Return whether the catalog will have a Data Classification config after the
+    run: it is (effectively) enabled in config, or unmanaged and already enabled."""
+    if desired.data_classification_enabled is not None:
+        return desired.data_classification_enabled
+    return actual is not None and actual.data_classification_enabled is True
+
+
 def _diff_attributes(
     desired_attrs: set[SecurableAttributes],
     actual_attrs: set[SecurableAttributes],
@@ -445,6 +473,21 @@ def _diff_attributes(
       is refused — UC doesn't support ``COMMENT ON`` for views via this path;
       logged as an ``ExecutionError`` and dropped. Comments on other types flow
       through as ALTER updates.
+
+    - ``data_classification_enabled`` — catalog-only. Emitted for newly-created
+      catalogs too (the Data Classification config can only be created once the
+      catalog exists); the fetch supplies a ``False`` baseline for such catalogs, so
+      a desired ``False`` on a new catalog produces no update.
+    - ``data_classification_excluded_schemas`` — catalog-only and authoritative
+      (the whole set is replaced). Like ``data_classification_enabled``, emitted
+      for newly-created catalogs against the fetch's empty baseline.
+    - ``data_classification_included_schemas`` — catalog-only; always desired
+      empty under an enabled catalog, so an include list set outside config is
+      cleared (it is mutually exclusive with exclusions).
+    - ``data_classification_auto_tagging_tags`` — catalog-only and authoritative.
+      Dropped when the catalog will have no Data Classification config after the
+      run (see ``_data_classification_config_will_exist``): auto-tagging is then
+      off anyway, and there is no config to patch.
 
     ``location`` is creation-only (see ``compile_desired_securables``) and is
     not in ``_GOVERNED_ATTRIBUTES`` — it's never diffed.
@@ -470,6 +513,10 @@ def _diff_attributes(
         for attr in _GOVERNED_ATTRIBUTES:
             desired_raw = getattr(desired, attr)
             if desired_raw is None:
+                continue
+            if attr == "data_classification_auto_tagging_tags" and not (
+                _data_classification_config_will_exist(desired, actual)
+            ):
                 continue
 
             actual_raw = getattr(actual, attr, None) if actual is not None else None

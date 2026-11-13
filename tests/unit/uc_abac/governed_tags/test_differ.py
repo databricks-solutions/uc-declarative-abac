@@ -235,6 +235,86 @@ def test_governed_tag_differ_marks_update_when_only_assigners_change():
     assert _engineers_resolved in update.assigners
 
 
+# ---------------------------------------------------------------------------
+# Unmanaged (None) assigners
+# ---------------------------------------------------------------------------
+
+
+def _unmanaged(gt: GovernedTag) -> GovernedTag:
+    """Return ``gt`` with assigners left unmanaged, as compiled from omitted config."""
+    return GovernedTag(
+        name=gt.name,
+        description=gt.description,
+        allowed_values=gt.allowed_values,
+        assigners=None,
+    )
+
+
+def test_governed_tag_differ_leaves_assigners_untouched_when_unmanaged():
+    """A user tag with unmanaged assigners still updates its definition, and the
+    update carries actual's assigners unchanged."""
+    desired = {_unmanaged(_gt("pii", "New", {"name"}))}
+    actual = {_gt("pii", "Old", {"name"}, assigners={_engineers_resolved})}
+
+    diff = compute_governed_tag_diff(
+        desired, actual, _resolver_passthrough(), ChangeLogger()
+    )
+
+    update = next(gt for gt in diff.to_update if gt.name == "pii")
+    assert update.description == "New"
+    assert update.assigners == frozenset({_engineers_resolved})
+
+
+def test_governed_tag_differ_emits_no_update_when_only_assigners_are_unmanaged():
+    """A user tag in sync apart from its (unmanaged) assigners produces no update."""
+    desired = {_unmanaged(_gt("pii", "PII", {"name"}))}
+    actual = {_gt("pii", "PII", {"name"}, assigners={_engineers_resolved})}
+
+    diff = compute_governed_tag_diff(
+        desired, actual, _resolver_passthrough(), ChangeLogger()
+    )
+
+    assert diff.to_update == set()
+
+
+def test_governed_tag_differ_emits_no_update_for_system_tag_with_unmanaged_assigners():
+    """Declaring a system tag without assigners (e.g. only to opt it into another
+    feature) never revokes its existing assigners."""
+    desired = {_unmanaged(_gt("class.email_address"))}
+    actual = {_gt("class.email_address", "databricks", assigners={_engineers_resolved})}
+
+    diff = compute_governed_tag_diff(
+        desired, actual, _resolver_passthrough(), ChangeLogger()
+    )
+
+    assert diff.to_update == set()
+
+
+def test_governed_tag_differ_removes_all_assigners_when_explicitly_empty():
+    """An explicit empty frozenset is authoritative: every assigner is removed."""
+    desired = {_gt("pii", "PII", {"name"}, assigners=set())}
+    actual = {_gt("pii", "PII", {"name"}, assigners={_engineers_resolved})}
+
+    diff = compute_governed_tag_diff(
+        desired, actual, _resolver_passthrough(), ChangeLogger()
+    )
+
+    update = next(gt for gt in diff.to_update if gt.name == "pii")
+    assert update.assigners == frozenset()
+
+
+def test_governed_tag_differ_creates_tag_without_assigners_when_unmanaged():
+    """A new tag with unmanaged assigners is created with no assigners."""
+    desired = {_unmanaged(_gt("pii", "PII", {"name"}))}
+
+    diff = compute_governed_tag_diff(
+        desired, set(), _resolver_passthrough(), ChangeLogger()
+    )
+
+    created = next(gt for gt in diff.to_create if gt.name == "pii")
+    assert created.assigners == frozenset()
+
+
 def test_governed_tag_differ_resolves_actual_principals_via_identifier():
     """Actual-state principals (UNKNOWN with identifier set) are resolved before equality comparison."""
     desired = {

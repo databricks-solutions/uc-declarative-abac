@@ -1828,6 +1828,349 @@ def test_uc_helper_fetch_actual_securables_preserves_existing_owner_when_merging
 
 
 # ---------------------------------------------------------------------------
+# UnityCatalogHelper.fetch_actual_securables — data classification fetch
+# ---------------------------------------------------------------------------
+
+_CATALOG_ROW = [
+    "CATALOG",
+    "my_catalog",
+    "admin",
+    None,
+    None,
+    None,
+    None,
+    "Prod catalog",
+    None,
+]
+
+
+def _catalog_attribute(attributes, full_name: str = "my_catalog"):
+    """Return the single CATALOG attribute row for ``full_name``."""
+    matching = [
+        a
+        for a in attributes
+        if a.securable_type == SecurableType.CATALOG and a.full_name == full_name
+    ]
+    assert len(matching) == 1
+    return matching[0]
+
+
+@pytest.mark.parametrize("targets", [None, set()])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_skips_data_classification_fetch_when_targets_none(
+    mock_fetch, targets
+):
+    """No targets means no Data Classification call and an unmanaged (None) value."""
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets=targets
+    )
+
+    client.data_classification.get_catalog_config.assert_not_called()
+    assert _catalog_attribute(attributes).data_classification_enabled is None
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_data_classification_enabled_true_when_config_exists(
+    mock_fetch,
+):
+    """An existing catalog config means Data Classification is enabled."""
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    client.data_classification.get_catalog_config.assert_called_once_with(
+        name="catalogs/my_catalog/config"
+    )
+    assert _catalog_attribute(attributes).data_classification_enabled is True
+
+
+@pytest.mark.parametrize("error_name", ["NotFound", "InvalidParameterValue"])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_data_classification_enabled_false_when_config_missing(
+    mock_fetch, error_name
+):
+    """NotFound (no config) and InvalidParameterValue (catalog not created yet)
+    both mean Data Classification is disabled."""
+    from databricks.sdk import errors
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.side_effect = getattr(
+        errors, error_name
+    )("missing")
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_enabled is False
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_inserts_data_classification_baseline_for_catalog_absent_from_information_schema(
+    mock_fetch,
+):
+    """A target catalog missing from information_schema (about to be created) gets
+    a fresh CATALOG row so the differ sees an actual-side baseline."""
+    from databricks.sdk.errors import InvalidParameterValue
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.side_effect = InvalidParameterValue(
+        "no such catalog"
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog", "new_catalog"], data_classification_targets={"new_catalog"}
+    )
+
+    assert _catalog_attribute(
+        attributes, "new_catalog"
+    ).data_classification_enabled is (False)
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_preserves_other_attributes_when_merging_data_classification(
+    mock_fetch,
+):
+    """Merging the Data Classification state keeps owner, comment and RFA intact."""
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.rfa.get_access_request_destinations.return_value = _make_rfa_response(
+        "data-gov@example.com"
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"],
+        rfa_targets={(SecurableType.CATALOG, "my_catalog")},
+        data_classification_targets={"my_catalog"},
+    )
+
+    attr = _catalog_attribute(attributes)
+    assert attr.owner == Principal(
+        principal_type=PrincipalType.UNKNOWN, identifier="admin"
+    )
+    assert attr.comment == "Prod catalog"
+    assert attr.rfa_destinations == frozenset({"data-gov@example.com"})
+    assert attr.data_classification_enabled is True
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_propagates_unexpected_data_classification_errors(
+    mock_fetch,
+):
+    """Errors other than missing-config fail the fetch rather than guessing state."""
+    from databricks.sdk.errors import PermissionDenied
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.side_effect = PermissionDenied("nope")
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    with pytest.raises(PermissionDenied):
+        helper.fetch_actual_securables(
+            ["my_catalog"], data_classification_targets={"my_catalog"}
+        )
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_excluded_schemas_from_catalog_config(
+    mock_fetch,
+):
+    """The catalog config's excluded schema names are merged onto the CATALOG row."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+    from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        excluded_schemas=CatalogConfigSchemaNames(names=["raw", "tmp"])
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    attr = _catalog_attribute(attributes)
+    assert attr.data_classification_enabled is True
+    assert attr.data_classification_excluded_schemas == frozenset({"raw", "tmp"})
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_excluded_schemas_when_config_has_none(
+    mock_fetch,
+):
+    """A config without excluded schemas yields an empty (not None) exclusion list."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_excluded_schemas == (
+        frozenset()
+    )
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_excluded_schemas_when_config_missing(
+    mock_fetch,
+):
+    """No config (or a catalog not yet created) means nothing is excluded."""
+    from databricks.sdk.errors import NotFound
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.side_effect = NotFound("missing")
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog", "new_catalog"],
+        data_classification_targets={"my_catalog", "new_catalog"},
+    )
+
+    for name in ("my_catalog", "new_catalog"):
+        attr = _catalog_attribute(attributes, name)
+        assert attr.data_classification_excluded_schemas == frozenset()
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_included_schemas_from_catalog_config(
+    mock_fetch,
+):
+    """The catalog config's included schema names are merged onto the CATALOG row."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+    from databricks.sdk.service.dataclassification import CatalogConfigSchemaNames
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        included_schemas=CatalogConfigSchemaNames(names=["gold"])
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    attr = _catalog_attribute(attributes)
+    assert attr.data_classification_included_schemas == frozenset({"gold"})
+    assert attr.data_classification_excluded_schemas == frozenset()
+
+
+@pytest.mark.parametrize("missing", [True, False])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_included_schemas_when_none_set(
+    mock_fetch, missing
+):
+    """A config without an include list, or no config at all, yields an empty list."""
+    from databricks.sdk.errors import NotFound
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    if missing:
+        client.data_classification.get_catalog_config.side_effect = NotFound("x")
+    else:
+        client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_included_schemas == (
+        frozenset()
+    )
+
+
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_auto_tagging_tags_from_enabled_configs_only(
+    mock_fetch,
+):
+    """Only tags whose auto-tagging mode is ENABLED count as auto-tagged."""
+    from databricks.sdk.service.dataclassification import (
+        AutoTaggingConfig,
+        AutoTaggingConfigAutoTaggingMode,
+    )
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mode = AutoTaggingConfigAutoTaggingMode
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    client.data_classification.get_catalog_config.return_value = SdkCatalogConfig(
+        auto_tag_configs=[
+            AutoTaggingConfig("class.email_address", mode.AUTO_TAGGING_ENABLED),
+            AutoTaggingConfig("class.phone_number", mode.AUTO_TAGGING_DISABLED),
+        ]
+    )
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
+@pytest.mark.parametrize("missing", [True, False])
+@patch("uc_abac.helpers.unity_catalog._fetch_external_links_rows")
+def test_uc_helper_fetch_actual_securables_sets_empty_auto_tagging_tags_when_none_set(
+    mock_fetch, missing
+):
+    """No config, or a config without auto-tagging, yields an empty tag set."""
+    from databricks.sdk.errors import NotFound
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    mock_fetch.return_value = [_CATALOG_ROW]
+    client = _make_mock_workspace_client()
+    if missing:
+        client.data_classification.get_catalog_config.side_effect = NotFound("x")
+    else:
+        client.data_classification.get_catalog_config.return_value = SdkCatalogConfig()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    _, attributes = helper.fetch_actual_securables(
+        ["my_catalog"], data_classification_targets={"my_catalog"}
+    )
+
+    assert _catalog_attribute(attributes).data_classification_auto_tagging_tags == (
+        frozenset()
+    )
+
+
+# ---------------------------------------------------------------------------
 # UnityCatalogHelper.fetch_actual_securables — column-comment fetch
 # ---------------------------------------------------------------------------
 
@@ -2152,6 +2495,120 @@ def test_uc_helper_update_owner_dispatches_to_function_api():
 # ---------------------------------------------------------------------------
 # UnityCatalogHelper.update_rfa_destinations
 # ---------------------------------------------------------------------------
+
+
+def test_uc_helper_update_data_classification_creates_config_when_enabled():
+    """Enabling creates a default Data Classification config under the catalog."""
+    from databricks.sdk.service.dataclassification import (
+        CatalogConfig as SdkCatalogConfig,
+    )
+
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification("my_catalog", True)
+
+    kwargs = client.data_classification.create_catalog_config.call_args.kwargs
+    assert kwargs["parent"] == "catalogs/my_catalog"
+    assert isinstance(kwargs["catalog_config"], SdkCatalogConfig)
+    client.data_classification.delete_catalog_config.assert_not_called()
+
+
+def test_uc_helper_update_data_classification_deletes_config_when_disabled():
+    """Disabling deletes the catalog's Data Classification config."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification("my_catalog", False)
+
+    client.data_classification.delete_catalog_config.assert_called_once_with(
+        name="catalogs/my_catalog/config"
+    )
+    client.data_classification.create_catalog_config.assert_not_called()
+
+
+def _get_excluded_schemas_update_call(client: MagicMock):
+    """Return the kwargs from the most recent update_catalog_config call."""
+    return client.data_classification.update_catalog_config.call_args.kwargs
+
+
+def test_uc_helper_update_data_classification_excluded_schemas_patches_with_update_mask():
+    """Exclusions are replaced via a partial update masked to excluded_schemas."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_excluded_schemas(
+        "my_catalog", frozenset({"tmp", "raw"})
+    )
+
+    kwargs = _get_excluded_schemas_update_call(client)
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert sorted(kwargs["catalog_config"].excluded_schemas.names) == ["raw", "tmp"]
+    assert kwargs["update_mask"].paths == ["excluded_schemas"]
+
+
+def test_uc_helper_update_data_classification_excluded_schemas_clears_when_empty():
+    """An empty set clears the exclusions: the mask is sent with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_excluded_schemas("my_catalog", frozenset())
+
+    kwargs = _get_excluded_schemas_update_call(client)
+    assert kwargs["catalog_config"].excluded_schemas is None
+    assert kwargs["update_mask"].paths == ["excluded_schemas"]
+
+
+def test_uc_helper_update_data_classification_included_schemas_clears_with_update_mask():
+    """Clearing the include list sends the included_schemas mask with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_included_schemas("my_catalog", frozenset())
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert kwargs["catalog_config"].included_schemas is None
+    assert kwargs["update_mask"].paths == ["included_schemas"]
+
+
+def test_uc_helper_update_data_classification_auto_tagging_patches_with_update_mask():
+    """Auto-tagging is replaced via a partial update masked to auto_tag_configs,
+    with every tag enabled."""
+    from databricks.sdk.service.dataclassification import (
+        AutoTaggingConfigAutoTaggingMode,
+    )
+
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_auto_tagging(
+        "my_catalog", frozenset({"class.phone_number", "class.email_address"})
+    )
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    configs = kwargs["catalog_config"].auto_tag_configs
+    assert kwargs["name"] == "catalogs/my_catalog/config"
+    assert kwargs["update_mask"].paths == ["auto_tag_configs"]
+    assert sorted(c.classification_tag for c in configs) == [
+        "class.email_address",
+        "class.phone_number",
+    ]
+    assert {c.auto_tagging_mode for c in configs} == {
+        AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+    }
+
+
+def test_uc_helper_update_data_classification_auto_tagging_clears_when_empty():
+    """An empty set clears auto-tagging: the mask is sent with no value."""
+    client = MagicMock()
+    helper = UnityCatalogHelper(client, WAREHOUSE_ID)
+
+    helper.update_data_classification_auto_tagging("my_catalog", frozenset())
+
+    kwargs = client.data_classification.update_catalog_config.call_args.kwargs
+    assert not kwargs["catalog_config"].auto_tag_configs
+    assert kwargs["update_mask"].paths == ["auto_tag_configs"]
 
 
 def _get_rfa_update_call(client: MagicMock):

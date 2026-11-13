@@ -7,6 +7,7 @@ definitions:
     uc_abac_finance|shared:
       name: shared
       comment: Shared governance functions.
+      data_classification_enabled: false
       tags:
         uc_abac_layer: shared
       functions:

@@ -73,6 +73,10 @@ class SecurableAttributes:
     owner: Principal | None = None
     comment: str | None = None
     rfa_destinations: frozenset[str] | None = None
+    data_classification_enabled: bool | None = None
+    data_classification_excluded_schemas: frozenset[str] | None = None
+    data_classification_included_schemas: frozenset[str] | None = None
+    data_classification_auto_tagging_tags: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -209,8 +213,8 @@ class AttributeUpdate:
     each attribute type — it just compares fields and emits updates.
 
     ``old_value`` and ``new_value`` are always set-shaped so scalar attributes
-    (``owner``, ``comment``) and collection attributes (``rfa_destinations``)
-    share one representation:
+    (``owner``, ``comment``, ``data_classification_enabled``) and collection
+    attributes (``rfa_destinations``) share one representation:
 
     - scalar attributes wrap their value in a 1-element frozenset (empty when
       no value is set)
@@ -222,8 +226,8 @@ class AttributeUpdate:
     securable_type: SecurableType
     full_name: str
     attribute: str
-    old_value: frozenset[str] | frozenset[Principal]
-    new_value: frozenset[str] | frozenset[Principal]
+    old_value: frozenset[str] | frozenset[Principal] | frozenset[bool]
+    new_value: frozenset[str] | frozenset[Principal] | frozenset[bool]
 
 
 @dataclass

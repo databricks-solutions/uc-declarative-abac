@@ -32,6 +32,7 @@ definitions:
       owner: hr_analytics
       rfa_destinations:
         - hr-access@company.com
+      data_classification_enabled: false
       tags:
         people: ~
 ```
@@ -67,6 +68,8 @@ definitions:
       functions:
         - $defs/functions/platform|shared|mask_pii_email
 ```
+
+Set `data_classification_enabled: false` to exclude a schema from its catalog's [Data Classification](https://docs.databricks.com/aws/en/data-governance/unity-catalog/data-classification) scan. It applies only when the catalog declares `data_classification_enabled: true` (see {ref}`catalogs`), and is ignored otherwise. The catalog's excluded schemas are then exactly the schemas set to `false`: setting a schema back to `true` or omitting the field includes it again, and exclusions made outside config are removed. The exclusions are a catalog attribute, so `--securable-modification-scopes` must match the catalog, not just the schema.
 
 When referencing a schema definition from a resource with a different catalog, use the `catalog_name` field:
 

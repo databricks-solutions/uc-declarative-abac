@@ -1,0 +1,5 @@
+resources:
+  governed_tags:
+    class|email_address:
+      name: class.email_address
+      auto_tagging_enabled: true

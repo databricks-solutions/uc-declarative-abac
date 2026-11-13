@@ -759,6 +759,47 @@ def test_orchestrator_reads_domain_owners_after_principal_maps_are_built(
     assert result.domain_diff.to_update == set()
 
 
+def test_orchestrator_fetches_assigners_only_for_tags_managing_them(
+    tmp_yaml_dir, mock_workspace_client, monkeypatch
+):
+    """Assigner rule sets are fetched only for governed tags that declare assigners
+    (including an explicit []); tags with omitted assigners are not fetched."""
+    config = {
+        "resources": {
+            "catalogs": {},
+            "governed_tags": {
+                "managed": {"assigners": ["data_engineers"]},
+                "cleared": {"assigners": []},
+                "unmanaged": {"description": "no assigners key"},
+            },
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _install_fetch_router(monkeypatch, config)
+    _setup_mock_empty_principals(mock_workspace_client)
+
+    # The mock workspace can't resolve data_engineers; only the fetch matters here.
+    with (
+        patch.object(
+            WorkspaceHelper,
+            "fetch_actual_governed_tags",
+            autospec=True,
+            return_value=set(),
+        ) as fetch,
+        pytest.raises(ExecutionBatchError),
+    ):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            dry_run=True,
+        )
+
+    fetched_names = fetch.call_args.args[1]
+    assert set(fetched_names) == {"managed", "cleared"}
+
+
 def test_orchestrator_does_not_create_undeclared_domain_for_actual_only_governed_tag_selected_for_deletion(
     tmp_yaml_dir, mock_workspace_client, monkeypatch
 ):
@@ -3974,7 +4015,7 @@ def test_orchestrator_raises_disallowed_tag_value_error_in_dry_run(
 
 
 # ---------------------------------------------------------------------------
-# rfa_targets threading into fetch_actual_securables
+# rfa_targets / data_classification_targets threading into fetch_actual_securables
 # ---------------------------------------------------------------------------
 
 
@@ -3985,12 +4026,19 @@ def _capture_fetch_actual_securables_calls(monkeypatch) -> list[tuple]:
 
     calls: list[tuple] = []
 
-    def _spy(self, catalog_names, rfa_targets=None, column_comment_tables=None):
+    def _spy(
+        self,
+        catalog_names,
+        rfa_targets=None,
+        column_comment_tables=None,
+        data_classification_targets=None,
+    ):
         calls.append(
             (
                 tuple(catalog_names),
                 frozenset(rfa_targets or ()),
                 frozenset(column_comment_tables or ()),
+                frozenset(data_classification_targets or ()),
             )
         )
         # Return empty actual state so the rest of the orchestrator short-circuits cleanly.
@@ -4042,7 +4090,7 @@ def test_orchestrator_passes_rfa_targets_for_securables_with_destinations(
         )
 
     assert len(calls) == 1
-    _catalog_names, rfa_targets, _cct = calls[0]
+    _catalog_names, rfa_targets, _cct, _dct = calls[0]
     assert rfa_targets == frozenset(
         {
             (SecurableType.CATALOG, "my_catalog"),
@@ -4081,7 +4129,7 @@ def test_orchestrator_passes_empty_rfa_targets_when_taggable_management_off(
         )
 
     assert len(calls) == 1
-    _catalog_names, rfa_targets, _cct = calls[0]
+    _catalog_names, rfa_targets, _cct, _dct = calls[0]
     assert rfa_targets == frozenset()
 
 
@@ -4117,7 +4165,7 @@ def test_orchestrator_includes_securable_in_rfa_targets_when_rfa_destinations_is
         )
 
     assert len(calls) == 1
-    _catalog_names, rfa_targets, _cct = calls[0]
+    _catalog_names, rfa_targets, _cct, _dct = calls[0]
     assert (SecurableType.CATALOG, "my_catalog") in rfa_targets
 
 
@@ -4167,11 +4215,144 @@ def test_orchestrator_includes_function_in_rfa_targets_when_taggable_management_
         )
 
     assert len(calls) == 1
-    _catalog_names, rfa_targets, _cct = calls[0]
+    _catalog_names, rfa_targets, _cct, _dct = calls[0]
     # Function is always managed -> fetched even with the flag off.
     assert (SecurableType.FUNCTION, "my_catalog.sch.format_phone") in rfa_targets
     # Non-function securables stay gated by the flag.
     assert (SecurableType.CATALOG, "my_catalog") not in rfa_targets
+
+
+_DATA_CLASSIFICATION_CONFIG = {
+    "resources": {
+        "catalogs": {
+            "enabled_cat": {"data_classification_enabled": True},
+            "disabled_cat": {"data_classification_enabled": False},
+            "unmanaged_cat": {"comment": "no data classification"},
+        }
+    }
+}
+
+
+def test_orchestrator_passes_data_classification_targets_for_catalogs_declaring_it(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """Catalogs declaring data_classification_enabled (true or false) are fetched;
+    catalogs leaving it unset are not."""
+    root = tmp_yaml_dir({"resources/catalog.yaml": _DATA_CLASSIFICATION_CONFIG})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=True,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset({"enabled_cat", "disabled_cat"})
+
+
+def test_orchestrator_passes_data_classification_targets_when_only_schemas_declare_it_under_enabled_catalog(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """Schema-level false values are managed via the enabled catalog's own fetch;
+    a catalog that is unset is not fetched even when its schemas declare false."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "enabled_cat": {
+                    "data_classification_enabled": True,
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                },
+                "unset_cat": {
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                },
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=True,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset({"enabled_cat"})
+
+
+def test_orchestrator_passes_data_classification_targets_for_catalogs_declaring_only_auto_tagging(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """A catalog declaring only auto_tagging_enabled (true or false) is fetched, so
+    the engine knows whether a config exists to enable or clear auto-tagging on."""
+    config = {
+        "resources": {
+            "catalogs": {
+                "auto_on": {"auto_tagging_enabled": True},
+                "auto_off": {"auto_tagging_enabled": False},
+                "unset_cat": {"comment": "nothing data classification related"},
+            }
+        }
+    }
+    root = tmp_yaml_dir({"resources/catalog.yaml": config})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=True,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset({"auto_on", "auto_off"})
+
+
+def test_orchestrator_passes_empty_data_classification_targets_when_taggable_management_off(
+    tmp_yaml_dir,
+    mock_workspace_client,
+    monkeypatch,
+):
+    """data_classification_enabled is a managed catalog attribute, so no fetch
+    fires when securable modification is off."""
+    root = tmp_yaml_dir({"resources/catalog.yaml": _DATA_CLASSIFICATION_CONFIG})
+    _setup_mock_workspace_empty_state(mock_workspace_client)
+    _setup_mock_empty_principals(mock_workspace_client)
+    calls = _capture_fetch_actual_securables_calls(monkeypatch)
+
+    with pytest.raises(ExecutionBatchError):
+        run(
+            config_dir=root,
+            workspace_client=mock_workspace_client,
+            warehouse_id="test-warehouse-id",
+            enable_taggable_management=False,
+        )
+
+    assert len(calls) == 1
+    _catalog_names, _rfa_targets, _cct, data_classification_targets = calls[0]
+    assert data_classification_targets == frozenset()
 
 
 def test_orchestrator_passes_column_comment_tables_for_columns_with_comments(
@@ -4231,7 +4412,7 @@ def test_orchestrator_passes_column_comment_tables_for_columns_with_comments(
         )
 
     assert len(calls) == 1
-    _catalog_names, _rfa_targets, column_comment_tables = calls[0]
+    _catalog_names, _rfa_targets, column_comment_tables, _dct = calls[0]
     assert column_comment_tables == frozenset({"my_catalog.sales.customers"})
 
 
@@ -4281,7 +4462,7 @@ def test_orchestrator_passes_empty_column_comment_tables_when_taggable_managemen
         )
 
     assert len(calls) == 1
-    _catalog_names, _rfa_targets, column_comment_tables = calls[0]
+    _catalog_names, _rfa_targets, column_comment_tables, _dct = calls[0]
     assert column_comment_tables == frozenset()
 
 

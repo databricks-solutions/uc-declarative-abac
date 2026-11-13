@@ -1753,6 +1753,384 @@ def test_securable_differ_records_old_and_new_rfa_destinations():
 
 
 # ---------------------------------------------------------------------------
+# data_classification_enabled diff tests
+# ---------------------------------------------------------------------------
+
+
+def _catalog_attrs(full_name: str = "cat", **fields) -> SecurableAttributes:
+    """Shorthand for a CATALOG SecurableAttributes row."""
+    return SecurableAttributes(
+        securable_type=SecurableType.CATALOG, full_name=full_name, **fields
+    )
+
+
+def _data_classification_updates(updates: list[AttributeUpdate]) -> list:
+    return [u for u in updates if u.attribute == "data_classification_enabled"]
+
+
+def test_securable_differ_detects_data_classification_enable():
+    """Actual disabled + desired enabled emits a set-shaped {False} -> {True} update."""
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_enabled=True)},
+        {_catalog_attrs(data_classification_enabled=False)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+
+    assert diff.attributes_to_update == [
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="cat",
+            attribute="data_classification_enabled",
+            old_value=frozenset({False}),
+            new_value=frozenset({True}),
+        )
+    ]
+
+
+def test_securable_differ_detects_data_classification_disable():
+    """Actual enabled + desired disabled emits a {True} -> {False} update."""
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_enabled=False)},
+        {_catalog_attrs(data_classification_enabled=True)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+
+    updates = _data_classification_updates(diff.attributes_to_update)
+    assert len(updates) == 1
+    assert updates[0].old_value == frozenset({True})
+    assert updates[0].new_value == frozenset({False})
+
+
+def test_securable_differ_ignores_matching_data_classification_enabled():
+    """Desired and actual agreeing produces no update, for both enabled and disabled."""
+    for enabled in (True, False):
+        diff = compute_securable_diff(
+            {_catalog_attrs(data_classification_enabled=enabled)},
+            {_catalog_attrs(data_classification_enabled=enabled)},
+            set(),
+            set(),
+            _resolver(),
+            _change_logger(),
+        )
+
+        assert diff.attributes_to_update == []
+
+
+def test_securable_differ_ignores_data_classification_enabled_when_desired_is_none():
+    """An unset (None) desired value is unmanaged — actual state is left untouched."""
+    diff = compute_securable_diff(
+        {_catalog_attrs(comment="c")},
+        {_catalog_attrs(comment="c", data_classification_enabled=True)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+
+    assert _data_classification_updates(diff.attributes_to_update) == []
+
+
+def test_securable_differ_emits_data_classification_update_for_newly_created_catalog():
+    """A catalog created this run with data_classification_enabled=True gets the
+    update alongside its create (the fetch supplies a False baseline row)."""
+    catalog = Securable(securable_type=SecurableType.CATALOG, full_name="new_cat")
+
+    diff = compute_securable_diff(
+        {_catalog_attrs("new_cat", data_classification_enabled=True)},
+        {_catalog_attrs("new_cat", data_classification_enabled=False)},
+        {catalog},
+        set(),
+        _resolver(),
+        _change_logger(),
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+    )
+
+    assert catalog in diff.securables_to_create
+    updates = _data_classification_updates(diff.attributes_to_update)
+    assert len(updates) == 1
+    assert updates[0].full_name == "new_cat"
+    assert updates[0].new_value == frozenset({True})
+
+
+def test_securable_differ_skips_data_classification_update_for_newly_created_catalog_when_disabled():
+    """A catalog created this run with data_classification_enabled=False needs no
+    update — its False baseline already matches, so no spurious delete is issued."""
+    catalog = Securable(securable_type=SecurableType.CATALOG, full_name="new_cat")
+
+    diff = compute_securable_diff(
+        {_catalog_attrs("new_cat", data_classification_enabled=False)},
+        {_catalog_attrs("new_cat", data_classification_enabled=False)},
+        {catalog},
+        set(),
+        _resolver(),
+        _change_logger(),
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+    )
+
+    assert catalog in diff.securables_to_create
+    assert _data_classification_updates(diff.attributes_to_update) == []
+
+
+def test_securable_differ_preserves_data_classification_enabled_when_owner_resolves():
+    """Owner resolution on either side must not drop data_classification_enabled."""
+    owner = _owner("catalog_owner")
+
+    diff = compute_securable_diff(
+        {_catalog_attrs(owner=owner, data_classification_enabled=True)},
+        {_catalog_attrs(owner=owner, data_classification_enabled=False)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+
+    updates = _data_classification_updates(diff.attributes_to_update)
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({True})
+
+
+# ---------------------------------------------------------------------------
+# data_classification_excluded_schemas diff tests
+# ---------------------------------------------------------------------------
+
+
+def _excluded_schemas_updates(updates: list[AttributeUpdate]) -> list:
+    return [u for u in updates if u.attribute == "data_classification_excluded_schemas"]
+
+
+def _diff_excluded_schemas(desired: frozenset | None, actual: frozenset) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_excluded_schemas=desired)},
+        {_catalog_attrs(data_classification_excluded_schemas=actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+    return _excluded_schemas_updates(diff.attributes_to_update)
+
+
+def test_securable_differ_detects_excluded_schemas_addition():
+    """A newly-disabled schema emits an update carrying the full desired list."""
+    updates = _diff_excluded_schemas(frozenset({"raw", "tmp"}), frozenset({"raw"}))
+
+    assert updates == [
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="cat",
+            attribute="data_classification_excluded_schemas",
+            old_value=frozenset({"raw"}),
+            new_value=frozenset({"raw", "tmp"}),
+        )
+    ]
+
+
+def test_securable_differ_detects_excluded_schemas_removal():
+    """An exclusion absent from config (re-enabled schema, or added outside config)
+    is removed — the list is authoritative."""
+    updates = _diff_excluded_schemas(frozenset({"raw"}), frozenset({"raw", "manual"}))
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"raw"})
+
+
+def test_securable_differ_detects_excluded_schemas_clear():
+    """An empty desired list against existing exclusions emits a clearing update."""
+    updates = _diff_excluded_schemas(frozenset(), frozenset({"raw"}))
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset()
+
+
+def test_securable_differ_ignores_matching_excluded_schemas_in_any_order():
+    """Equal lists produce no update, including two empty lists."""
+    assert _diff_excluded_schemas(frozenset({"b", "a"}), frozenset({"a", "b"})) == []
+    assert _diff_excluded_schemas(frozenset(), frozenset()) == []
+
+
+def test_securable_differ_ignores_excluded_schemas_when_desired_is_none():
+    """Unmanaged (None) exclusions leave the actual list untouched."""
+    assert _diff_excluded_schemas(None, frozenset({"raw"})) == []
+
+
+def test_securable_differ_emits_excluded_schemas_update_for_newly_created_catalog():
+    """A catalog created this run gets its exclusions set after creation (the fetch
+    supplies an empty baseline)."""
+    catalog = Securable(securable_type=SecurableType.CATALOG, full_name="new_cat")
+
+    diff = compute_securable_diff(
+        {
+            _catalog_attrs(
+                "new_cat",
+                data_classification_enabled=True,
+                data_classification_excluded_schemas=frozenset({"raw"}),
+            )
+        },
+        {
+            _catalog_attrs(
+                "new_cat",
+                data_classification_enabled=False,
+                data_classification_excluded_schemas=frozenset(),
+            )
+        },
+        {catalog},
+        set(),
+        _resolver(),
+        _change_logger(),
+        creation_in_scope_namespaces=_ALL_TEST_CATALOGS,
+    )
+
+    updates = _excluded_schemas_updates(diff.attributes_to_update)
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"raw"})
+
+
+def _included_schemas_updates(desired: frozenset | None, actual: frozenset) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(data_classification_included_schemas=desired)},
+        {_catalog_attrs(data_classification_included_schemas=actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+    )
+    return [
+        u
+        for u in diff.attributes_to_update
+        if u.attribute == "data_classification_included_schemas"
+    ]
+
+
+def test_securable_differ_clears_included_schemas_set_outside_config():
+    """An include list on the actual config is cleared, recording the removed names."""
+    updates = _included_schemas_updates(frozenset(), frozenset({"a", "b"}))
+
+    assert updates == [
+        AttributeUpdate(
+            securable_type=SecurableType.CATALOG,
+            full_name="cat",
+            attribute="data_classification_included_schemas",
+            old_value=frozenset({"a", "b"}),
+            new_value=frozenset(),
+        )
+    ]
+
+
+def test_securable_differ_ignores_included_schemas_when_already_empty():
+    """No include list on the actual config means no update."""
+    assert _included_schemas_updates(frozenset(), frozenset()) == []
+
+
+def test_securable_differ_ignores_included_schemas_when_desired_is_none():
+    """An unmanaged include list (catalog not true) is left untouched."""
+    assert _included_schemas_updates(None, frozenset({"a"})) == []
+
+
+# ---------------------------------------------------------------------------
+# data_classification_auto_tagging_tags diff tests
+# ---------------------------------------------------------------------------
+
+
+def _auto_tagging_updates(desired: dict, actual: dict, **kwargs) -> list:
+    diff = compute_securable_diff(
+        {_catalog_attrs(**desired)},
+        {_catalog_attrs(**actual)},
+        set(),
+        set(),
+        _resolver(),
+        _change_logger(),
+        **kwargs,
+    )
+    return [
+        u
+        for u in diff.attributes_to_update
+        if u.attribute == "data_classification_auto_tagging_tags"
+    ]
+
+
+def test_securable_differ_detects_auto_tagging_tags_change():
+    """A changed opted-in tag set emits an update carrying the full desired set."""
+    updates = _auto_tagging_updates(
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a", "b"}),
+        },
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a", "c"}),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].old_value == frozenset({"a", "c"})
+    assert updates[0].new_value == frozenset({"a", "b"})
+
+
+def test_securable_differ_clears_auto_tagging_tags_when_disabled():
+    """auto_tagging_enabled: false on a catalog with a config clears the list,
+    including when the catalog's Data Classification is left unmanaged."""
+    updates = _auto_tagging_updates(
+        {"data_classification_auto_tagging_tags": frozenset()},
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset()
+
+
+def test_securable_differ_skips_auto_tagging_update_when_config_will_not_exist():
+    """No update when the catalog will have no config: Data Classification is
+    being disabled, or is unmanaged and not currently enabled."""
+    being_disabled = _auto_tagging_updates(
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+    )
+    never_enabled = _auto_tagging_updates(
+        {"data_classification_auto_tagging_tags": frozenset({"a"})},
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+    )
+
+    assert being_disabled == []
+    assert never_enabled == []
+
+
+def test_securable_differ_emits_auto_tagging_update_for_newly_enabled_catalog():
+    """Enabling Data Classification and auto-tagging in the same run sets the tags
+    against the fetch's empty baseline."""
+    updates = _auto_tagging_updates(
+        {
+            "data_classification_enabled": True,
+            "data_classification_auto_tagging_tags": frozenset({"a"}),
+        },
+        {
+            "data_classification_enabled": False,
+            "data_classification_auto_tagging_tags": frozenset(),
+        },
+    )
+
+    assert len(updates) == 1
+    assert updates[0].new_value == frozenset({"a"})
+
+
+# ---------------------------------------------------------------------------
 # Regression: owner resolution must preserve non-owner fields
 # ---------------------------------------------------------------------------
 

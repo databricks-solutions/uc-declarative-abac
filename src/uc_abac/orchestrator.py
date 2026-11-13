@@ -712,9 +712,9 @@ def fetch_actual_state(
     builds the principal-id maps that ``_execute_changes`` later reuses for
     resolution and execution — so the orchestrator threads the *same* helper
     instances into both). The fetch is scoped from ``config`` plus ``settings``:
-    catalog names, configured governed-tag/group names, RFA targets, and
-    column-comment tables are derived from config (via the pure config-only
-    compilers), while ``settings`` gates which domains are fetched at all.
+    catalog names, configured governed-tag/group names, RFA and data classification
+    targets, and column-comment tables are derived from config (via the pure
+    config-only compilers), while ``settings`` gates which domains are fetched at all.
 
     ``settings=None`` fetches the complete actual state for every domain — the
     downstream "current state" view. It also widens two config-scoped fetches from
@@ -737,7 +737,13 @@ def fetch_actual_state(
 
     catalog_names = [c.full_name for c in config.catalogs.values()]
     desired_groups = compile_desired_groups(config, run_date=ctx.run_date)
-    governed_tag_fetch_names = {gt.name for gt in compile_desired_governed_tags(config)}
+    # Assigner rule sets are fetched only for tags managing them (the full fetch reads
+    # every declared or referenced tag's assigners for the current-state view).
+    governed_tag_fetch_names = {
+        gt.name
+        for gt in compile_desired_governed_tags(config)
+        if full_fetch or gt.assigners is not None
+    }
     if full_fetch:
         governed_tag_fetch_names |= collect_referenced_tag_keys(config)
     desired_attributes = compile_desired_attributes(config)
@@ -755,6 +761,18 @@ def fetch_actual_state(
             ctx.enable_securable_modification
             or a.securable_type == SecurableType.FUNCTION
         )
+    }
+    # Catalogs managing Data Classification (enabled, or only auto-tagging, which
+    # needs to know whether a config exists). These are managed catalog attributes,
+    # so they share the securable-modification gate.
+    data_classification_targets: set[str] = {
+        a.full_name
+        for a in desired_attributes
+        if (
+            a.data_classification_enabled is not None
+            or a.data_classification_auto_tagging_tags is not None
+        )
+        and ctx.enable_securable_modification
     }
     # Parent tables of every in-scope column that declares a comment. Column comments
     # are a managed (securable) attribute, so — unlike rfa_targets, which has a FUNCTION
@@ -777,6 +795,7 @@ def fetch_actual_state(
             catalog_names,
             rfa_targets,
             column_comment_tables,
+            data_classification_targets=data_classification_targets,
         )
         actual_policies_f = pool.submit(uc_helper.fetch_actual_policies, catalog_names)
         actual_governed_tags_f = pool.submit(

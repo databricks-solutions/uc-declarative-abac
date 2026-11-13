@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.common.types.fieldmask import FieldMask
 from databricks.sdk.errors import InvalidParameterValue, NotFound
 from databricks.sdk.service.catalog import (
     AccessRequestDestinations,
@@ -21,6 +22,14 @@ from databricks.sdk.service.catalog import (
     Securable as SdkSecurable,
 )
 from databricks.sdk.service.catalog import SecurableType as SdkSecurableType
+from databricks.sdk.service.dataclassification import (
+    AutoTaggingConfig,
+    AutoTaggingConfigAutoTaggingMode,
+    CatalogConfigSchemaNames,
+)
+from databricks.sdk.service.dataclassification import (
+    CatalogConfig as SdkCatalogConfig,
+)
 from databricks.sdk.service.sql import (
     Disposition,
     ExecuteStatementRequestOnWaitTimeout,
@@ -63,6 +72,8 @@ _POLL_INTERVAL_SECONDS = 5
 _MAX_POLICY_LIST_WORKERS = 16
 
 _MAX_RFA_WORKERS = 16
+
+_MAX_DATA_CLASSIFICATION_WORKERS = 16
 
 _MAX_COLUMN_COMMENT_WORKERS = 16
 
@@ -892,33 +903,75 @@ def _build_notification_destination(destination_id: str) -> NotificationDestinat
     )
 
 
-def _merge_rfa_into_attributes(
+def _merge_attribute_values(
     attributes: set[SecurableAttributes],
-    rfa_map: dict[tuple[SecurableType, str], frozenset[str]],
+    field: str,
+    values_by_key: dict[tuple[SecurableType, str], object],
 ) -> set[SecurableAttributes]:
-    """Return a new SecurableAttributes set with rfa_destinations populated per target.
+    """Return a new SecurableAttributes set with ``field`` populated per target.
 
-    For each ``(securable_type, full_name)`` in ``rfa_map``:
+    Used for attributes fetched per target via the SDK rather than from
+    info_schema (``rfa_destinations``, ``data_classification_enabled``). For each
+    ``(securable_type, full_name)`` in ``values_by_key``:
 
     - If a matching row exists in ``attributes``, replace it with one carrying
-      the fetched ``rfa_destinations``.
+      the fetched value (every other field is preserved).
     - Otherwise (target securable absent from info_schema — typically because
       it's about to be created), insert a fresh row so the differ sees an
       actual-side baseline.
     """
     by_key = {(a.securable_type, a.full_name): a for a in attributes}
-    for key, destinations in rfa_map.items():
+    for key, value in values_by_key.items():
         existing = by_key.get(key)
         if existing is not None:
-            by_key[key] = dataclasses.replace(existing, rfa_destinations=destinations)
+            by_key[key] = dataclasses.replace(existing, **{field: value})
         else:
             sec_type, full_name = key
             by_key[key] = SecurableAttributes(
-                securable_type=sec_type,
-                full_name=full_name,
-                rfa_destinations=destinations,
+                securable_type=sec_type, full_name=full_name, **{field: value}
             )
     return set(by_key.values())
+
+
+def _schema_name_set(schema_names: CatalogConfigSchemaNames | None) -> frozenset[str]:
+    """Return a CatalogConfig schema-list field as a frozenset (empty when unset)."""
+    if schema_names is None:
+        return frozenset()
+    return frozenset(schema_names.names or ())
+
+
+def _auto_tagged_tags(configs: list[AutoTaggingConfig] | None) -> frozenset[str]:
+    """Return the classification tags with auto-tagging enabled (DISABLED entries
+    count as not auto-tagged)."""
+    enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+    return frozenset(
+        c.classification_tag for c in configs or () if c.auto_tagging_mode == enabled
+    )
+
+
+def _data_classification_state(config: SdkCatalogConfig | None) -> dict[str, object]:
+    """Build one catalog's Data Classification attributes, keyed by field name.
+
+    ``config`` is ``None`` when the catalog has no Data Classification config
+    (disabled, with empty lists).
+    """
+    if config is None:
+        config = SdkCatalogConfig()
+        enabled = False
+    else:
+        enabled = True
+    return {
+        "data_classification_enabled": enabled,
+        "data_classification_excluded_schemas": _schema_name_set(
+            config.excluded_schemas
+        ),
+        "data_classification_included_schemas": _schema_name_set(
+            config.included_schemas
+        ),
+        "data_classification_auto_tagging_tags": _auto_tagged_tags(
+            config.auto_tag_configs
+        ),
+    }
 
 
 def _validate_system_catalog(system_catalog: str) -> str:
@@ -1144,6 +1197,7 @@ class UnityCatalogHelper:
         catalog_names: list[str],
         rfa_targets: set[tuple[SecurableType, str]] | None = None,
         column_comment_tables: set[str] | None = None,
+        data_classification_targets: set[str] | None = None,
     ) -> tuple[set[Securable], set[SecurableAttributes]]:
         """Query system tables for securable attributes and function definitions.
 
@@ -1168,6 +1222,14 @@ class UnityCatalogHelper:
         column-comment latency scales only with the tables that declare them.
         When omitted or empty, no column-comment query fires. Catalogs that do not
         exist are skipped in per-catalog mode, and so are their tables' comments.
+
+        ``data_classification_targets`` is the optional set of catalog names that
+        declare ``data_classification_enabled`` in config. When supplied, the helper
+        fans out one ``data_classification.get_catalog_config`` call per catalog (in
+        parallel) and merges ``data_classification_enabled`` and the excluded /
+        included schema lists onto each CATALOG row, inserting fresh rows for
+        catalogs absent from info_schema (about to be created). When omitted or
+        empty, no call fires and those fields stay ``None``.
         """
         if self._securables_cache is not None and self._attributes_cache is not None:
             return self._securables_cache, self._attributes_cache
@@ -1190,7 +1252,14 @@ class UnityCatalogHelper:
 
         if rfa_targets:
             rfa_map = self._fetch_rfa_destinations(rfa_targets)
-            attributes = _merge_rfa_into_attributes(attributes, rfa_map)
+            attributes = _merge_attribute_values(
+                attributes, "rfa_destinations", rfa_map
+            )
+
+        if data_classification_targets:
+            fetched = self._fetch_data_classification(data_classification_targets)
+            for field, values_by_key in fetched.items():
+                attributes = _merge_attribute_values(attributes, field, values_by_key)
 
         if column_comment_tables:
             # Baseline every managed table's columns to comment=None (from the columns the
@@ -1331,6 +1400,131 @@ class UnityCatalogHelper:
         self._client.rfa.update_access_request_destinations(
             access_request_destinations=payload,
             update_mask="destinations",
+        )
+
+    def _fetch_data_classification(
+        self, catalog_names: set[str]
+    ) -> dict[str, dict[tuple[SecurableType, str], object]]:
+        """Fan out one ``data_classification.get_catalog_config`` call per catalog.
+
+        Returns ``{attribute: {(CATALOG, catalog_name): value}}`` for every
+        Data Classification attribute, ready for ``_merge_attribute_values``.
+        """
+        with ThreadPoolExecutor(max_workers=_MAX_DATA_CLASSIFICATION_WORKERS) as pool:
+            futures = {
+                pool.submit(self._get_data_classification_state, name): name
+                for name in catalog_names
+            }
+            states = {
+                (SecurableType.CATALOG, futures[future]): future.result()
+                for future in as_completed(futures)
+            }
+        by_attribute: dict[str, dict[tuple[SecurableType, str], object]] = {}
+        for key, state in states.items():
+            for attribute, value in state.items():
+                by_attribute.setdefault(attribute, {})[key] = value
+        return by_attribute
+
+    def _get_data_classification_state(self, catalog_name: str) -> dict[str, object]:
+        """Return one catalog's Data Classification attributes, keyed by field name.
+
+        Enabled means a catalog config exists; its excluded and included schema
+        names and auto-tagged tags are read from the config (empty when unset). ``NotFound`` (HTTP 404 —
+        no config, i.e. disabled) and ``InvalidParameterValue`` (HTTP 400 — the
+        catalog doesn't exist yet, e.g. scheduled for creation on this same run)
+        both mean disabled with empty lists. Other SDK errors propagate so
+        the run fails rather than diffing against a guess.
+        """
+        try:
+            config = self._client.data_classification.get_catalog_config(
+                name=f"catalogs/{catalog_name}/config"
+            )
+        except (NotFound, InvalidParameterValue):
+            return _data_classification_state(None)
+        return _data_classification_state(config)
+
+    def _update_catalog_config_field(
+        self, catalog_name: str, field: str, value: object
+    ) -> None:
+        """Replace one field of a catalog's Data Classification config.
+
+        A partial update masked to ``field``, so the config's other settings are
+        untouched. A ``None`` value sends the mask with no value, clearing the field.
+        """
+        name = f"catalogs/{catalog_name}/config"
+        self._client.data_classification.update_catalog_config(
+            name=name,
+            catalog_config=SdkCatalogConfig(name=name, **{field: value}),
+            update_mask=FieldMask([field]),
+        )
+
+    def _update_catalog_config_schemas(
+        self, catalog_name: str, field: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace one schema-list field; the API rejects an empty names list, so an
+        empty set clears the field."""
+        names = (
+            CatalogConfigSchemaNames(names=sorted(schema_names))
+            if schema_names
+            else None
+        )
+        self._update_catalog_config_field(catalog_name, field, names)
+
+    def update_data_classification(self, catalog_name: str, enabled: bool) -> None:
+        """Enable or disable Data Classification on a catalog.
+
+        Enabling creates a catalog config with default settings (every schema
+        scanned, no auto-tagging); disabling deletes the catalog config. The
+        schema lists are managed separately by the two update methods below.
+        """
+        if enabled:
+            self._client.data_classification.create_catalog_config(
+                parent=f"catalogs/{catalog_name}",
+                catalog_config=SdkCatalogConfig(),
+            )
+        else:
+            self._client.data_classification.delete_catalog_config(
+                name=f"catalogs/{catalog_name}/config"
+            )
+
+    def update_data_classification_excluded_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas excluded from a catalog's Data Classification scan.
+
+        Fails (and is logged by the executor) if the config still uses
+        ``included_schemas``, which is mutually exclusive with exclusions; the
+        executor clears the include list first in the same run.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "excluded_schemas", schema_names
+        )
+
+    def update_data_classification_included_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas a catalog's Data Classification scan is limited to.
+
+        The engine only ever clears this (an empty set): an enabled catalog scans
+        every schema not explicitly excluded.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "included_schemas", schema_names
+        )
+
+    def update_data_classification_auto_tagging(
+        self, catalog_name: str, tag_names: frozenset[str]
+    ) -> None:
+        """Replace the governed tags a catalog's Data Classification auto-applies.
+
+        Every listed tag is written in ``AUTO_TAGGING_ENABLED`` mode; the list is
+        replaced wholesale, so tags no longer listed (including any in
+        ``AUTO_TAGGING_DISABLED`` mode) are removed. An empty set clears it.
+        """
+        enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+        configs = [AutoTaggingConfig(tag, enabled) for tag in sorted(tag_names)]
+        self._update_catalog_config_field(
+            catalog_name, "auto_tag_configs", configs or None
         )
 
     def update_owner(
