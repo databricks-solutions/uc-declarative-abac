@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.common.types.fieldmask import FieldMask
 from databricks.sdk.errors import InvalidParameterValue, NotFound
 from databricks.sdk.service.catalog import (
     AccessRequestDestinations,
@@ -21,6 +22,14 @@ from databricks.sdk.service.catalog import (
     Securable as SdkSecurable,
 )
 from databricks.sdk.service.catalog import SecurableType as SdkSecurableType
+from databricks.sdk.service.dataclassification import (
+    AutoTaggingConfig,
+    AutoTaggingConfigAutoTaggingMode,
+    CatalogConfigSchemaNames,
+)
+from databricks.sdk.service.dataclassification import (
+    CatalogConfig as SdkCatalogConfig,
+)
 from databricks.sdk.service.sql import (
     Disposition,
     ExecuteStatementRequestOnWaitTimeout,
@@ -53,6 +62,7 @@ from uc_abac.utils import (
     OrchestratorError,
     classify_rfa_destination,
     normalise_data_type,
+    sql_string_literal,
 )
 
 _logger = logging.getLogger("uc_abac")
@@ -63,6 +73,8 @@ _MAX_POLICY_LIST_WORKERS = 16
 
 _MAX_RFA_WORKERS = 16
 
+_MAX_DATA_CLASSIFICATION_WORKERS = 16
+
 _MAX_COLUMN_COMMENT_WORKERS = 16
 
 # Max parent tables per targeted column-comment query. The table set is chunked
@@ -71,11 +83,47 @@ _MAX_COLUMN_COMMENT_WORKERS = 16
 # declare column comments.
 _COLUMN_COMMENT_TABLE_BATCH = 1000
 
+_DEFAULT_INFORMATION_SCHEMA = "system.information_schema"
+
 
 def _build_catalog_in_clause(catalog_names: list[str]) -> str:
     """Build a SQL IN clause from a list of catalog names."""
-    quoted = ", ".join(f"'{name}'" for name in catalog_names)
+    quoted = ", ".join(sql_string_literal(name) for name in catalog_names)
     return f"({quoted})"
+
+
+def _quote_identifier(name: str) -> str:
+    """Backtick-quote a Unity Catalog identifier, doubling any embedded backticks."""
+    return "`" + name.replace("`", "``") + "`"
+
+
+def _information_schema_source(
+    view: str,
+    catalog_names: list[str],
+    *,
+    information_schema: str,
+    per_catalog: bool,
+) -> str:
+    """Return the FROM source for one ``information_schema`` view.
+
+    With ``per_catalog=False`` this is the single relation
+    ``{information_schema}.{view}``. With ``per_catalog=True`` it is a parenthesised
+    ``UNION ALL`` of
+    ``SELECT * FROM `<catalog>`.information_schema.<view>`` arms, one per distinct
+    catalog (sorted, so the statement text is deterministic). Each catalog's own
+    information_schema is read instead of the system catalog's aggregate view, so a
+    query only touches the catalogs it was asked about.
+
+    The returned string is a bare relation or a derived table; callers that alias it
+    append the alias after it (``FROM {source} t``).
+    """
+    if not per_catalog:
+        return f"{information_schema}.{view}"
+    arms = [
+        f"SELECT * FROM {_quote_identifier(name)}.information_schema.{view}"
+        for name in sorted(set(catalog_names))
+    ]
+    return "(" + " UNION ALL ".join(arms) + ")"
 
 
 def _build_double_underscore_filter(
@@ -102,7 +150,10 @@ def _build_double_underscore_filter(
 
 
 def _build_tags_query(
-    catalog_names: list[str], *, system_catalog: str = "system"
+    catalog_names: list[str],
+    *,
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+    per_catalog: bool = False,
 ) -> str:
     """Build a UNION ALL query across all tag system tables for the given catalogs.
 
@@ -110,6 +161,8 @@ def _build_tags_query(
     of that securable's tags packed into a JSON `tags` column as an array of
     ``{tag_name, tag_value}`` objects. This cuts row count — and therefore external-
     link transfer/parse cost — from one row per tag down to one row per securable.
+
+    ``per_catalog`` selects the FROM source per view (see ``_information_schema_source``).
     """
     in_clause = _build_catalog_in_clause(catalog_names)
     # Each arm carries the name components to exclude when '__'-prefixed. The COLUMN
@@ -165,11 +218,17 @@ def _build_tags_query(
         if has_schema:
             where += " AND schema_name != 'information_schema'"
         where += _build_double_underscore_filter(name_cols)
+        source = _information_schema_source(
+            table,
+            catalog_names,
+            information_schema=information_schema,
+            per_catalog=per_catalog,
+        )
         parts.append(
             f"SELECT '{sec_type}' AS securable_type, "
             f"{full_name_expr} AS securable_full_name, "
             f"to_json(sort_array(collect_list(struct(tag_name, tag_value)))) AS tags "
-            f"FROM {system_catalog}.information_schema.{table} "
+            f"FROM {source} "
             f"WHERE {where} "
             f"GROUP BY {group_by_cols}"
         )
@@ -177,15 +236,30 @@ def _build_tags_query(
 
 
 def _build_privileges_query(
-    catalog_names: list[str], *, system_catalog: str = "system"
+    catalog_names: list[str],
+    *,
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+    per_catalog: bool = False,
 ) -> str:
-    """Build a UNION ALL query across privilege system tables for the given catalogs."""
+    """Build a UNION ALL query across privilege system tables for the given catalogs.
+
+    ``per_catalog`` selects the FROM source per view (see ``_information_schema_source``).
+    """
     in_clause = _build_catalog_in_clause(catalog_names)
+
+    def source(view: str) -> str:
+        return _information_schema_source(
+            view,
+            catalog_names,
+            information_schema=information_schema,
+            per_catalog=per_catalog,
+        )
+
     parts = [
         (
             f"SELECT 'CATALOG' AS securable_type, catalog_name AS securable_full_name, "
             f"grantee, privilege_type "
-            f"FROM {system_catalog}.information_schema.catalog_privileges "
+            f"FROM {source('catalog_privileges')} "
             f"WHERE catalog_name IN {in_clause} AND inherited_from = 'NONE'"
             f"{_build_double_underscore_filter(['catalog_name'])}"
         ),
@@ -193,7 +267,7 @@ def _build_privileges_query(
             f"SELECT 'SCHEMA' AS securable_type, "
             f"concat(catalog_name, '.', schema_name) AS securable_full_name, "
             f"grantee, privilege_type "
-            f"FROM {system_catalog}.information_schema.schema_privileges "
+            f"FROM {source('schema_privileges')} "
             f"WHERE catalog_name IN {in_clause} AND inherited_from = 'NONE' AND schema_name != 'information_schema'"
             f"{_build_double_underscore_filter(['catalog_name', 'schema_name'])}"
         ),
@@ -201,7 +275,7 @@ def _build_privileges_query(
             f"SELECT 'TABLE' AS securable_type, "
             f"concat(table_catalog, '.', table_schema, '.', table_name) AS securable_full_name, "
             f"grantee, privilege_type "
-            f"FROM {system_catalog}.information_schema.table_privileges "
+            f"FROM {source('table_privileges')} "
             f"WHERE table_catalog IN {in_clause} AND inherited_from = 'NONE' AND table_schema != 'information_schema'"
             f"{_build_double_underscore_filter(['table_catalog', 'table_schema', 'table_name'])}"
         ),
@@ -209,7 +283,7 @@ def _build_privileges_query(
             f"SELECT 'VOLUME' AS securable_type, "
             f"concat(volume_catalog, '.', volume_schema, '.', volume_name) AS securable_full_name, "
             f"grantee, privilege_type "
-            f"FROM {system_catalog}.information_schema.volume_privileges "
+            f"FROM {source('volume_privileges')} "
             f"WHERE volume_catalog IN {in_clause} AND inherited_from = 'NONE' AND volume_schema != 'information_schema'"
             f"{_build_double_underscore_filter(['volume_catalog', 'volume_schema', 'volume_name'])}"
         ),
@@ -293,7 +367,10 @@ def _fetch_external_links_rows(response: StatementResponse) -> list[list[str]]:
 
 
 def _build_securables_query(
-    catalog_names: list[str], *, system_catalog: str = "system"
+    catalog_names: list[str],
+    *,
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+    per_catalog: bool = False,
 ) -> str:
     """Build a UNION ALL query for securable attributes, function definitions, and table columns.
 
@@ -328,14 +405,25 @@ def _build_securables_query(
     Databricks-managed system securables (e.g. SDP materializations) that must
     never appear in a diff; filtering every name component means a
     ``__``-prefixed catalog or schema also drops its descendants.
+
+    ``per_catalog`` selects the FROM source per view (see ``_information_schema_source``).
     """
     in_clause = _build_catalog_in_clause(catalog_names)
+
+    def source(view: str) -> str:
+        return _information_schema_source(
+            view,
+            catalog_names,
+            information_schema=information_schema,
+            per_catalog=per_catalog,
+        )
+
     parts = [
         (
             f"SELECT 'CATALOG' AS securable_type, catalog_name AS full_name, "
             f"catalog_owner AS owner, NULL AS parameters, NULL AS routine_definition, NULL AS routine_comment, NULL AS columns, "
             f"comment AS comment, NULL AS table_type "
-            f"FROM {system_catalog}.information_schema.catalogs "
+            f"FROM {source('catalogs')} "
             f"WHERE catalog_name IN {in_clause}"
             f"{_build_double_underscore_filter(['catalog_name'])}"
         ),
@@ -344,7 +432,7 @@ def _build_securables_query(
             f"concat(catalog_name, '.', schema_name) AS full_name, "
             f"schema_owner AS owner, NULL AS parameters, NULL AS routine_definition, NULL AS routine_comment, NULL AS columns, "
             f"comment AS comment, NULL AS table_type "
-            f"FROM {system_catalog}.information_schema.schemata "
+            f"FROM {source('schemata')} "
             f"WHERE catalog_name IN {in_clause} AND schema_name != 'information_schema'"
             f"{_build_double_underscore_filter(['catalog_name', 'schema_name'])}"
         ),
@@ -354,8 +442,8 @@ def _build_securables_query(
             f"t.table_owner AS owner, NULL AS parameters, NULL AS routine_definition, NULL AS routine_comment, "
             f"to_json(transform(sort_array(collect_list(struct(c.ordinal_position, c.column_name))), x -> x.column_name)) AS columns, "
             f"t.comment AS comment, t.table_type AS table_type "
-            f"FROM {system_catalog}.information_schema.tables t "
-            f"LEFT JOIN {system_catalog}.information_schema.columns c "
+            f"FROM {source('tables')} t "
+            f"LEFT JOIN {source('columns')} c "
             f"ON t.table_catalog = c.table_catalog "
             f"AND t.table_schema = c.table_schema "
             f"AND t.table_name = c.table_name "
@@ -368,7 +456,7 @@ def _build_securables_query(
             f"concat(volume_catalog, '.', volume_schema, '.', volume_name) AS full_name, "
             f"volume_owner AS owner, NULL AS parameters, NULL AS routine_definition, NULL AS routine_comment, NULL AS columns, "
             f"comment AS comment, NULL AS table_type "
-            f"FROM {system_catalog}.information_schema.volumes "
+            f"FROM {source('volumes')} "
             f"WHERE volume_catalog IN {in_clause} AND volume_schema != 'information_schema'"
             f"{_build_double_underscore_filter(['volume_catalog', 'volume_schema', 'volume_name'])}"
         ),
@@ -380,8 +468,8 @@ def _build_securables_query(
             f"r.routine_definition AS routine_definition, "
             f"r.comment AS routine_comment, "
             f"NULL AS columns, NULL AS comment, NULL AS table_type "
-            f"FROM {system_catalog}.information_schema.routines r "
-            f"LEFT JOIN {system_catalog}.information_schema.parameters p "
+            f"FROM {source('routines')} r "
+            f"LEFT JOIN {source('parameters')} p "
             f"ON r.specific_catalog = p.specific_catalog "
             f"AND r.specific_schema = p.specific_schema "
             f"AND r.specific_name = p.specific_name "
@@ -394,7 +482,10 @@ def _build_securables_query(
 
 
 def _build_column_comments_query(
-    table_full_names: list[str], *, system_catalog: str = "system"
+    table_full_names: list[str],
+    *,
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+    per_catalog: bool = False,
 ) -> str:
     """Build a targeted query for the **non-empty** comments on the columns of the given tables.
 
@@ -417,16 +508,25 @@ def _build_column_comments_query(
     to just the relevant catalogs/schemas; the exact ``concat(...)`` filter then narrows the
     pruned rows down to precisely the requested tables. Names are assumed dot-free (the same
     assumption the rest of the engine makes for dot-joined full names).
+
+    In per-catalog mode the source is the columns view of each catalog named by the tables
+    (the same catalogs the pruning predicate already derives), not the system catalog.
     """
     catalogs = sorted({name.split(".")[0] for name in table_full_names})
     schemas = sorted({name.split(".")[1] for name in table_full_names})
     catalog_in = _build_catalog_in_clause(catalogs)
     schema_in = _build_catalog_in_clause(schemas)
     table_in = _build_catalog_in_clause(table_full_names)
+    source = _information_schema_source(
+        "columns",
+        catalogs,
+        information_schema=information_schema,
+        per_catalog=per_catalog,
+    )
     return (
         "SELECT concat(table_catalog, '.', table_schema, '.', table_name, '.', column_name) "
         "AS full_name, comment "
-        f"FROM {system_catalog}.information_schema.columns "
+        f"FROM {source} "
         f"WHERE table_catalog IN {catalog_in} "
         f"AND table_schema IN {schema_in} "
         f"AND concat(table_catalog, '.', table_schema, '.', table_name) IN {table_in} "
@@ -519,6 +619,11 @@ def _parse_securable_rows(
     through ``normalise_data_type`` — the same canonicaliser the config side uses —
     so UC's canonical rendering (injected default collation, casing, incidental
     whitespace) matches the hand-written config and stays idempotent.
+
+    For a zero-argument function, the LEFT JOIN against ``parameters`` still contributes
+    one all-null struct. Databricks omits those null fields during JSON serialization, so
+    the aggregate arrives as ``[{}]``. Empty parameter objects are join placeholders and
+    are ignored; non-empty objects remain strict and must contain both projected fields.
     """
     securables: set[Securable] = set()
     attributes: set[SecurableAttributes] = set()
@@ -553,6 +658,7 @@ def _parse_securable_rows(
                 params = tuple(
                     (p["parameter_name"], normalise_data_type(p["full_data_type"]))
                     for p in parsed_params
+                    if p != {}
                 )
             else:
                 params = ()
@@ -592,7 +698,10 @@ def _parse_securable_rows(
 
 
 def _build_policy_securables_query(
-    catalog_names: list[str], *, system_catalog: str = "system"
+    catalog_names: list[str],
+    *,
+    information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+    per_catalog: bool = False,
 ) -> str:
     """Build a single-scan discovery query against the system table for securables carrying mask/filter policies.
 
@@ -619,12 +728,20 @@ def _build_policy_securables_query(
     predicate on that column of this view (issue #24).
     ``ROW_FILTER``/``COLUMN_MASK`` are the system-table spellings — distinct from
     the SDK's ``POLICY_TYPE_*`` used in ``_normalise_policy_info``.
+
+    ``per_catalog`` selects the FROM source (see ``_information_schema_source``).
     """
     in_clause = _build_catalog_in_clause(catalog_names)
     hidden_filter = (
         _build_double_underscore_filter(["catalog_name"])
         + " AND substring(coalesce(schema_name, ''), 1, 2) != '__'"
         + _build_double_underscore_filter(["securable_name"], null_safe=True)
+    )
+    source = _information_schema_source(
+        "abac_policy_definitions",
+        catalog_names,
+        information_schema=information_schema,
+        per_catalog=per_catalog,
     )
     return (
         "SELECT DISTINCT "
@@ -634,7 +751,7 @@ def _build_policy_securables_query(
         "    WHEN 'SCHEMA'  THEN concat(catalog_name, '.', schema_name) "
         "    WHEN 'TABLE'   THEN concat(catalog_name, '.', schema_name, '.', securable_name) "
         "  END AS securable_full_name "
-        f"FROM {system_catalog}.information_schema.abac_policy_definitions "
+        f"FROM {source} "
         "WHERE catalog_name IN " + in_clause + " "
         "  AND policy_type IN ('ROW_FILTER', 'COLUMN_MASK') "
         "  AND on_securable_type IN ('CATALOG', 'SCHEMA', 'TABLE') "
@@ -786,33 +903,75 @@ def _build_notification_destination(destination_id: str) -> NotificationDestinat
     )
 
 
-def _merge_rfa_into_attributes(
+def _merge_attribute_values(
     attributes: set[SecurableAttributes],
-    rfa_map: dict[tuple[SecurableType, str], frozenset[str]],
+    field: str,
+    values_by_key: dict[tuple[SecurableType, str], object],
 ) -> set[SecurableAttributes]:
-    """Return a new SecurableAttributes set with rfa_destinations populated per target.
+    """Return a new SecurableAttributes set with ``field`` populated per target.
 
-    For each ``(securable_type, full_name)`` in ``rfa_map``:
+    Used for attributes fetched per target via the SDK rather than from
+    info_schema (``rfa_destinations``, ``data_classification_enabled``). For each
+    ``(securable_type, full_name)`` in ``values_by_key``:
 
     - If a matching row exists in ``attributes``, replace it with one carrying
-      the fetched ``rfa_destinations``.
+      the fetched value (every other field is preserved).
     - Otherwise (target securable absent from info_schema — typically because
       it's about to be created), insert a fresh row so the differ sees an
       actual-side baseline.
     """
     by_key = {(a.securable_type, a.full_name): a for a in attributes}
-    for key, destinations in rfa_map.items():
+    for key, value in values_by_key.items():
         existing = by_key.get(key)
         if existing is not None:
-            by_key[key] = dataclasses.replace(existing, rfa_destinations=destinations)
+            by_key[key] = dataclasses.replace(existing, **{field: value})
         else:
             sec_type, full_name = key
             by_key[key] = SecurableAttributes(
-                securable_type=sec_type,
-                full_name=full_name,
-                rfa_destinations=destinations,
+                securable_type=sec_type, full_name=full_name, **{field: value}
             )
     return set(by_key.values())
+
+
+def _schema_name_set(schema_names: CatalogConfigSchemaNames | None) -> frozenset[str]:
+    """Return a CatalogConfig schema-list field as a frozenset (empty when unset)."""
+    if schema_names is None:
+        return frozenset()
+    return frozenset(schema_names.names or ())
+
+
+def _auto_tagged_tags(configs: list[AutoTaggingConfig] | None) -> frozenset[str]:
+    """Return the classification tags with auto-tagging enabled (DISABLED entries
+    count as not auto-tagged)."""
+    enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+    return frozenset(
+        c.classification_tag for c in configs or () if c.auto_tagging_mode == enabled
+    )
+
+
+def _data_classification_state(config: SdkCatalogConfig | None) -> dict[str, object]:
+    """Build one catalog's Data Classification attributes, keyed by field name.
+
+    ``config`` is ``None`` when the catalog has no Data Classification config
+    (disabled, with empty lists).
+    """
+    if config is None:
+        config = SdkCatalogConfig()
+        enabled = False
+    else:
+        enabled = True
+    return {
+        "data_classification_enabled": enabled,
+        "data_classification_excluded_schemas": _schema_name_set(
+            config.excluded_schemas
+        ),
+        "data_classification_included_schemas": _schema_name_set(
+            config.included_schemas
+        ),
+        "data_classification_auto_tagging_tags": _auto_tagged_tags(
+            config.auto_tag_configs
+        ),
+    }
 
 
 def _validate_system_catalog(system_catalog: str) -> str:
@@ -824,11 +983,72 @@ def _validate_system_catalog(system_catalog: str) -> str:
     return system_catalog
 
 
+def _validate_information_schema(information_schema: str) -> str:
+    """Validate a fully qualified information-schema source.
+
+    Both parts must be plain, unquoted identifiers because the source is interpolated
+    into SQL as ``<catalog>.<schema>``. Custom schemas are valid sources, including a
+    schema literally named ``information_schema``.
+    """
+    parts = information_schema.split(".")
+    ident = r"[A-Za-z_][A-Za-z0-9_]*"
+    if len(parts) != 2 or not all(re.fullmatch(ident, p) for p in parts):
+        raise ValueError(
+            "information_schema must be a two-part <catalog>.<schema> name "
+            "of plain, unquoted identifiers"
+        )
+    return information_schema
+
+
+def _resolve_information_schema(
+    system_catalog: str,
+    information_schema: str,
+    per_catalog_information_schema: bool,
+) -> str:
+    """Resolve the legacy catalog and new information-schema source options.
+
+    A non-default ``system_catalog`` remains supported by mapping it to
+    ``<system_catalog>.information_schema``. It cannot be combined with either new
+    source option because that would make precedence ambiguous. Likewise, a custom
+    single source and per-catalog mode are mutually exclusive; the public default may
+    coexist with per-catalog mode because it is ignored while unions are enabled.
+    """
+    system_catalog = _validate_system_catalog(system_catalog)
+    information_schema = _validate_information_schema(information_schema)
+    custom_system_catalog = system_catalog != "system"
+    custom_information_schema = information_schema != _DEFAULT_INFORMATION_SCHEMA
+    if custom_system_catalog and (
+        custom_information_schema or per_catalog_information_schema
+    ):
+        raise ValueError(
+            "custom system_catalog cannot be combined with information_schema or "
+            "per_catalog_information_schema"
+        )
+    if custom_information_schema and per_catalog_information_schema:
+        raise ValueError(
+            "custom information_schema cannot be combined with "
+            "per_catalog_information_schema"
+        )
+    if custom_system_catalog:
+        return f"{system_catalog}.information_schema"
+    return information_schema
+
+
 class UnityCatalogHelper:
     """Wraps WorkspaceClient for querying UC state and executing SQL.
 
     Uses the Statement Execution API with external links disposition
     for efficient result streaming. Caches results after initial fetch.
+
+    State reads use one of two sources:
+
+    - **Single source:** every query reads the corresponding view from the configured
+      ``<catalog>.<schema>``, defaulting to ``system.information_schema``.
+    - **Per-catalog:** every query reads ``<catalog>.information_schema`` for each
+      requested catalog and unions the results. The metastore's catalogs are listed once
+      (cached), and requested catalogs that do not exist are dropped before any SQL is
+      built, since a FROM clause naming a missing catalog fails the whole statement and
+      one stale name in the config would otherwise abort the run.
     """
 
     def __init__(
@@ -837,10 +1057,19 @@ class UnityCatalogHelper:
         warehouse_id: str,
         *,
         system_catalog: str = "system",
+        information_schema: str = _DEFAULT_INFORMATION_SCHEMA,
+        per_catalog_information_schema: bool = False,
     ) -> None:
         self._client = workspace_client
         self._warehouse_id = warehouse_id
-        self._system_catalog = _validate_system_catalog(system_catalog)
+        self._information_schema = _resolve_information_schema(
+            system_catalog,
+            information_schema,
+            per_catalog_information_schema,
+        )
+        self._per_catalog_information_schema = per_catalog_information_schema
+        self._existing_catalogs_cache: frozenset[str] | None = None
+        self._warned_missing_catalogs: set[str] = set()
         self._tags_cache: set[SecurableTag] | None = None
         self._privileges_cache: set[SecurablePrivilege] | None = None
         self._securables_cache: set[Securable] | None = None
@@ -875,20 +1104,61 @@ class UnityCatalogHelper:
 
         return response
 
+    def _existing_catalogs(self) -> frozenset[str]:
+        """Names of the catalogs in the metastore, listed once and then cached.
+
+        Only consulted in per-catalog mode; the default mode never lists catalogs.
+        """
+        if self._existing_catalogs_cache is None:
+            self._existing_catalogs_cache = frozenset(
+                catalog.name for catalog in self._client.catalogs.list() if catalog.name
+            )
+        return self._existing_catalogs_cache
+
+    def _scope_catalogs(self, catalog_names: list[str]) -> list[str]:
+        """Narrow the requested catalogs to those the state reads can actually use.
+
+        In per-catalog mode this returns the distinct requested names that exist in the
+        metastore, sorted. Missing names are dropped because a per-catalog FROM clause
+        naming a non-existent catalog fails the whole statement (see the class docstring).
+        In the default mode the names are returned unchanged and no listing call is made.
+
+        The listing only returns catalogs the caller can see, so a catalog that exists but
+        is hidden is indistinguishable from a missing one (as in ``system.information_schema``).
+        Each skipped name is warned about once per helper so a permission problem is not silent.
+        """
+        if not self._per_catalog_information_schema:
+            return catalog_names
+        existing = self._existing_catalogs()
+        requested = set(catalog_names)
+        for name in sorted(requested - existing - self._warned_missing_catalogs):
+            _logger.warning(
+                f"Catalog '{name}' was not found in the catalogs visible to this "
+                "principal; it is treated as non-existent (see docstring)."
+            )
+            self._warned_missing_catalogs.add(name)
+        return sorted(requested & existing)
+
     def fetch_actual_tags(self, catalog_names: list[str]) -> set[SecurableTag]:
         """Query system tables for all tags on securables in the given catalogs.
 
-        Results are cached after the first call.
+        Results are cached after the first call. Catalogs that do not exist are
+        skipped in per-catalog mode (see the class docstring).
         """
         if self._tags_cache is not None:
             return self._tags_cache
 
+        catalog_names = self._scope_catalogs(catalog_names)
         if not catalog_names:
             self._tags_cache = set()
             return self._tags_cache
 
         response = self._execute_and_poll(
-            _build_tags_query(catalog_names, system_catalog=self._system_catalog)
+            _build_tags_query(
+                catalog_names,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
+            )
         )
         rows = _fetch_external_links_rows(response)
         self._tags_cache = _parse_tag_rows(rows)
@@ -900,17 +1170,23 @@ class UnityCatalogHelper:
         """Query system tables for all explicit privileges on securables in the given catalogs.
 
         Filters to inherited_from='NONE' to only return directly granted privileges.
-        Results are cached after the first call.
+        Results are cached after the first call. Catalogs that do not exist are
+        skipped in per-catalog mode (see the class docstring).
         """
         if self._privileges_cache is not None:
             return self._privileges_cache
 
+        catalog_names = self._scope_catalogs(catalog_names)
         if not catalog_names:
             self._privileges_cache = set()
             return self._privileges_cache
 
         response = self._execute_and_poll(
-            _build_privileges_query(catalog_names, system_catalog=self._system_catalog)
+            _build_privileges_query(
+                catalog_names,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
+            )
         )
         rows = _fetch_external_links_rows(response)
         self._privileges_cache = _parse_privilege_rows(rows)
@@ -921,6 +1197,7 @@ class UnityCatalogHelper:
         catalog_names: list[str],
         rfa_targets: set[tuple[SecurableType, str]] | None = None,
         column_comment_tables: set[str] | None = None,
+        data_classification_targets: set[str] | None = None,
     ) -> tuple[set[Securable], set[SecurableAttributes]]:
         """Query system tables for securable attributes and function definitions.
 
@@ -943,25 +1220,46 @@ class UnityCatalogHelper:
         (and cached) ``SecurableAttributes`` set as a ``COLUMN`` row. The bulk
         securables query is unaffected — it never fetches column comments — so
         column-comment latency scales only with the tables that declare them.
-        When omitted or empty, no column-comment query fires.
+        When omitted or empty, no column-comment query fires. Catalogs that do not
+        exist are skipped in per-catalog mode, and so are their tables' comments.
+
+        ``data_classification_targets`` is the optional set of catalog names that
+        declare ``data_classification_enabled`` in config. When supplied, the helper
+        fans out one ``data_classification.get_catalog_config`` call per catalog (in
+        parallel) and merges ``data_classification_enabled`` and the excluded /
+        included schema lists onto each CATALOG row, inserting fresh rows for
+        catalogs absent from info_schema (about to be created). When omitted or
+        empty, no call fires and those fields stay ``None``.
         """
         if self._securables_cache is not None and self._attributes_cache is not None:
             return self._securables_cache, self._attributes_cache
 
+        catalog_names = self._scope_catalogs(catalog_names)
         if not catalog_names:
             self._securables_cache = set()
             self._attributes_cache = set()
             return self._securables_cache, self._attributes_cache
 
         response = self._execute_and_poll(
-            _build_securables_query(catalog_names, system_catalog=self._system_catalog)
+            _build_securables_query(
+                catalog_names,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
+            )
         )
         rows = _fetch_external_links_rows(response)
         securables, attributes = _parse_securable_rows(rows)
 
         if rfa_targets:
             rfa_map = self._fetch_rfa_destinations(rfa_targets)
-            attributes = _merge_rfa_into_attributes(attributes, rfa_map)
+            attributes = _merge_attribute_values(
+                attributes, "rfa_destinations", rfa_map
+            )
+
+        if data_classification_targets:
+            fetched = self._fetch_data_classification(data_classification_targets)
+            for field, values_by_key in fetched.items():
+                attributes = _merge_attribute_values(attributes, field, values_by_key)
 
         if column_comment_tables:
             # Baseline every managed table's columns to comment=None (from the columns the
@@ -985,8 +1283,17 @@ class UnityCatalogHelper:
         (sorted for deterministic batching) and each batch runs as its own statement
         over a thread pool; the batches' rows are concatenated. Order is irrelevant —
         the merge is keyed by full name.
+
+        In per-catalog mode, tables whose catalog does not exist are dropped first, for
+        the same reason as in ``_scope_catalogs``. If none remain, no statement is run.
         """
-        tables = sorted(table_full_names)
+        catalogs = self._scope_catalogs(
+            sorted({name.split(".")[0] for name in table_full_names})
+        )
+        in_scope = set(catalogs)
+        tables = sorted(
+            name for name in table_full_names if name.split(".")[0] in in_scope
+        )
         batches = [
             tables[i : i + _COLUMN_COMMENT_TABLE_BATCH]
             for i in range(0, len(tables), _COLUMN_COMMENT_TABLE_BATCH)
@@ -1007,7 +1314,9 @@ class UnityCatalogHelper:
         """Run one batch's targeted column-comment query and return its rows."""
         response = self._execute_and_poll(
             _build_column_comments_query(
-                table_full_names, system_catalog=self._system_catalog
+                table_full_names,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         return _fetch_external_links_rows(response)
@@ -1093,6 +1402,131 @@ class UnityCatalogHelper:
             update_mask="destinations",
         )
 
+    def _fetch_data_classification(
+        self, catalog_names: set[str]
+    ) -> dict[str, dict[tuple[SecurableType, str], object]]:
+        """Fan out one ``data_classification.get_catalog_config`` call per catalog.
+
+        Returns ``{attribute: {(CATALOG, catalog_name): value}}`` for every
+        Data Classification attribute, ready for ``_merge_attribute_values``.
+        """
+        with ThreadPoolExecutor(max_workers=_MAX_DATA_CLASSIFICATION_WORKERS) as pool:
+            futures = {
+                pool.submit(self._get_data_classification_state, name): name
+                for name in catalog_names
+            }
+            states = {
+                (SecurableType.CATALOG, futures[future]): future.result()
+                for future in as_completed(futures)
+            }
+        by_attribute: dict[str, dict[tuple[SecurableType, str], object]] = {}
+        for key, state in states.items():
+            for attribute, value in state.items():
+                by_attribute.setdefault(attribute, {})[key] = value
+        return by_attribute
+
+    def _get_data_classification_state(self, catalog_name: str) -> dict[str, object]:
+        """Return one catalog's Data Classification attributes, keyed by field name.
+
+        Enabled means a catalog config exists; its excluded and included schema
+        names and auto-tagged tags are read from the config (empty when unset). ``NotFound`` (HTTP 404 —
+        no config, i.e. disabled) and ``InvalidParameterValue`` (HTTP 400 — the
+        catalog doesn't exist yet, e.g. scheduled for creation on this same run)
+        both mean disabled with empty lists. Other SDK errors propagate so
+        the run fails rather than diffing against a guess.
+        """
+        try:
+            config = self._client.data_classification.get_catalog_config(
+                name=f"catalogs/{catalog_name}/config"
+            )
+        except (NotFound, InvalidParameterValue):
+            return _data_classification_state(None)
+        return _data_classification_state(config)
+
+    def _update_catalog_config_field(
+        self, catalog_name: str, field: str, value: object
+    ) -> None:
+        """Replace one field of a catalog's Data Classification config.
+
+        A partial update masked to ``field``, so the config's other settings are
+        untouched. A ``None`` value sends the mask with no value, clearing the field.
+        """
+        name = f"catalogs/{catalog_name}/config"
+        self._client.data_classification.update_catalog_config(
+            name=name,
+            catalog_config=SdkCatalogConfig(name=name, **{field: value}),
+            update_mask=FieldMask([field]),
+        )
+
+    def _update_catalog_config_schemas(
+        self, catalog_name: str, field: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace one schema-list field; the API rejects an empty names list, so an
+        empty set clears the field."""
+        names = (
+            CatalogConfigSchemaNames(names=sorted(schema_names))
+            if schema_names
+            else None
+        )
+        self._update_catalog_config_field(catalog_name, field, names)
+
+    def update_data_classification(self, catalog_name: str, enabled: bool) -> None:
+        """Enable or disable Data Classification on a catalog.
+
+        Enabling creates a catalog config with default settings (every schema
+        scanned, no auto-tagging); disabling deletes the catalog config. The
+        schema lists are managed separately by the two update methods below.
+        """
+        if enabled:
+            self._client.data_classification.create_catalog_config(
+                parent=f"catalogs/{catalog_name}",
+                catalog_config=SdkCatalogConfig(),
+            )
+        else:
+            self._client.data_classification.delete_catalog_config(
+                name=f"catalogs/{catalog_name}/config"
+            )
+
+    def update_data_classification_excluded_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas excluded from a catalog's Data Classification scan.
+
+        Fails (and is logged by the executor) if the config still uses
+        ``included_schemas``, which is mutually exclusive with exclusions; the
+        executor clears the include list first in the same run.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "excluded_schemas", schema_names
+        )
+
+    def update_data_classification_included_schemas(
+        self, catalog_name: str, schema_names: frozenset[str]
+    ) -> None:
+        """Replace the schemas a catalog's Data Classification scan is limited to.
+
+        The engine only ever clears this (an empty set): an enabled catalog scans
+        every schema not explicitly excluded.
+        """
+        self._update_catalog_config_schemas(
+            catalog_name, "included_schemas", schema_names
+        )
+
+    def update_data_classification_auto_tagging(
+        self, catalog_name: str, tag_names: frozenset[str]
+    ) -> None:
+        """Replace the governed tags a catalog's Data Classification auto-applies.
+
+        Every listed tag is written in ``AUTO_TAGGING_ENABLED`` mode; the list is
+        replaced wholesale, so tags no longer listed (including any in
+        ``AUTO_TAGGING_DISABLED`` mode) are removed. An empty set clears it.
+        """
+        enabled = AutoTaggingConfigAutoTaggingMode.AUTO_TAGGING_ENABLED
+        configs = [AutoTaggingConfig(tag, enabled) for tag in sorted(tag_names)]
+        self._update_catalog_config_field(
+            catalog_name, "auto_tag_configs", configs or None
+        )
+
     def update_owner(
         self, securable_type: SecurableType, full_name: str, new_owner: str
     ) -> None:
@@ -1137,13 +1571,16 @@ class UnityCatalogHelper:
         if self._policies_cache is not None:
             return self._policies_cache
 
+        catalog_names = self._scope_catalogs(catalog_names)
         if not catalog_names:
             self._policies_cache = set()
             return self._policies_cache
 
         response = self._execute_and_poll(
             _build_policy_securables_query(
-                catalog_names, system_catalog=self._system_catalog
+                catalog_names,
+                information_schema=self._information_schema,
+                per_catalog=self._per_catalog_information_schema,
             )
         )
         rows = _fetch_external_links_rows(response)

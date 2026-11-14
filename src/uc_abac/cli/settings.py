@@ -26,6 +26,8 @@ _EMPTY_MEANINGFUL_FIELDS = frozenset(
 _ENV_FIELD_MAP: dict[str, str] = {
     "config_dir": "CONFIG_DIR",
     "system_catalog": "SYSTEM_CATALOG",
+    "information_schema": "INFORMATION_SCHEMA",
+    "per_catalog_information_schema": "PER_CATALOG_INFORMATION_SCHEMA",
     "warehouse_id": "WAREHOUSE_ID",
     "target_schema": "TARGET_SCHEMA",
     "profile": "PROFILE",
@@ -43,6 +45,7 @@ _ENV_FIELD_MAP: dict[str, str] = {
     "delete_policies_for_namespaces": "DELETE_POLICIES_FOR_NAMESPACES",
     "retain_tag_prefixes": "RETAIN_TAG_PREFIXES",
     "ignore_unresolvable_principals": "IGNORE_UNRESOLVABLE_PRINCIPALS",
+    "warn_on_nonexistent_securables": "WARN_ON_NONEXISTENT_SECURABLES",
     "enable_group_creation": "ENABLE_GROUP_CREATION",
     "enable_group_management": "ENABLE_GROUP_MANAGEMENT",
     "enable_group_deletion": "ENABLE_GROUP_DELETION",
@@ -82,6 +85,8 @@ class RunSettings(BaseModel):
 
     config_dir: Path | None = None
     system_catalog: str = "system"
+    information_schema: str = "system.information_schema"
+    per_catalog_information_schema: bool = False
     warehouse_id: str | None = None
     target_schema: str | None = None
     profile: str | None = None
@@ -99,6 +104,7 @@ class RunSettings(BaseModel):
     delete_policies_for_namespaces: str | None = None
     retain_tag_prefixes: str = "class."
     ignore_unresolvable_principals: str = ""
+    warn_on_nonexistent_securables: bool = False
     enable_group_creation: bool = False
     enable_group_management: bool = False
     enable_group_deletion: bool = False

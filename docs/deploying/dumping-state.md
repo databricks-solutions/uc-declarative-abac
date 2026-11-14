@@ -16,7 +16,9 @@ uc-abac dump --config-dir ./configs --warehouse-id <warehouse-id> --target-schem
 - `--warehouse-id`: SQL warehouse ID (required)
 - `--target-schema <catalog>.<schema>`: Schema to write the tables into; created, with a comment describing it, when it does not exist (required). Also settable as `target_schema` in `uc_abac.yml` or `UC_ABAC_TARGET_SCHEMA`
 - `--profile`: Optional Databricks CLI profile name from `~/.databrickscfg`; omit to use unified auth via env vars
-- `--system-catalog`: Catalog containing the `information_schema` views; defaults to `system`
+- `--system-catalog`: Deprecated; use `--information-schema`. Catalog containing the `information_schema` views; defaults to `system`
+- `--information-schema`: Existing `<catalog>.<schema>` holding the views used to read state; defaults to `system.information_schema`; see {ref}`system-table-proxy-catalogs`
+- `--per-catalog-information-schema`: Read state from each managed catalog's own `information_schema` instead; see {ref}`system-table-proxy-catalogs`
 - `--timezone`: IANA timezone for the run date used to evaluate grant-policy expiry; defaults to UTC
 - `--max-parallel-changes`: Maximum number of SQL statements run concurrently while writing tables; defaults to 8
 - `--replace-tables`: Recreate each table before loading (brief empty window); default is false (swap rows atomically)

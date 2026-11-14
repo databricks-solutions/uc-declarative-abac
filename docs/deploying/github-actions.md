@@ -29,7 +29,15 @@ Pin to a full commit SHA, with the release tag in a trailing comment, rather tha
 * - `system-catalog`
   - no
   - `system`
-  - Catalog containing the `information_schema` views used for actual-state queries
+  - Deprecated; use `information-schema`. Catalog containing the `information_schema` views
+* - `information-schema`
+  - no
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `per-catalog-information-schema`
+  - no
+  - `false`
+  - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
 ```
 
 ### Feature scope inputs
@@ -146,6 +154,10 @@ Pin to a full commit SHA, with the release tag in a trailing comment, rather tha
   - no
   - empty
   - Comma-separated actual-state principal identifiers whose resolution-failure warning is suppressed (for example, Databricks-managed system service principals). Empty by default.
+* - `warn-on-nonexistent-securables`
+  - no
+  - `false`
+  - If `true`, report configured securables outside creation scope that do not exist as non-fatal warnings and skip changes targeting them or their descendants. Invalid in-scope creation requests remain fatal.
 * - `max-parallel-changes`
   - no
   - `8`
@@ -320,7 +332,15 @@ A third companion action at `dump/action.yml` runs `uc-abac dump` to snapshot yo
 * - `system-catalog`
   - no
   - `system`
-  - Catalog containing the `information_schema` views used for state queries
+  - Deprecated; use `information-schema`. Catalog containing the `information_schema` views
+* - `information-schema`
+  - no
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `per-catalog-information-schema`
+  - no
+  - `false`
+  - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
 * - `timezone`
   - no
   - empty (UTC)

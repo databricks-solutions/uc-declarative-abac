@@ -82,7 +82,15 @@ Precede the subcommand name.
 * - `--system-catalog`
   - no
   - `system`
-  - Catalog containing `information_schema` views used for state queries. Set to a custom proxy catalog to use a curated view layer
+  - Deprecated; use `--information-schema`. Catalog containing `information_schema` views used for state queries
+* - `--information-schema`
+  - no
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `--per-catalog-information-schema`
+  - no
+  - false
+  - Read state from each managed catalog's own `information_schema` instead of the system catalog; see {ref}`system-table-proxy-catalogs`
 * - `--timezone`
   - no
   - UTC
@@ -111,7 +119,7 @@ Feature scopes gate deployment of each feature type. Each flag accepts comma-sep
 : Scope GRANT/REVOKE privilege management.
 
 `--securable-modification-scopes`
-: Scope attribute updates (owner, comment, rfa_destinations) on existing catalogs, schemas, tables, volumes, and columns. Functions are always managed by the engine.
+: Scope attribute updates (owner, comment, rfa_destinations, data_classification_enabled) on existing catalogs, schemas, tables, volumes, and columns. Functions are always managed by the engine.
 
 `--securable-creation-scopes`
 : Scope creation of missing catalogs, schemas, tables, volumes, and columns. Functions are always created by the engine.
@@ -162,6 +170,10 @@ Feature scopes gate deployment of each feature type. Each flag accepts comma-sep
   - no
   - (empty)
   - Comma-separated principal identifiers (usernames for users, application_ids for service principals, display names for groups) whose resolution-failure warnings are suppressed. Primarily for Databricks-managed system service principals that appear in system tables but can't be resolved
+* - `--warn-on-nonexistent-securables`
+  - no
+  - `false`
+  - Report configured securables outside `--securable-creation-scopes` that do not exist as non-fatal warnings. Changes targeting a missing object or its descendants are skipped. Invalid in-scope creation requests remain fatal
 * - `--max-parallel-changes`
   - no
   - 8
@@ -211,7 +223,15 @@ Databricks.
 * - `--system-catalog`
   - no
   - `system`
-  - Catalog containing `information_schema` views for state queries
+  - Deprecated; use `--information-schema`. Catalog containing `information_schema` views for state queries
+* - `--information-schema`
+  - no
+  - `system.information_schema`
+  - Existing `<catalog>.<schema>` holding the views used to read state; see {ref}`system-table-proxy-catalogs`
+* - `--per-catalog-information-schema`
+  - no
+  - false
+  - Read state from each managed catalog's own `information_schema`; see {ref}`system-table-proxy-catalogs`
 * - `--timezone`
   - no
   - UTC

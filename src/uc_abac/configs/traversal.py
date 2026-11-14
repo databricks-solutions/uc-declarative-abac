@@ -46,9 +46,9 @@ def iter_securable_configs(config: ResourcesConfig) -> Iterator[SecurableConfig]
 def iter_policy_configs(config: ResourcesConfig) -> Iterator[PolicyConfig]:
     """Yield every policy config attached anywhere in ``config``.
 
-    Policies may be attached to catalogs, schemas, and tables; this yields each
-    one once, in hierarchy order. Any new policy attachment point (e.g. top-level
-    metastore ``resources.policies``) must be added here, or the referenced
+    Policies may be attached to catalogs, schemas, tables, and volumes; this yields
+    each one once, in hierarchy order. Any new policy attachment point (e.g.
+    top-level metastore ``resources.policies``) must be added here, or the referenced
     principal / tag-key collectors will silently miss its policies.
     """
     for securable in iter_securable_configs(config):

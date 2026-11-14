@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -188,6 +189,155 @@ def test_composite_actions_install_only_hash_verified_packages():
         "--no-deps" in line and "--no-build-isolation" in line
         for line in project_installs
     )
+
+
+# ---
+# information-schema and per-catalog-information-schema wiring (deploy and dump actions)
+# ---
+
+_INFORMATION_SCHEMA_INPUT = "information-schema"
+_INFORMATION_SCHEMA_ENV = "INFORMATION_SCHEMA"
+_INFORMATION_SCHEMA_ARG = "--information-schema"
+_PER_CATALOG_INPUT = "per-catalog-information-schema"
+_PER_CATALOG_ENV = "PER_CATALOG_INFORMATION_SCHEMA"
+_PER_CATALOG_ARG = "--per-catalog-information-schema"
+_RETIRED_INPUTS = ("use-proxy-information-schema", "use-catalog-information-schema")
+_RETIRED_ENVS = ("USE_PROXY_INFORMATION_SCHEMA", "USE_CATALOG_INFORMATION_SCHEMA")
+_RETIRED_ARGS = ("--use-proxy-information-schema", "--use-catalog-information-schema")
+_DEPLOY_AND_DUMP_ACTIONS = {
+    "deploy": _REPO_ROOT / "deploy" / "action.yml",
+    "dump": _REPO_ROOT / "dump" / "action.yml",
+}
+_WARN_NONEXISTENT_INPUT = "warn-on-nonexistent-securables"
+_WARN_NONEXISTENT_ENV = "WARN_ON_NONEXISTENT_SECURABLES"
+_WARN_NONEXISTENT_ARG = "--warn-on-nonexistent-securables"
+
+
+def _action_run_step(action_path: Path) -> dict[str, Any]:
+    """Return the step of ``action_path`` that builds the args and runs uc-abac."""
+    steps = _load_yaml(action_path)["runs"]["steps"]
+    return next(step for step in steps if "args=(" in step.get("run", ""))
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_information_schema_input_with_system_default(
+    action,
+):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    assert _INFORMATION_SCHEMA_INPUT in inputs
+    assert inputs[_INFORMATION_SCHEMA_INPUT]["required"] == "false"
+    assert inputs[_INFORMATION_SCHEMA_INPUT]["default"] == "system.information_schema"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_information_schema_input_through_env(action):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    expected = f"${{{{ inputs.{_INFORMATION_SCHEMA_INPUT} }}}}"
+    assert env.get(_INFORMATION_SCHEMA_ENV) == expected
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_always_passes_information_schema(action):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    append = f'args+=({_INFORMATION_SCHEMA_ARG} "${{{_INFORMATION_SCHEMA_ENV}}}")'
+    assert append in script
+    assert f'-n "${{{_INFORMATION_SCHEMA_ENV}}}"' not in script
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_per_catalog_information_schema_input_defaulting_to_false(
+    action,
+):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    assert _PER_CATALOG_INPUT in inputs
+    assert inputs[_PER_CATALOG_INPUT]["required"] == "false"
+    assert inputs[_PER_CATALOG_INPUT]["default"] == "false"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_per_catalog_information_schema_input_through_env(
+    action,
+):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    assert env.get(_PER_CATALOG_ENV) == f"${{{{ inputs.{_PER_CATALOG_INPUT} }}}}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_appends_per_catalog_information_schema_flag_when_true(
+    action,
+):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    guarded_append = re.search(
+        rf'if \[\[ "\${{{_PER_CATALOG_ENV}}}" == "true" \]\]; then\s*'
+        rf"args\+=\({re.escape(_PER_CATALOG_ARG)}\)\s*fi",
+        script,
+    )
+    assert guarded_append, f"{action} action does not append {_PER_CATALOG_ARG}"
+
+
+def test_github_actions_deploy_declares_warn_on_nonexistent_securables_boolean_input():
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["inputs"]
+
+    assert inputs[_WARN_NONEXISTENT_INPUT]["required"] == "false"
+    assert inputs[_WARN_NONEXISTENT_INPUT]["default"] == "false"
+
+
+def test_github_actions_deploy_passes_warn_on_nonexistent_securables_through_env():
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["env"]
+
+    assert env[_WARN_NONEXISTENT_ENV] == (
+        f"${{{{ inputs.{_WARN_NONEXISTENT_INPUT} }}}}"
+    )
+
+
+def test_github_actions_deploy_appends_warn_on_nonexistent_securables_when_true():
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS["deploy"])["run"]
+
+    guarded_append = re.search(
+        rf'if \[\[ "\${{{_WARN_NONEXISTENT_ENV}}}" == "true" \]\]; then\s*'
+        rf"args\+=\({re.escape(_WARN_NONEXISTENT_ARG)}\)\s*fi",
+        script,
+    )
+    assert guarded_append
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_declares_no_retired_information_schema_inputs(action):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    leftovers = [name for name in _RETIRED_INPUTS if name in inputs]
+    assert not leftovers, f"{action} action still declares inputs: {leftovers}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_sets_no_retired_information_schema_env(action):
+    env = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["env"]
+    leftovers = [name for name in _RETIRED_ENVS if name in env]
+    assert not leftovers, f"{action} action still sets env vars: {leftovers}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_passes_no_retired_information_schema_args(action):
+    script = _action_run_step(_DEPLOY_AND_DUMP_ACTIONS[action])["run"]
+    leftovers = [arg for arg in _RETIRED_ARGS if arg in script]
+    assert not leftovers, f"{action} action still passes args: {leftovers}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_never_mentions_retired_information_schema_names(
+    action,
+):
+    text = _DEPLOY_AND_DUMP_ACTIONS[action].read_text(encoding="utf-8")
+    retired = _RETIRED_INPUTS + _RETIRED_ENVS
+    leftovers = [name for name in retired if name in text]
+    assert not leftovers, f"{action} action still mentions: {leftovers}"
+
+
+@pytest.mark.parametrize("action", ["deploy", "dump"])
+def test_github_actions_action_describes_system_catalog_input_as_deprecated(action):
+    inputs = _load_yaml(_DEPLOY_AND_DUMP_ACTIONS[action])["inputs"]
+    description = inputs["system-catalog"]["description"].lower()
+    assert "deprecated" in description
+    assert _INFORMATION_SCHEMA_INPUT in description
 
 
 # ---

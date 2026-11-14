@@ -441,6 +441,29 @@ def test_governed_tag_executor_does_not_update_rule_set_when_only_description_ch
     ws_helper.update_tag_policy_rule_set.assert_not_called()
 
 
+def test_governed_tag_executor_does_not_touch_rule_set_when_assigners_unmanaged(
+    ws_helper, change_logger
+):
+    """Diffing then executing a tag whose assigners are unmanaged leaves the rule
+    set alone, even though the tag's description is updated."""
+    from uc_abac.governed_tags import compute_governed_tag_diff
+    from uc_abac.principals import PrincipalResolver
+
+    _setup_ws_helper_for_assigners(ws_helper, tag_to_id={"pii": "tp-pii"})
+    desired = GovernedTag(
+        name="pii", description="New", allowed_values=frozenset(), assigners=None
+    )
+    actual = _gt("pii", "Old", assigners={_resolved_user("alice@co.com")})
+    diff = compute_governed_tag_diff(
+        {desired}, {actual}, PrincipalResolver(MagicMock()), change_logger
+    )
+
+    execute_governed_tag_diff(ws_helper, diff, change_logger, dry_run=False)
+
+    ws_helper.update_tag_policy.assert_called_once()
+    ws_helper.update_tag_policy_rule_set.assert_not_called()
+
+
 def test_governed_tag_executor_updates_both_when_description_and_principals_change(
     ws_helper, change_logger
 ):

@@ -14,10 +14,23 @@ inputs:
     required: true
   system-catalog:
     description: >-
-      Catalog containing the information_schema views used for actual-state
-      queries. Defaults to the Databricks system catalog.
+      DEPRECATED, use information-schema. Catalog containing the
+      information_schema views used for actual-state queries. Defaults to the
+      Databricks system catalog.
     required: false
     default: system
+  information-schema:
+    description: >-
+      Fully qualified <catalog>.<schema> containing the information_schema
+      views used for actual-state queries.
+    required: false
+    default: system.information_schema
+  per-catalog-information-schema:
+    description: >-
+      If "true", read actual state from each managed catalog's own
+      information_schema as a union across catalogs.
+    required: false
+    default: 'false'
   timezone:
     description: >-
       IANA timezone used to compute the run date for evaluating expiry_date on
@@ -351,6 +364,12 @@ inputs:
       system service principals). Empty by default.
     required: false
     default: ''
+  warn-on-nonexistent-securables:
+    description: >-
+      If "true", report missing configured securables outside creation scope as
+      warnings and skip changes targeting them or their descendants. Off by default.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -384,6 +403,8 @@ runs:
         CONFIG_DIR: ${{ inputs.config-dir }}
         WAREHOUSE_ID: ${{ inputs.warehouse-id }}
         SYSTEM_CATALOG: ${{ inputs.system-catalog }}
+        INFORMATION_SCHEMA: ${{ inputs.information-schema }}
+        PER_CATALOG_INFORMATION_SCHEMA: ${{ inputs.per-catalog-information-schema }}
         TIMEZONE: ${{ inputs.timezone }}
         PROFILE: ${{ inputs.profile }}
         DRY_RUN: ${{ inputs.dry-run }}
@@ -429,6 +450,7 @@ runs:
         ENABLE_GROUP_MANAGEMENT: ${{ inputs.enable-group-management }}
         ENABLE_GROUP_DELETION: ${{ inputs.enable-group-deletion }}
         IGNORE_UNRESOLVABLE_PRINCIPALS: ${{ inputs.ignore-unresolvable-principals }}
+        WARN_ON_NONEXISTENT_SECURABLES: ${{ inputs.warn-on-nonexistent-securables }}
       run: |
         args=(
           "deploy"
@@ -436,6 +458,10 @@ runs:
           --warehouse-id "${WAREHOUSE_ID}"
           --system-catalog "${SYSTEM_CATALOG}"
         )
+        args+=(--information-schema "${INFORMATION_SCHEMA}")
+        if [[ "${PER_CATALOG_INFORMATION_SCHEMA}" == "true" ]]; then
+          args+=(--per-catalog-information-schema)
+        fi
         if [[ "${DRY_RUN}" == "true" ]]; then
           args+=(--dry-run)
         fi
@@ -562,6 +588,9 @@ runs:
         fi
         if [[ -n "${IGNORE_UNRESOLVABLE_PRINCIPALS}" ]]; then
           args+=(--ignore-unresolvable-principals "${IGNORE_UNRESOLVABLE_PRINCIPALS}")
+        fi
+        if [[ "${WARN_ON_NONEXISTENT_SECURABLES}" == "true" ]]; then
+          args+=(--warn-on-nonexistent-securables)
         fi
         if [[ "${FORCE}" == "true" ]]; then
           args+=(--force)

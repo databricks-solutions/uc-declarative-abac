@@ -122,7 +122,11 @@ def build_actual_state(
     state = ActualState(
         groups=resolved_groups,
         all_account_groups=resolved_groups,
-        governed_tags=frozenset(governed_tags),
+        # A deployed tag always has a concrete assigner set; omitted (unmanaged)
+        # assigners deploy as none.
+        governed_tags=frozenset(
+            replace(t, assigners=t.assigners or frozenset()) for t in governed_tags
+        ),
         domains=frozenset(),
         securables=frozenset(compile_desired_securables(config)),
         attributes=frozenset(compile_desired_attributes(config)),

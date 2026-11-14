@@ -9,6 +9,7 @@ definitions:
         env: ~
         layer: silver
       comment: Curated, region-unioned transaction data.
+      data_classification_enabled: true
       policies:
         - $ref: $defs/policies/region|filter_by_region
         - $ref: $defs/policies/sensitivity|filter_large_transactions

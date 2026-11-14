@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from uc_abac.logger import ChangeLogger
 from uc_abac.principals import Principal
 from uc_abac.securables import (
@@ -1495,6 +1497,304 @@ def test_securable_executor_handles_function_securable_type_for_rfa():
 
     assert securable_type_passed == SecurableType.FUNCTION
     assert full_name_passed == "cat.sch.fn"
+
+
+# ---------------------------------------------------------------------------
+# Data classification updates
+# ---------------------------------------------------------------------------
+
+
+def _data_classification_update(
+    enabled: bool, full_name: str = "cat"
+) -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_enabled",
+        old_value=frozenset({not enabled}),
+        new_value=frozenset({enabled}),
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_securable_executor_dispatches_data_classification_to_update_data_classification(
+    enabled,
+):
+    """A data_classification_enabled update calls the helper with the unwrapped bool."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(enabled)])
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification.assert_called_once_with("cat", enabled)
+    uc_helper.execute_sql.assert_not_called()
+
+
+def test_securable_executor_skips_data_classification_update_in_dry_run():
+    """dry_run=True must not call update_data_classification."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(True)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger(), dry_run=True)
+
+    assert stmts == []
+    uc_helper.update_data_classification.assert_not_called()
+
+
+def test_securable_executor_logs_error_and_continues_when_data_classification_update_fails():
+    """A failing update is logged with a descriptive context; other updates still run."""
+    uc_helper = MagicMock()
+
+    def _fail_for_bad(catalog_name, enabled):
+        if catalog_name == "bad":
+            raise RuntimeError("boom")
+
+    uc_helper.update_data_classification.side_effect = _fail_for_bad
+    logger = ChangeLogger()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _data_classification_update(True, "bad"),
+            _data_classification_update(True, "good"),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, logger)
+
+    assert len(logger.errors) == 1
+    assert "update_data_classification" in logger.errors[0].context
+    assert "bad" in logger.errors[0].context
+    uc_helper.update_data_classification.assert_any_call("good", True)
+
+
+def test_securable_executor_returns_empty_statements_for_data_classification_update():
+    """Data classification updates are SDK calls, not SQL."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_data_classification_update(True)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    assert stmts == []
+
+
+def test_securable_executor_logs_data_classification_attribute_update():
+    """A successful data classification update is recorded by the change logger."""
+    uc_helper = MagicMock()
+    logger = ChangeLogger()
+    logger.log_attribute_update = MagicMock(wraps=logger.log_attribute_update)
+    update = _data_classification_update(True)
+
+    execute_securable_diff(
+        uc_helper, SecurableDiff(attributes_to_update=[update]), logger
+    )
+
+    logger.log_attribute_update.assert_called_once_with(update)
+    assert logger.errors == []
+
+
+def _excluded_schemas_update(
+    names: frozenset[str], full_name: str = "cat"
+) -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_excluded_schemas",
+        old_value=frozenset(),
+        new_value=names,
+    )
+
+
+def _helper_call_order(uc_helper: MagicMock) -> list[str]:
+    """Return the names of the helper methods called, in call order."""
+    return [name for name, _args, _kwargs in uc_helper.method_calls]
+
+
+def test_securable_executor_dispatches_excluded_schemas_to_helper():
+    """An excluded-schemas update calls the helper with the full set of names."""
+    uc_helper = MagicMock()
+    names = frozenset({"raw", "tmp"})
+    diff = SecurableDiff(attributes_to_update=[_excluded_schemas_update(names)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification_excluded_schemas.assert_called_once_with(
+        "cat", names
+    )
+    assert stmts == []
+    uc_helper.execute_sql.assert_not_called()
+
+
+def test_securable_executor_skips_excluded_schemas_update_in_dry_run():
+    """dry_run=True must not call update_data_classification_excluded_schemas."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[_excluded_schemas_update(frozenset({"raw"}))]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), dry_run=True)
+
+    uc_helper.update_data_classification_excluded_schemas.assert_not_called()
+
+
+def test_securable_executor_logs_error_when_excluded_schemas_update_fails():
+    """A failing exclusion update is logged with a descriptive context."""
+    uc_helper = MagicMock()
+    uc_helper.update_data_classification_excluded_schemas.side_effect = RuntimeError(
+        "included_schemas is set"
+    )
+    logger = ChangeLogger()
+    diff = SecurableDiff(
+        attributes_to_update=[_excluded_schemas_update(frozenset({"raw"}))]
+    )
+
+    execute_securable_diff(uc_helper, diff, logger)
+
+    assert len(logger.errors) == 1
+    assert "update_data_classification_excluded_schemas" in logger.errors[0].context
+    assert "cat" in logger.errors[0].context
+
+
+def test_securable_executor_runs_data_classification_enable_before_excluded_schemas_update():
+    """Enabling the config must finish before its exclusions are patched (the
+    patch requires the config to exist), regardless of input order."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _excluded_schemas_update(frozenset({"raw"})),
+            _data_classification_update(True),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), max_parallel_changes=1)
+
+    assert _helper_call_order(uc_helper) == [
+        "update_data_classification",
+        "update_data_classification_excluded_schemas",
+    ]
+
+
+def _included_schemas_update(full_name: str = "cat") -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_included_schemas",
+        old_value=frozenset({"gold"}),
+        new_value=frozenset(),
+    )
+
+
+def test_securable_executor_dispatches_included_schemas_to_helper():
+    """An included-schemas update calls the helper with the desired (empty) set."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(attributes_to_update=[_included_schemas_update()])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification_included_schemas.assert_called_once_with(
+        "cat", frozenset()
+    )
+    assert stmts == []
+
+
+def test_securable_executor_logs_error_when_included_schemas_update_fails():
+    """A failing include-list update is logged with a descriptive context."""
+    uc_helper = MagicMock()
+    uc_helper.update_data_classification_included_schemas.side_effect = RuntimeError(
+        "boom"
+    )
+    logger = ChangeLogger()
+    diff = SecurableDiff(attributes_to_update=[_included_schemas_update()])
+
+    execute_securable_diff(uc_helper, diff, logger)
+
+    assert len(logger.errors) == 1
+    assert "update_data_classification_included_schemas" in logger.errors[0].context
+
+
+def test_securable_executor_clears_included_schemas_before_excluded_schemas_update():
+    """The include list must be cleared before exclusions are set (the two are
+    mutually exclusive), regardless of input order."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _excluded_schemas_update(frozenset({"raw"})),
+            _included_schemas_update(),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), max_parallel_changes=1)
+
+    assert _helper_call_order(uc_helper) == [
+        "update_data_classification_included_schemas",
+        "update_data_classification_excluded_schemas",
+    ]
+
+
+def _auto_tagging_update(
+    tags: frozenset[str], full_name: str = "cat"
+) -> AttributeUpdate:
+    return AttributeUpdate(
+        securable_type=SecurableType.CATALOG,
+        full_name=full_name,
+        attribute="data_classification_auto_tagging_tags",
+        old_value=frozenset(),
+        new_value=tags,
+    )
+
+
+def test_securable_executor_dispatches_auto_tagging_to_helper():
+    """An auto-tagging update calls the helper with the full set of tags."""
+    uc_helper = MagicMock()
+    tags = frozenset({"class.email_address"})
+    diff = SecurableDiff(attributes_to_update=[_auto_tagging_update(tags)])
+
+    stmts = execute_securable_diff(uc_helper, diff, ChangeLogger())
+
+    uc_helper.update_data_classification_auto_tagging.assert_called_once_with(
+        "cat", tags
+    )
+    assert stmts == []
+
+
+def test_securable_executor_runs_data_classification_enable_before_auto_tagging_update():
+    """The config must exist before auto-tagging is patched onto it."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _auto_tagging_update(frozenset({"class.email_address"})),
+            _data_classification_update(True),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), max_parallel_changes=1)
+
+    assert _helper_call_order(uc_helper) == [
+        "update_data_classification",
+        "update_data_classification_auto_tagging",
+    ]
+
+
+def test_securable_executor_still_runs_owner_updates_before_data_classification():
+    """Owner changes keep running first, ahead of the Data Classification toggle."""
+    uc_helper = MagicMock()
+    diff = SecurableDiff(
+        attributes_to_update=[
+            _data_classification_update(True),
+            AttributeUpdate(
+                securable_type=SecurableType.CATALOG,
+                full_name="cat",
+                attribute="owner",
+                old_value=frozenset({"old"}),
+                new_value=frozenset({"new"}),
+            ),
+        ]
+    )
+
+    execute_securable_diff(uc_helper, diff, ChangeLogger(), max_parallel_changes=1)
+
+    assert _helper_call_order(uc_helper) == [
+        "update_owner",
+        "update_data_classification",
+    ]
 
 
 # ---------------------------------------------------------------------------

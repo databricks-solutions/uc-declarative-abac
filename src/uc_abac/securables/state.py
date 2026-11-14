@@ -6,6 +6,52 @@ from typing import Literal
 from uc_abac.principals import Principal
 from uc_abac.types import SecurableType
 
+SecurableKey = tuple[SecurableType, str]
+
+
+_DESCENDANT_TYPES = {
+    SecurableType.CATALOG: frozenset(
+        {
+            SecurableType.SCHEMA,
+            SecurableType.TABLE,
+            SecurableType.VOLUME,
+            SecurableType.FUNCTION,
+            SecurableType.COLUMN,
+        }
+    ),
+    SecurableType.SCHEMA: frozenset(
+        {
+            SecurableType.TABLE,
+            SecurableType.VOLUME,
+            SecurableType.FUNCTION,
+            SecurableType.COLUMN,
+        }
+    ),
+    SecurableType.TABLE: frozenset({SecurableType.COLUMN}),
+}
+
+
+def targets_nonexistent_securable(
+    securable_type: SecurableType,
+    full_name: str,
+    nonexistent_securables: frozenset[SecurableKey],
+) -> bool:
+    """Return whether a target is an absent securable or one of its descendants.
+
+    The UC hierarchy is type-aware: equal names belonging to different object types
+    are not the same securable, and only catalogs, schemas, and tables have managed
+    descendants. The dot boundary prevents a missing ``cat`` from suppressing changes
+    for a sibling catalog such as ``catalog``.
+    """
+    for missing_type, missing_name in nonexistent_securables:
+        if securable_type == missing_type and full_name == missing_name:
+            return True
+        if securable_type not in _DESCENDANT_TYPES.get(missing_type, frozenset()):
+            continue
+        if full_name.startswith(f"{missing_name}."):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class SecurableAttributes:
@@ -27,6 +73,10 @@ class SecurableAttributes:
     owner: Principal | None = None
     comment: str | None = None
     rfa_destinations: frozenset[str] | None = None
+    data_classification_enabled: bool | None = None
+    data_classification_excluded_schemas: frozenset[str] | None = None
+    data_classification_included_schemas: frozenset[str] | None = None
+    data_classification_auto_tagging_tags: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -163,8 +213,8 @@ class AttributeUpdate:
     each attribute type — it just compares fields and emits updates.
 
     ``old_value`` and ``new_value`` are always set-shaped so scalar attributes
-    (``owner``, ``comment``) and collection attributes (``rfa_destinations``)
-    share one representation:
+    (``owner``, ``comment``, ``data_classification_enabled``) and collection
+    attributes (``rfa_destinations``) share one representation:
 
     - scalar attributes wrap their value in a 1-element frozenset (empty when
       no value is set)
@@ -176,8 +226,8 @@ class AttributeUpdate:
     securable_type: SecurableType
     full_name: str
     attribute: str
-    old_value: frozenset[str] | frozenset[Principal]
-    new_value: frozenset[str] | frozenset[Principal]
+    old_value: frozenset[str] | frozenset[Principal] | frozenset[bool]
+    new_value: frozenset[str] | frozenset[Principal] | frozenset[bool]
 
 
 @dataclass
@@ -186,9 +236,12 @@ class SecurableDiff:
 
     Organised by operation type, not by securable type. The executor
     dispatches to type-specific logic via Securable polymorphism.
+    ``nonexistent_securables`` identifies warning-only missing targets whose
+    operations and descendants must be removed from every domain diff.
     """
 
     attributes_to_update: list[AttributeUpdate] = field(default_factory=list)
     securables_to_create: list[Securable] = field(default_factory=list)
     securables_to_replace: list[Securable] = field(default_factory=list)
     old_securables: dict[str, Securable] = field(default_factory=dict)
+    nonexistent_securables: frozenset[SecurableKey] = frozenset()

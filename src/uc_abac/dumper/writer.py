@@ -415,6 +415,8 @@ def dump_state(
     warehouse_id: str,
     target_schema: str,
     system_catalog: str = "system",
+    information_schema: str = "system.information_schema",
+    per_catalog_information_schema: bool = False,
     ref_override_strategy: Literal["merge", "replace"] = "merge",
     max_parallel_tables: int = DEFAULT_MAX_PARALLEL_TABLES,
     dry_run: bool = False,
@@ -445,7 +447,11 @@ def dump_state(
     logger.log_banner()
     config = load_config(config_dir, ref_override_strategy)
     uc_helper = UnityCatalogHelper(
-        workspace_client, warehouse_id, system_catalog=system_catalog
+        workspace_client,
+        warehouse_id,
+        system_catalog=system_catalog,
+        information_schema=information_schema,
+        per_catalog_information_schema=per_catalog_information_schema,
     )
     ws_helper = WorkspaceHelper(
         workspace_client, manage_groups=True, manage_domain_owners=True

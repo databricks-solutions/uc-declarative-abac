@@ -344,7 +344,8 @@ class RunContext:
     enablement is a property derived from ``scope.is_active()`` so there is one
     source of truth and the context stays immutable. ``manage_domain_owners`` is a
     stored field because it depends on ``config.domains`` owner declarations, which
-    this context does not hold.
+    this context does not hold. ``warn_on_nonexistent_securables`` is stored because
+    it changes both missing-object reporting and downstream diff pruning.
 
     Lives in ``utils`` (not ``orchestrator``) so it has no dependency on the
     orchestrator or cli layers — ``utils`` is the shared low-level module both can
@@ -374,6 +375,9 @@ class RunContext:
     force: bool
     max_parallel_changes: int
     manage_domain_owners: bool
+    warn_on_nonexistent_securables: bool = False
+    information_schema: str = "system.information_schema"
+    per_catalog_information_schema: bool = False
 
     @property
     def enable_tag_management(self) -> bool:
@@ -611,9 +615,10 @@ class NonexistentSecurableError(OrchestratorError):
 
     Functions are created by the engine and are excluded from this check; only
     catalogs, schemas, tables, and volumes can trigger this error. One instance
-    carries a single (type, full_name) pair — the engine logs one per offender
-    via ``ChangeLogger.log_error`` and the orchestrator surfaces them together via
-    ``ExecutionBatchError`` at the end of the run.
+    carries a single (type, full_name) pair. By default the engine logs one error
+    per offender and surfaces them together via ``ExecutionBatchError``. With the
+    explicit warning mode enabled, out-of-creation-scope offenders are logged as
+    non-fatal warnings and their dependent changes are skipped instead.
 
     An optional ``hint`` string is appended to the stock message — used by the
     table-creation validator to explain why an otherwise-createable table can't

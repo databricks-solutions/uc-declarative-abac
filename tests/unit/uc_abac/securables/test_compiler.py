@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from uc_abac.configs import ResourcesConfig
 from uc_abac.principals import Principal
 from uc_abac.securables import (
@@ -728,6 +730,278 @@ def test_securable_compiler_emits_empty_rfa_destinations_when_explicitly_empty_l
         if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
     )
     assert catalog_attrs.rfa_destinations == frozenset()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_securable_compiler_emits_catalog_data_classification_enabled(enabled):
+    """A catalog's data_classification_enabled is carried onto its SecurableAttributes."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "owner": "admin_user",
+                    "data_classification_enabled": enabled,
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    catalog_attrs = next(
+        a
+        for a in result
+        if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
+    )
+    assert catalog_attrs.data_classification_enabled is enabled
+
+
+def test_securable_compiler_data_classification_enabled_is_none_when_absent():
+    """A catalog without data_classification_enabled leaves it None (unmanaged)."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {"my_cat": {"owner": "admin_user"}}}
+    )
+
+    result = compile_desired_attributes(config)
+
+    catalog_attrs = next(
+        a
+        for a in result
+        if a.securable_type == SecurableType.CATALOG and a.full_name == "my_cat"
+    )
+    assert catalog_attrs.data_classification_enabled is None
+
+
+def test_securable_compiler_emits_attributes_when_only_data_classification_enabled_set():
+    """An explicit ``false`` is managed state: a catalog whose only managed
+    attribute is data_classification_enabled still produces a SecurableAttributes."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "disabled": {"data_classification_enabled": False},
+                "without_anything": {},
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert (
+        SecurableAttributes(
+            securable_type=SecurableType.CATALOG,
+            full_name="disabled",
+            data_classification_enabled=False,
+        )
+        in result
+    )
+    assert not any(a.full_name == "without_anything" for a in result)
+
+
+def _catalog_attrs_for(result, full_name: str = "my_cat") -> SecurableAttributes:
+    return next(
+        a
+        for a in result
+        if a.securable_type == SecurableType.CATALOG and a.full_name == full_name
+    )
+
+
+def test_securable_compiler_emits_excluded_schemas_for_schemas_disabled_under_enabled_catalog():
+    """Under an enabled catalog, exactly the schemas declared false are excluded;
+    true and unset schemas are not."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "data_classification_enabled": True,
+                    "schemas": [
+                        {"name": "raw", "data_classification_enabled": False},
+                        {"name": "gold", "data_classification_enabled": True},
+                        {"name": "silver"},
+                    ],
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_excluded_schemas == (
+        frozenset({"raw"})
+    )
+
+
+def test_securable_compiler_emits_empty_excluded_schemas_when_enabled_catalog_has_no_disabled_schemas():
+    """An enabled catalog with no false schemas manages an empty exclusion list."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "data_classification_enabled": True,
+                    "schemas": [{"name": "gold"}],
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_excluded_schemas == (
+        frozenset()
+    )
+
+
+@pytest.mark.parametrize("catalog_fields", [{"data_classification_enabled": False}, {}])
+def test_securable_compiler_excluded_schemas_is_none_when_catalog_data_classification_not_true(
+    catalog_fields,
+):
+    """Schema exclusions are only managed under a catalog declaring true; a false
+    or unset catalog leaves them unmanaged (None)."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "owner": "admin_user",
+                    **catalog_fields,
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_excluded_schemas is None
+
+
+def test_securable_compiler_emits_empty_included_schemas_under_enabled_catalog():
+    """An enabled catalog scans every non-excluded schema, so its include list is
+    managed as empty (any existing include list is cleared)."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {"my_cat": {"data_classification_enabled": True}}}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_included_schemas == (
+        frozenset()
+    )
+
+
+@pytest.mark.parametrize("catalog_fields", [{"data_classification_enabled": False}, {}])
+def test_securable_compiler_included_schemas_is_none_when_catalog_data_classification_not_true(
+    catalog_fields,
+):
+    """A false or unset catalog leaves the include list unmanaged (None)."""
+    config = ResourcesConfig.model_validate(
+        {"catalogs": {"my_cat": {"owner": "admin_user", **catalog_fields}}}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_included_schemas is None
+
+
+_AUTO_TAGGING_GOVERNED_TAGS = {
+    "email": {"name": "class.email_address", "auto_tagging_enabled": True},
+    "phone": {"name": "class.phone_number", "auto_tagging_enabled": False},
+    "pii": {"name": "pii"},
+}
+
+
+def _auto_tagging_config(catalog_fields: dict) -> ResourcesConfig:
+    return ResourcesConfig.model_validate(
+        {
+            "catalogs": {"my_cat": {"owner": "admin_user", **catalog_fields}},
+            "governed_tags": _AUTO_TAGGING_GOVERNED_TAGS,
+        }
+    )
+
+
+def test_securable_compiler_emits_auto_tagging_tags_for_opted_in_governed_tags():
+    """An auto-tagging catalog applies exactly the governed tags opting in."""
+    config = _auto_tagging_config(
+        {"data_classification_enabled": True, "auto_tagging_enabled": True}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
+def test_securable_compiler_emits_empty_auto_tagging_tags_when_catalog_auto_tagging_false():
+    """auto_tagging_enabled: false manages an empty list (auto-tagging off)."""
+    config = _auto_tagging_config(
+        {"data_classification_enabled": True, "auto_tagging_enabled": False}
+    )
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags == (
+        frozenset()
+    )
+
+
+def test_securable_compiler_auto_tagging_tags_is_none_when_unset():
+    """An unset catalog auto_tagging_enabled leaves the list unmanaged."""
+    config = _auto_tagging_config({"data_classification_enabled": True})
+
+    result = compile_desired_attributes(config)
+
+    assert _catalog_attrs_for(result).data_classification_auto_tagging_tags is None
+
+
+def test_securable_compiler_treats_data_classification_as_enabled_when_only_auto_tagging_true():
+    """auto_tagging_enabled: true implies Data Classification: it is emitted as
+    enabled and schema exclusions are managed as for an explicit true."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "auto_tagging_enabled": True,
+                    "schemas": [{"name": "raw", "data_classification_enabled": False}],
+                }
+            },
+            "governed_tags": _AUTO_TAGGING_GOVERNED_TAGS,
+        }
+    )
+
+    attrs = _catalog_attrs_for(compile_desired_attributes(config))
+
+    assert attrs.data_classification_enabled is True
+    assert attrs.data_classification_excluded_schemas == frozenset({"raw"})
+    assert attrs.data_classification_auto_tagging_tags == (
+        frozenset({"class.email_address"})
+    )
+
+
+def test_securable_compiler_does_not_emit_data_classification_enabled_on_schema_attributes():
+    """A schema's data_classification_enabled feeds the catalog's exclusion list
+    and is never itself a schema-level toggle."""
+    config = ResourcesConfig.model_validate(
+        {
+            "catalogs": {
+                "my_cat": {
+                    "data_classification_enabled": True,
+                    "schemas": [
+                        {
+                            "name": "raw",
+                            "owner": "schema_owner",
+                            "data_classification_enabled": False,
+                        },
+                        {"name": "gold", "data_classification_enabled": True},
+                    ],
+                },
+            },
+        }
+    )
+
+    result = compile_desired_attributes(config)
+
+    schema_attrs = [a for a in result if a.securable_type == SecurableType.SCHEMA]
+    assert [a.full_name for a in schema_attrs] == ["my_cat.raw"]
+    assert schema_attrs[0].data_classification_enabled is None
 
 
 # ---------------------------------------------------------------------------

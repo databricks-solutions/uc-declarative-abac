@@ -8,7 +8,7 @@ ABAC policies enforce fine-grained access control on objects in Unity Catalog. T
 - **`filter`**: applies a row-filter function to tables, controlling which rows a user can see
 - **`grant`**: assigns privileges on objects to principals, with optional expiry
 
-Attach policies to any catalog, schema, or table by declaring a `policies:` list on that object. Each entry is either an inline policy or a reference to a policy definition (`$defs/policies/<key>`, or `$ref: $defs/policies/<key>` with overrides). Reusable policy definitions live under `definitions: policies:`, keyed by the convention `<tag_key/domain>|<policy_name>` (for example `pii|mask_email_pii`).
+Attach policies to any catalog, schema, table, or volume by declaring a `policies:` list on that object. Volume attachments support grant policies only; mask and filter policies apply to tables. Each entry is either an inline policy or a reference to a policy definition (`$defs/policies/<key>`, or `$ref: $defs/policies/<key>` with overrides). Reusable policy definitions live under `definitions: policies:`, keyed by the convention `<tag_key/domain>|<policy_name>` (for example `pii|mask_email_pii`).
 
 (policy-common-fields)=
 

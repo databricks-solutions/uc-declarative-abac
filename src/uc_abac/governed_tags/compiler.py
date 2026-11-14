@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from uc_abac.configs import ResourcesConfig
 from uc_abac.governed_tags.state import GovernedTag
-from uc_abac.principals import Principal
-from uc_abac.types import PrincipalType
+from uc_abac.principals import compile_principal_names
 
 
 def compile_desired_governed_tags(config: ResourcesConfig) -> set[GovernedTag]:
@@ -11,7 +10,9 @@ def compile_desired_governed_tags(config: ResourcesConfig) -> set[GovernedTag]:
 
     Each name in `assigners` becomes an unresolved Principal
     (principal_type=UNKNOWN, name=<display_name>); the differ resolves them
-    against the workspace before comparing against actual state.
+    against the workspace before comparing against actual state. Omitted
+    assigners stay ``None`` (unmanaged); an explicit ``[]`` compiles to an empty
+    frozenset (remove all).
     """
     if not config.governed_tags:
         return set()
@@ -20,9 +21,7 @@ def compile_desired_governed_tags(config: ResourcesConfig) -> set[GovernedTag]:
             name=gt.name,
             description=gt.description or "",
             allowed_values=frozenset(gt.allowed_values or ()),
-            assigners=frozenset(
-                Principal(PrincipalType.UNKNOWN, name=p) for p in (gt.assigners or ())
-            ),
+            assigners=compile_principal_names(gt.assigners),
         )
         for gt in config.governed_tags.values()
     }

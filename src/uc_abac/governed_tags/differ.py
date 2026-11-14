@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,8 +39,11 @@ def _resolve_governed_tag_assigners(
     grant/revoke on every run. Actual-state (UC-side) principals route to a
     non-fatal warning (suppressed when the identifier is in
     ``ignore_unresolvable``); config-side principals route to a fatal error (see
-    log_principal_resolution_failure).
+    log_principal_resolution_failure). Unmanaged (``None``) assigners pass
+    through unchanged.
     """
+    if tag.assigners is None:
+        return tag
     resolved: set[Principal] = set()
     for principal in tag.assigners:
         try:
@@ -53,12 +57,32 @@ def _resolve_governed_tag_assigners(
                 ignore_unresolvable,
             )
             continue
-    return GovernedTag(
-        name=tag.name,
-        description=tag.description,
-        allowed_values=tag.allowed_values,
-        assigners=frozenset(resolved),
-    )
+    return dataclasses.replace(tag, assigners=frozenset(resolved))
+
+
+def _fill_assigners(desired: GovernedTag, actual: GovernedTag | None) -> GovernedTag:
+    """Return ``desired`` with unmanaged assigners taken from ``actual`` (or none)."""
+    if desired.assigners is not None:
+        return desired
+    assigners = actual.assigners if actual is not None else frozenset()
+    return dataclasses.replace(desired, assigners=assigners)
+
+
+def _fill_unmanaged_assigners(
+    desired_by_name: dict[str, GovernedTag],
+    actual_by_name: dict[str, GovernedTag],
+) -> dict[str, GovernedTag]:
+    """Return desired tags with unmanaged (``None``) assigners filled in.
+
+    An existing tag takes actual's assigners, so they never show up as a change;
+    a tag being created gets none. Afterwards every desired tag carries a
+    frozenset, so the create/update paths, executor, and logger need no special
+    case for unmanaged assigners.
+    """
+    return {
+        name: _fill_assigners(gt, actual_by_name.get(name))
+        for name, gt in desired_by_name.items()
+    }
 
 
 def _diff_governed_tag_creates(
@@ -163,6 +187,10 @@ def compute_governed_tag_diff(
     they are never created (a system tag absent from the account is a fatal
     error) or deleted, and only their assigners are reconciled — their
     Databricks-owned definition is left untouched. See ``is_system_governed_tag``.
+
+    Desired assigners left unmanaged (``None``, the key omitted in config) are
+    never reconciled: the tag keeps whatever assigners it has (see
+    ``_fill_unmanaged_assigners``). Only an explicit empty frozenset removes all.
     """
     desired_resolved = {
         _resolve_governed_tag_assigners(t, resolver, change_logger, ignore_unresolvable)
@@ -173,8 +201,10 @@ def compute_governed_tag_diff(
         for t in actual
     }
 
-    desired_by_name = {gt.name: gt for gt in desired_resolved}
     actual_by_name = {gt.name: gt for gt in actual_resolved}
+    desired_by_name = _fill_unmanaged_assigners(
+        {gt.name: gt for gt in desired_resolved}, actual_by_name
+    )
 
     to_create = _diff_governed_tag_creates(
         desired_by_name, actual_by_name, change_logger

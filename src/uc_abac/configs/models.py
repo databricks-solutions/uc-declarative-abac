@@ -436,6 +436,7 @@ class BasePolicyConfig(BaseConfig, ABC):
     catalog_name: str
     schema_name: str | None = None
     table_name: str | None = None
+    volume_name: str | None = None
     name: str
     type: PolicyType
     has_tags: dict[str, str] | None = None
@@ -475,6 +476,8 @@ class BasePolicyConfig(BaseConfig, ABC):
     @computed_field
     @property
     def parent_full_name(self) -> str:
+        if self.volume_name:
+            return f"{self.catalog_name}.{self.schema_name}.{self.volume_name}"
         if self.table_name:
             return f"{self.catalog_name}.{self.schema_name}.{self.table_name}"
         if self.schema_name:
@@ -484,6 +487,8 @@ class BasePolicyConfig(BaseConfig, ABC):
     @property
     def parent_securable_type(self) -> SecurableType:
         """Type of the securable the policy is attached to (see ``parent_full_name``)."""
+        if self.volume_name:
+            return SecurableType.VOLUME
         if self.table_name:
             return SecurableType.TABLE
         if self.schema_name:
@@ -1221,6 +1226,27 @@ class VolumeConfig(BaseTaggableConfig):
     catalog_name: str
     schema_name: str
     location: str | None = None
+    policies: list[GrantPolicyConfig] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_parent_names(cls, data: dict) -> dict:
+        if not isinstance(data, dict):
+            return data
+        catalog_name = data.get("catalog_name", "")
+        schema_name = data.get("schema_name", "")
+        volume_name = data.get("name", "")
+        _check_duplicate_names(
+            data.get("policies", []) or [],
+            "policy",
+            f"volume '{volume_name}'",
+        )
+        for policy_dict in data.get("policies", []) or []:
+            if isinstance(policy_dict, dict):
+                policy_dict.setdefault("catalog_name", catalog_name)
+                policy_dict.setdefault("schema_name", schema_name)
+                policy_dict.setdefault("volume_name", volume_name)
+        return data
 
     @computed_field
     @property
@@ -1231,6 +1257,7 @@ class VolumeConfig(BaseTaggableConfig):
 class SchemaConfig(BaseTaggableConfig):
     catalog_name: str
     location: str | None = None
+    data_classification_enabled: StrictBool | None = None
     policies: list[PolicyConfig] | None = None
     tables: list[TableConfig] | None = None
     volumes: list[VolumeConfig] | None = None
@@ -1287,6 +1314,8 @@ class SchemaConfig(BaseTaggableConfig):
 
 class CatalogConfig(BaseTaggableConfig):
     location: str | None = None
+    data_classification_enabled: StrictBool | None = None
+    auto_tagging_enabled: StrictBool | None = None
     policies: list[PolicyConfig] | None = None
     schemas: list[SchemaConfig] | None = None
 
@@ -1314,6 +1343,19 @@ class CatalogConfig(BaseTaggableConfig):
             if isinstance(policy_dict, dict):
                 policy_dict.setdefault("catalog_name", catalog_name)
         return data
+
+    @model_validator(mode="after")
+    def _require_data_classification_for_auto_tagging(self) -> CatalogConfig:
+        """Auto-tagging is part of Data Classification, so it can't be enabled on a
+        catalog that explicitly disables Data Classification. (Leaving
+        ``data_classification_enabled`` unset is fine: auto-tagging implies it.)"""
+        if self.auto_tagging_enabled and self.data_classification_enabled is False:
+            raise ValueError(
+                f"Catalog '{self.name}' sets auto_tagging_enabled: true but "
+                "data_classification_enabled: false; auto-tagging requires Data "
+                "Classification. Remove data_classification_enabled or set it to true."
+            )
+        return self
 
     @computed_field
     @property
@@ -1449,7 +1491,8 @@ class GovernedTagConfig(BaseConfig):
         validation_alias=AliasChoices("description", "comment"),
     )
     allowed_values: list[str] = Field(default_factory=list)
-    assigners: list[str] = Field(default_factory=list)
+    assigners: list[str] | None = None
+    auto_tagging_enabled: StrictBool | None = None
 
     @model_validator(mode="after")
     def _reject_allowed_values_on_system_tag(self) -> GovernedTagConfig:

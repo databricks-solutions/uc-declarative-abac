@@ -1,0 +1,5 @@
+resources:
+  governed_tags:
+    class|location:
+      name: class.location
+      auto_tagging_enabled: true

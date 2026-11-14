@@ -18,7 +18,9 @@ from uc_abac.securables.state import (
     Securable,
     SecurableAttributes,
     SecurableDiff,
+    SecurableKey,
     Table,
+    targets_nonexistent_securable,
 )
 
 __all__ = [
@@ -32,10 +34,12 @@ __all__ = [
     "Securable",
     "SecurableAttributes",
     "SecurableDiff",
+    "SecurableKey",
     "Table",
     "compile_desired_attributes",
     "compile_desired_securables",
     "compute_securable_diff",
     "execute_securable_diff",
     "render_filter_rules",
+    "targets_nonexistent_securable",
 ]
