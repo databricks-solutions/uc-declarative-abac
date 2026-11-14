@@ -6,10 +6,7 @@ from uc_abac.configs import (
     discover_yaml_files,
     load_raw_configs,
 )
-from uc_abac.utils import (
-    DuplicateKeyError,
-    DuplicateResourceError,
-)
+from uc_abac.errors import DuplicateKeyError, DuplicateResourceError
 
 # ---------------------------------------------------------------------------
 # discover_yaml_files

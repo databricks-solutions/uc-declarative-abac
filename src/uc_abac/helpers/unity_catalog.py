@@ -37,21 +37,22 @@ from databricks.sdk.service.sql import (
     StatementState,
 )
 
-from uc_abac.policies import (
+from uc_abac.errors import OrchestratorError
+from uc_abac.resources.policies import (
     Policy,
     render_column_tag_value,
     render_tag_value,
 )
-from uc_abac.principals import Principal
-from uc_abac.privileges import SecurablePrivilege
-from uc_abac.securables import (
+from uc_abac.resources.principals import Principal
+from uc_abac.resources.privileges import SecurablePrivilege
+from uc_abac.resources.securables import (
     Column,
     Function,
     Securable,
     SecurableAttributes,
     Table,
 )
-from uc_abac.tags import SecurableTag
+from uc_abac.resources.tags import SecurableTag
 from uc_abac.types import (
     PolicyType,
     PrincipalType,
@@ -59,7 +60,6 @@ from uc_abac.types import (
     SecurableType,
 )
 from uc_abac.utils import (
-    OrchestratorError,
     classify_rfa_destination,
     normalise_data_type,
     sql_string_literal,

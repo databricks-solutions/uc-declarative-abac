@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from uc_abac.orchestrator import ActualState
-from uc_abac.utils import ExecutionError
+from uc_abac.errors import ExecutionError
+from uc_abac.fetcher import ActualState
 
 _default_logger = logging.getLogger("uc_abac")
 

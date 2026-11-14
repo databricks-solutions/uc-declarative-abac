@@ -16,14 +16,11 @@ from pydantic import ValidationError
 from uc_abac.cli.parser import parse_cli_args
 from uc_abac.cli.presentation import format_error, format_status
 from uc_abac.cli.settings import RunSettings, resolve_settings
+from uc_abac.deployer import run
 from uc_abac.dumper import dump_state
-from uc_abac.orchestrator import load_config, run
-from uc_abac.utils import (
-    ExecutionBatchError,
-    OrchestratorError,
-    parse_flat_scope,
-    parse_hierarchical_scope,
-)
+from uc_abac.errors import ExecutionBatchError, OrchestratorError
+from uc_abac.utils import parse_flat_scope, parse_hierarchical_scope
+from uc_abac.validator import load_config
 
 _logger = logging.getLogger("uc_abac")
 

@@ -7,25 +7,25 @@ from pathlib import Path
 
 from uc_abac import ActualState
 from uc_abac.configs import ResourcesConfig
-from uc_abac.domains import Domain, DomainIcon
 from uc_abac.dumper import (
     TABLE_SPECS,
     build_dump_context,
     split_securable_name,
 )
-from uc_abac.governed_tags import GovernedTag
-from uc_abac.orchestrator import load_config
-from uc_abac.policies import Policy
-from uc_abac.principals import Group, Principal
-from uc_abac.privileges import SecurablePrivilege
-from uc_abac.securables import Column, Function, SecurableAttributes, Table
-from uc_abac.tags import SecurableTag
+from uc_abac.resources.domains import Domain, DomainIcon
+from uc_abac.resources.governed_tags import GovernedTag
+from uc_abac.resources.policies import Policy
+from uc_abac.resources.principals import Group, Principal
+from uc_abac.resources.privileges import SecurablePrivilege
+from uc_abac.resources.securables import Column, Function, SecurableAttributes, Table
+from uc_abac.resources.tags import SecurableTag
 from uc_abac.types import (
     PolicyType,
     PrincipalType,
     PrivilegeType,
     SecurableType,
 )
+from uc_abac.validator import load_config
 
 # --- Helpers ---
 

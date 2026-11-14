@@ -22,6 +22,23 @@ See the documentation site in `docs/` (published at https://uc-declarative-abac.
 5. **Diff computation** — compare desired state (resolved configs) against actual state (system tables)
 6. **Apply** — execute only the SQL/API calls needed to reconcile the diff
 
+### Package layout (`src/uc_abac/`)
+
+- `cli/` — the `uc-abac` entry point (argument parsing, settings, commands)
+- `configs/` — YAML discovery, `$ref`/`$vars` resolution, consolidation, and the Pydantic config models
+- `validator/` — `load_config` (`loader.py`): runs the config pipeline end-to-end into one validated `ResourcesConfig`
+- `fetcher.py` — `fetch_actual_state` and the `ActualState` it returns
+- `deployer/` — `run()` (`orchestrator.py`)
+- `dumper/` — `uc-abac dump`: writes the actual state to tables
+- `helpers/` — `UnityCatalogHelper` / `WorkspaceHelper`, the SQL and SDK clients
+- `resources/` — one sub-package per domain (`domains`, `governed_tags`, `policies`, `principals`, `privileges`, `securables`, `tags`), each with its own compiler/differ/executor. `resources/__init__.py` is deliberately empty: it is a namespace, not an interface
+- `types.py` — the shared enums (`SecurableType`, `PrivilegeType`, `PrincipalType`, …) and privilege maps; also imported by `abac_viewer`
+- `logger.py` — the `ChangeLogger` the compilers, differs, and executors report changes, warnings, and errors through
+- `errors.py` — every engine exception (`OrchestratorError` and subclasses) and the `ExecutionError` record
+- `utils.py` — shared helpers (scopes, `RunContext`, SQL quoting, YAML loading)
+
+Dependency direction (runtime imports): `types` ← `errors` ← `utils` ← `configs` ← `resources/*` ← `helpers` ← `fetcher` ← `deployer` / `dumper` ← `cli`, with `validator` depending only on `configs`. `logger` sits alongside the domains: it imports `resources.principals` and is imported by the policies, tags, and privileges compilers (other domain modules reference it only for type hints).
+
 ### Deployment semantics
 
 - **UC objects & attributes** (catalogs, schemas, tables, volumes, functions, comments): additive only — create/update, never delete
@@ -39,7 +56,7 @@ Comparing raw strings (or pre-resolution `Principal`s with only one side populat
 
 #### The `Principal` type
 
-A single frozen dataclass at `src/uc_abac/principals/state.py` represents both unresolved and resolved principals. Resolution status is a runtime property, not a type:
+A single frozen dataclass at `src/uc_abac/resources/principals/state.py` represents both unresolved and resolved principals. Resolution status is a runtime property, not a type:
 
 - **Unresolved:** `principal_type == PrincipalType.UNKNOWN`, with exactly one of `name` / `identifier` truthy. Config-side has `name` set; UC-side has `identifier` set.
 - **Resolved:** `principal_type` ∈ {USER, GROUP, SERVICE_PRINCIPAL}, with both `name` and `identifier` truthy. This invariant is enforced by `__post_init__`.
@@ -47,12 +64,12 @@ A single frozen dataclass at `src/uc_abac/principals/state.py` represents both u
 
 #### Pipeline shape
 
-1. **Compilers** (`<domain>/compiler.py`) produce state with `Principal(principal_type=UNKNOWN, name=<from YAML>)`.
+1. **Compilers** (`resources/<domain>/compiler.py`) produce state with `Principal(principal_type=UNKNOWN, name=<from YAML>)`.
 2. **Fetch helpers** (`UnityCatalogHelper.fetch_actual_*`) produce state with `Principal(principal_type=UNKNOWN, identifier=<from UC>)`. They do **not** depend on `WorkspaceHelper` — this keeps them safe inside the parallel fetch block.
-3. **Differs** (`<domain>/differ.py`) own principal resolution. `compute_*_diff` accepts a `PrincipalResolver` and a `ChangeLogger`, resolves principals on both desired and actual state internally (via a private `_resolve_*` helper in the same module), and returns a fully-resolved diff. Unknown principals are logged and the affected state row is dropped.
+3. **Differs** (`resources/<domain>/differ.py`) own principal resolution. `compute_*_diff` accepts a `PrincipalResolver` and a `ChangeLogger`, resolves principals on both desired and actual state internally (via a private `_resolve_*` helper in the same module), and returns a fully-resolved diff. Unknown principals are logged and the affected state row is dropped.
 4. **Executors** call `ensure_resolved(principal)` from `principals/resolver.py` before reading `.identifier`. This asserts the runtime invariant.
 
-#### Key APIs (all in `src/uc_abac/principals/resolver.py`)
+#### Key APIs (all in `src/uc_abac/resources/principals/resolver.py`)
 
 - `PrincipalResolver(ws_helper).resolve_principal(p)` — resolve one, raises `PrincipalValidationError` on failure.
 - `PrincipalResolver(ws_helper).resolve_principals(batch)` — all-or-nothing; on any failure raises one `PrincipalValidationError` whose message lists every offender.
@@ -62,11 +79,11 @@ A single frozen dataclass at `src/uc_abac/principals/state.py` represents both u
 
 Unknown principals are excluded from the diff and logged via `principals.log_principal_resolution_failure(...)`, which routes by origin: **config-side** (desired) failures — the Principal carries a `name` — are fatal `ExecutionError`s (a YAML typo must fail the run); **actual-state** (UC-side) failures — the Principal carries only an `identifier` — are non-fatal **warnings** (`ChangeLogger.log_warning`, not counted by `has_errors`), so the run still succeeds. This is deliberate: Databricks-managed system/application service principals (predictive optimization, scheduled dashboard refresh) appear in the system tables as `application_id` UUIDs, aren't returned by SCIM, and can't be acted on — they must not fail deployments. Either way the affected row is dropped from the diff.
 
-The privileges, securables, governed-tags, **and policies** differs all follow this pattern — see the private `_resolve_*` function in each `<domain>/differ.py`. The policies differ resolves `to`/`except` principals per-principal too: a config-side (desired) failure stays fatal, while an actual-state (UC-side) failure is a non-fatal warning. Its one nuance: only the offending principal is dropped from the policy's principal list — **the policy itself is retained** (the other domains drop the whole row). No separate per-domain `resolver.py` modules exist.
+The privileges, securables, governed-tags, **and policies** differs all follow this pattern — see the private `_resolve_*` function in each `resources/<domain>/differ.py`. The policies differ resolves `to`/`except` principals per-principal too: a config-side (desired) failure stays fatal, while an actual-state (UC-side) failure is a non-fatal warning. Its one nuance: only the offending principal is dropped from the policy's principal list — **the policy itself is retained** (the other domains drop the whole row). No separate per-domain `resolver.py` modules exist.
 
 #### Ignoring unresolvable principals (`--ignore-unresolvable-principals`)
 
-The `--ignore-unresolvable-principals` CLI flag (orchestrator param `ignore_unresolvable_principals`, parsed to a standalone `frozenset[str]` named `ignore_unresolvable`) **only suppresses the non-fatal resolution-failure warning** for the listed actual-state identifiers — it changes nothing about resolution itself. A listed principal that resolves is processed exactly as usual; only when it fails to resolve is the warning silenced (the row is dropped from the diff either way, as it always was for unresolvable principals). The check lives **inside `log_principal_resolution_failure`** (`principals/resolver.py`): in the actual-state (identifier-only) warning branch, if `principal.identifier in ignore_unresolvable` it returns without logging; config-side (name) failures stay fatal `ExecutionError`s regardless. The set is a plain parameter threaded `run()` → `compute_*_diff(..., ignore_unresolvable)` → `_resolve_*(..., ignore_unresolvable)` → `log_principal_resolution_failure(..., ignore_unresolvable)` for the privileges, securables (owner), governed-tags (assigners), and policies (`to`/`except`) domains. It is **not** state on `PrincipalResolver` (the resolver has no knowledge of ignoring). Tags reference no principals.
+The `--ignore-unresolvable-principals` CLI flag (orchestrator param `ignore_unresolvable_principals`, parsed to a standalone `frozenset[str]` named `ignore_unresolvable`) **only suppresses the non-fatal resolution-failure warning** for the listed actual-state identifiers — it changes nothing about resolution itself. A listed principal that resolves is processed exactly as usual; only when it fails to resolve is the warning silenced (the row is dropped from the diff either way, as it always was for unresolvable principals). The check lives **inside `log_principal_resolution_failure`** (`resources/principals/resolver.py`): in the actual-state (identifier-only) warning branch, if `principal.identifier in ignore_unresolvable` it returns without logging; config-side (name) failures stay fatal `ExecutionError`s regardless. The set is a plain parameter threaded `run()` → `compute_*_diff(..., ignore_unresolvable)` → `_resolve_*(..., ignore_unresolvable)` → `log_principal_resolution_failure(..., ignore_unresolvable)` for the privileges, securables (owner), governed-tags (assigners), and policies (`to`/`except`) domains. It is **not** state on `PrincipalResolver` (the resolver has no knowledge of ignoring). Tags reference no principals.
 
 ## Adding a CLI flag
 
@@ -78,7 +95,7 @@ plumbing and forget the Action, so treat this as a checklist and update every it
 2. **`src/uc_abac/cli/settings.py`** — add the `RunSettings` field **and** the
    `_ENV_FIELD_MAP` entry (`UC_ABAC_<NAME>` env var).
 3. **`src/uc_abac/cli/commands.py`** — thread it through `_run_kwargs`.
-4. **`src/uc_abac/orchestrator.py`** — add the `run()` parameter and wiring.
+4. **`src/uc_abac/deployer/orchestrator.py`** — add the `run()` parameter and wiring.
 5. **`deploy/action.yml`** — **easy to miss.** Three edits in this one file: the
    `inputs:` entry, the `env:` mapping (`ENABLE_FOO: ${{ inputs.enable-foo }}`), and the
    `args+=(--enable-foo)` line in the args-building shell step. Grep the file for an
@@ -183,7 +200,7 @@ both, and a green `pytest` is not enough on its own:
 - Prefer immutability — helper functions should return new values rather than modifying state passed in as arguments
 - Comments — put all substantial explanation (the *why*, edge cases, rationale, invariants, multi-sentence context) in the function/module **docstring**, not in inline comments. Inline `#` comments are reserved for **small, single-line** notes on a specific statement. If an inline comment needs more than one line, it belongs in the docstring; where a statement needs context that lives in the docstring, keep the inline comment to a one-line pointer (e.g. `# ... (see docstring)`)
 - No forward references within a module — always define a function/helper *above* the function that calls it. The top-level public function(s) of a module should sit at the bottom, so a reader scrolling top-down sees primitives → helpers → entry point. Python allows forward references at runtime, but readability suffers when you have to scroll down to find a definition
-- Respect sub-package boundaries — each sub-package (`configs`, `policies`, `principals`, `securables`, `privileges`, `tags`, `helpers`, etc.) exposes its public interface through its package `__init__.py`. Code **outside** a sub-package must import from the package (e.g. `from uc_abac.policies import render_tag_value`), never reach into its submodules (`from uc_abac.policies.compiler import ...`). When a symbol needs to be used externally, add it to the sub-package's `__init__.py` (import + `__all__`). Imports *within* the same sub-package may reference sibling submodules directly.
+- Respect sub-package boundaries — each sub-package (`configs`, `validator`, `deployer`, `helpers`, `resources.policies`, `resources.principals`, etc.) exposes its public interface through its package `__init__.py`. Code **outside** a sub-package must import from the package (e.g. `from uc_abac.resources.policies import render_tag_value`), never reach into its submodules (`from uc_abac.resources.policies.compiler import ...`). `resources/` itself is a namespace, not an interface: import each domain package directly. When a symbol needs to be used externally, add it to the sub-package's `__init__.py` (import + `__all__`). Imports *within* the same sub-package may reference sibling submodules directly.
 
 ## Documentation
 

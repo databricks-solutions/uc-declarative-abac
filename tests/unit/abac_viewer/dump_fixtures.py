@@ -28,15 +28,19 @@ from abac_viewer.backend.engine.dump import (
 )
 from abac_viewer.backend.engine.model import FactoredModel
 from uc_abac.dumper import TABLE_SPECS, Row, build_dump_context
-from uc_abac.governed_tags import compile_desired_governed_tags
+from uc_abac.fetcher import ActualState
 from uc_abac.logger import ChangeLogger
-from uc_abac.orchestrator import ActualState, load_config
-from uc_abac.policies import compile_desired_policies
-from uc_abac.principals import Principal, compile_desired_groups
-from uc_abac.privileges import compile_desired_privileges
-from uc_abac.securables import compile_desired_attributes, compile_desired_securables
-from uc_abac.tags import compile_desired_tags
+from uc_abac.resources.governed_tags import compile_desired_governed_tags
+from uc_abac.resources.policies import compile_desired_policies
+from uc_abac.resources.principals import Principal, compile_desired_groups
+from uc_abac.resources.privileges import compile_desired_privileges
+from uc_abac.resources.securables import (
+    compile_desired_attributes,
+    compile_desired_securables,
+)
+from uc_abac.resources.tags import compile_desired_tags
 from uc_abac.types import PrincipalType
+from uc_abac.validator import load_config
 
 DumpRows = dict[str, list[Row]]
 

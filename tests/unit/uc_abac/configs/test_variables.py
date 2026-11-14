@@ -21,7 +21,7 @@ from uc_abac.configs.variables import (
     substitute_in_body,
     unescape,
 )
-from uc_abac.utils import TemplateVariableError
+from uc_abac.errors import TemplateVariableError
 
 # ---------------------------------------------------------------------------
 # find_placeholders

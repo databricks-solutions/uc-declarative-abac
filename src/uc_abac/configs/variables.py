@@ -40,7 +40,7 @@ import copy
 import re
 from typing import Any
 
-from uc_abac.utils import TemplateVariableError
+from uc_abac.errors import TemplateVariableError
 
 # A single token scanner. Order matters: escapes first (so `$${env}` and `{{{{ env }}}}`
 # are read as literal braces, never as placeholders), then valid placeholders. The `${}`

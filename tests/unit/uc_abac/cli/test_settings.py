@@ -7,7 +7,7 @@ import yaml
 from pydantic import ValidationError
 
 from uc_abac.cli.settings import resolve_settings
-from uc_abac.utils import DuplicateKeyError
+from uc_abac.errors import DuplicateKeyError
 
 
 @pytest.mark.parametrize(

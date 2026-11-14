@@ -28,8 +28,8 @@ from uc_abac.configs import (
     iter_policy_configs,
     iter_securable_configs,
 )
-from uc_abac.orchestrator import ActualState
-from uc_abac.privileges import (
+from uc_abac.fetcher import ActualState
+from uc_abac.resources.privileges import (
     SecurablePrivilege,
     match_grant_policy_privileges,
 )

@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 
 from uc_abac.configs import resolve_refs
-from uc_abac.orchestrator import load_config
-from uc_abac.utils import (
+from uc_abac.errors import (
     ResolutionError,
     TemplateVariableError,
     UnreferencedDefinitionError,
 )
+from uc_abac.validator import load_config
 
 # ---------------------------------------------------------------------------
 # Basic ref resolution

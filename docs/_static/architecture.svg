@@ -49,32 +49,32 @@
   <!-- Engine boundary -->
   <rect x="230" y="40" width="560" height="530" rx="12" fill="#fff6f5" stroke="#ff3621" stroke-width="2"/>
   <text class="group" x="250" y="64">uc_abac engine</text>
-  <text class="code" x="372" y="64">src/uc_abac (orchestrator.py)</text>
+  <text class="code" x="372" y="64">src/uc_abac (deployer/orchestrator.py)</text>
 
   <!-- 1 config pipeline -->
   <rect class="box" x="250" y="80" width="520" height="70" rx="6"/>
   <text class="title" x="510" y="104" text-anchor="middle">Config pipeline</text>
-  <text class="code" x="510" y="122" text-anchor="middle">configs/: discovery, resolver ($ref, $vars), consolidator, models</text>
+  <text class="code" x="510" y="122" text-anchor="middle">validator/, configs/: discovery, resolver ($ref, $vars), models</text>
   <text class="sub" x="510" y="139" text-anchor="middle">one validated ResourcesConfig, every entry stamped with its file</text>
   <circle cx="250" cy="80" r="9" fill="#ff3621"/><text class="step" x="250" y="84" text-anchor="middle">1</text>
 
   <!-- 2 compilers / 3 fetch -->
   <rect class="box" x="250" y="190" width="240" height="80" rx="6"/>
   <text class="title" x="370" y="214" text-anchor="middle">Compilers</text>
-  <text class="code" x="370" y="233" text-anchor="middle">&lt;domain&gt;/compiler.py</text>
+  <text class="code" x="370" y="233" text-anchor="middle">resources/&lt;domain&gt;/compiler.py</text>
   <text class="sub" x="370" y="252" text-anchor="middle">desired state, principals by name</text>
   <circle cx="250" cy="190" r="9" fill="#ff3621"/><text class="step" x="250" y="194" text-anchor="middle">2</text>
 
   <rect class="box" x="520" y="190" width="240" height="80" rx="6"/>
   <text class="title" x="640" y="214" text-anchor="middle">Actual state fetch</text>
-  <text class="code" x="640" y="233" text-anchor="middle">helpers/ (UC, workspace)</text>
+  <text class="code" x="640" y="233" text-anchor="middle">fetcher.py + helpers/</text>
   <text class="sub" x="640" y="252" text-anchor="middle">fetched in parallel, by identifier</text>
   <circle cx="520" cy="190" r="9" fill="#ff3621"/><text class="step" x="520" y="194" text-anchor="middle">3</text>
 
   <!-- 4 differs / 6 dumper -->
   <rect class="box" x="250" y="310" width="240" height="80" rx="6"/>
   <text class="title" x="370" y="334" text-anchor="middle">Differs</text>
-  <text class="code" x="370" y="353" text-anchor="middle">&lt;domain&gt;/differ.py</text>
+  <text class="code" x="370" y="353" text-anchor="middle">resources/&lt;domain&gt;/differ.py</text>
   <text class="sub" x="370" y="372" text-anchor="middle">resolve principals, then diff</text>
   <circle cx="250" cy="310" r="9" fill="#ff3621"/><text class="step" x="250" y="314" text-anchor="middle">4</text>
 
@@ -87,13 +87,13 @@
   <!-- 5 executors -->
   <rect class="box" x="250" y="430" width="240" height="80" rx="6"/>
   <text class="title" x="370" y="454" text-anchor="middle">Executors</text>
-  <text class="code" x="370" y="473" text-anchor="middle">&lt;domain&gt;/executor.py</text>
+  <text class="code" x="370" y="473" text-anchor="middle">resources/&lt;domain&gt;/executor.py</text>
   <text class="sub" x="370" y="492" text-anchor="middle">SQL and SDK calls, within scopes</text>
   <circle cx="250" cy="430" r="9" fill="#ff3621"/><text class="step" x="250" y="434" text-anchor="middle">5</text>
 
   <text class="sub" x="250" y="530">Domains: governed tags, tags, securables, privileges,</text>
   <text class="sub" x="250" y="545">policies, groups, domains. Each has a compiler, a differ</text>
-  <text class="sub" x="250" y="560">and an executor; principals/resolver.py resolves names.</text>
+  <text class="sub" x="250" y="560">and an executor; resources/principals/resolver.py resolves names.</text>
 
   <!-- Unity Catalog -->
   <rect class="ext" x="820" y="190" width="160" height="320" rx="8"/>

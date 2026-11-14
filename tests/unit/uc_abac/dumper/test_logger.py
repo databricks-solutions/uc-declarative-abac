@@ -6,11 +6,11 @@ import logging
 
 from uc_abac import ActualState
 from uc_abac.dumper import DumpLogger
-from uc_abac.principals.state import Principal, PrincipalType
-from uc_abac.securables import Securable
-from uc_abac.tags.state import SecurableTag
+from uc_abac.errors import ExecutionError
+from uc_abac.resources.principals.state import Principal, PrincipalType
+from uc_abac.resources.securables import Securable
+from uc_abac.resources.tags.state import SecurableTag
 from uc_abac.types import SecurableType
-from uc_abac.utils import ExecutionError
 
 # ---
 # Banner

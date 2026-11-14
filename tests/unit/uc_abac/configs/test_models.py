@@ -12,9 +12,9 @@ from uc_abac.configs import (
     ResourcesConfig,
     RlsMappingRuleConfig,
 )
-from uc_abac.orchestrator import load_config
+from uc_abac.errors import DuplicateResourceError
 from uc_abac.types import PrivilegeType, SecurableType
-from uc_abac.utils import DuplicateResourceError
+from uc_abac.validator import load_config
 
 
 def _minimal_catalog(**overrides):

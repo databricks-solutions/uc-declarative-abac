@@ -17,7 +17,7 @@ from abac_viewer.backend.engine.conditions import (
     parse_match_column,
     parse_tag_condition,
 )
-from uc_abac.policies import render_tag_when_condition
+from uc_abac.resources.policies import render_tag_when_condition
 
 # ---------------------------------------------------------------------------
 # Helpers

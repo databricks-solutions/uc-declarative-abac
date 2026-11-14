@@ -49,14 +49,14 @@ from uc_abac.configs import (
     iter_policy_configs,
     iter_securable_configs,
 )
-from uc_abac.domains import Domain
 from uc_abac.dumper.attribution import ConfigPaths, build_config_paths
-from uc_abac.governed_tags import GovernedTag, collect_referenced_tag_keys
-from uc_abac.orchestrator import ActualState
-from uc_abac.policies import Policy, render_tag_when_condition
-from uc_abac.principals import Group, Principal
-from uc_abac.privileges import SecurablePrivilege, is_active_grant_policy
-from uc_abac.securables import (
+from uc_abac.fetcher import ActualState
+from uc_abac.resources.domains import Domain
+from uc_abac.resources.governed_tags import GovernedTag, collect_referenced_tag_keys
+from uc_abac.resources.policies import Policy, render_tag_when_condition
+from uc_abac.resources.principals import Group, Principal
+from uc_abac.resources.privileges import SecurablePrivilege, is_active_grant_policy
+from uc_abac.resources.securables import (
     Column,
     Function,
     Securable,
