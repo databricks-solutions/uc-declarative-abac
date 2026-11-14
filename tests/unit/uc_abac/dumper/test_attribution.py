@@ -7,11 +7,11 @@ from pathlib import Path
 
 from uc_abac import ActualState
 from uc_abac.dumper import build_config_paths
-from uc_abac.orchestrator import load_config
-from uc_abac.principals import Principal
-from uc_abac.privileges import SecurablePrivilege
-from uc_abac.tags import SecurableTag
+from uc_abac.resources.principals import Principal
+from uc_abac.resources.privileges import SecurablePrivilege
+from uc_abac.resources.tags import SecurableTag
 from uc_abac.types import PrincipalType, PrivilegeType, SecurableType
+from uc_abac.validator import load_config
 
 _RUN_DATE = date(2026, 6, 1)
 

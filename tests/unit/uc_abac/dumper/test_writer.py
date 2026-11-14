@@ -24,9 +24,10 @@ from uc_abac.dumper import (
     build_overwrite_from_sql,
     dump_state,
 )
-from uc_abac.securables import Securable
+from uc_abac.errors import ExecutionBatchError
+from uc_abac.resources.securables import Securable
 from uc_abac.types import SecurableType
-from uc_abac.utils import ExecutionBatchError, sql_string_literal
+from uc_abac.utils import sql_string_literal
 
 # ---------------------------------------------------------------------------
 # Test helpers

@@ -7,10 +7,7 @@ from uc_abac.configs import (
     consolidate_resources,
     resolve_refs,
 )
-from uc_abac.utils import (
-    DuplicateResourceError,
-    OrchestratorError,
-)
+from uc_abac.errors import DuplicateResourceError, OrchestratorError
 
 
 def _inline_fn_dict(name: str, return_expr: str = "col") -> dict:

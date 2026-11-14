@@ -27,20 +27,16 @@ from uc_abac.dumper.tables import (
     TableSpec,
     build_dump_context,
 )
+from uc_abac.errors import ExecutionBatchError, ExecutionError
+from uc_abac.fetcher import ActualState, fetch_actual_state
 from uc_abac.helpers import UnityCatalogHelper, WorkspaceHelper
-from uc_abac.orchestrator import (
-    ActualState,
-    fetch_actual_state,
-    load_config,
-)
 from uc_abac.utils import (
-    ExecutionBatchError,
-    ExecutionError,
     parallel_for_each,
     quote_securable,
     run_date_for_timezone,
     sql_string_literal,
 )
+from uc_abac.validator import load_config
 
 DEFAULT_MAX_PARALLEL_TABLES = 8
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 10.0

@@ -7,7 +7,7 @@ from uc_abac.configs.models import (
     stamped_file_path,
     with_file_path,
 )
-from uc_abac.utils import OrchestratorError
+from uc_abac.errors import OrchestratorError
 
 _DEFAULT_SCHEMA_NAME = "default"
 _DERIVED_FUNCTION_NAME_PREFIX = "abac_"

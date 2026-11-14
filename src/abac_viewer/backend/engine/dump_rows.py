@@ -12,7 +12,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from abac_viewer.backend.engine.model import Provenance
-from uc_abac.types import AbstractedPrivilegeType, PrivilegeType, SecurableType
+from uc_abac.types import (
+    AbstractedPrivilegeType,
+    PrivilegeType,
+    SecurableType,
+)
 
 _KNOWN_PRIVILEGES = frozenset(p.value for p in PrivilegeType) | frozenset(
     p.value for p in AbstractedPrivilegeType

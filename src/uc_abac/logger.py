@@ -4,21 +4,21 @@ import difflib
 import logging
 from typing import TYPE_CHECKING
 
-from uc_abac.principals.state import Principal
-from uc_abac.utils import ExecutionError
+from uc_abac.errors import ExecutionError
+from uc_abac.resources.principals.state import Principal
 
 if TYPE_CHECKING:
-    from uc_abac.domains import Domain, DomainIcon
-    from uc_abac.governed_tags.state import GovernedTag
-    from uc_abac.policies.state import Policy
-    from uc_abac.principals.state import Group
-    from uc_abac.privileges.state import SecurablePrivilege
-    from uc_abac.securables.state import (
+    from uc_abac.resources.domains import Domain, DomainIcon
+    from uc_abac.resources.governed_tags.state import GovernedTag
+    from uc_abac.resources.policies.state import Policy
+    from uc_abac.resources.principals.state import Group
+    from uc_abac.resources.privileges.state import SecurablePrivilege
+    from uc_abac.resources.securables.state import (
         AttributeUpdate,
         Function,
         Securable,
     )
-    from uc_abac.tags.state import SecurableTag
+    from uc_abac.resources.tags.state import SecurableTag
 
 
 _default_logger = logging.getLogger("uc_abac")
@@ -91,8 +91,8 @@ def _function_pair(
     """Return ``(new, old)`` when both are Functions, else ``None``.
 
     ``Function`` is imported lazily to avoid a circular import with
-    ``uc_abac.securables``."""
-    from uc_abac.securables import Function
+    ``uc_abac.resources.securables``."""
+    from uc_abac.resources.securables import Function
 
     if isinstance(info, Function) and isinstance(old, Function):
         return info, old
@@ -102,7 +102,7 @@ def _function_pair(
 def _format_function_body(info: Securable) -> str:
     """Return a Function's SQL body indented for logging beneath its change
     line, or ``''`` for non-functions and empty bodies."""
-    from uc_abac.securables import Function
+    from uc_abac.resources.securables import Function
 
     if not isinstance(info, Function) or not info.definition:
         return ""

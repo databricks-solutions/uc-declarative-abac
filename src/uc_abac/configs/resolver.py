@@ -18,10 +18,7 @@ from uc_abac.configs.variables import (
     placeholder_wildcard_pattern,
     substitute_in_body,
 )
-from uc_abac.utils import (
-    ResolutionError,
-    UnreferencedDefinitionError,
-)
+from uc_abac.errors import ResolutionError, UnreferencedDefinitionError
 
 OverrideStrategy = Literal["merge", "replace"]
 

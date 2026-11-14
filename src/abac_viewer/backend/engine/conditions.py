@@ -6,7 +6,7 @@ entries as ``'<condition> AS <alias>'`` strings (``match_columns``). The viewer 
 them as structured tag predicates, so this module parses them back.
 
 The grammar is the boolean expression ``uc_abac`` renders (see
-``uc_abac.policies.render_tag_when_condition``): ``AND`` / ``OR`` / ``NOT`` over
+``uc_abac.resources.policies.render_tag_when_condition``): ``AND`` / ``OR`` / ``NOT`` over
 parenthesised groups and atoms, where an atom is ``has_tag('<key>')``,
 ``has_tag_value('<key>', '<value>')``, or ``TRUE``. String literals are single-quoted
 with an embedded quote doubled (``'O''Brien'``); keywords and function names are

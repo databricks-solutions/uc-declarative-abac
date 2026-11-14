@@ -142,10 +142,10 @@ def test_ingest_matches_tool_compiler_exactly(model):
         load_raw_configs,
         resolve_refs,
     )
-    from uc_abac.governed_tags import GovernedTag
     from uc_abac.logger import ChangeLogger
-    from uc_abac.privileges import compile_desired_privileges
-    from uc_abac.tags import compile_desired_tags
+    from uc_abac.resources.governed_tags import GovernedTag
+    from uc_abac.resources.privileges import compile_desired_privileges
+    from uc_abac.resources.tags import compile_desired_tags
 
     paths = discover_yaml_files(FIXTURE)
     raw_defs, raw_resources = load_raw_configs(paths)

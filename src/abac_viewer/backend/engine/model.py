@@ -133,7 +133,7 @@ class CompiledFgacPolicy:
 class GrantMatch:
     """Relation 4 — one privilege a grant policy emits on a securable.
 
-    Mirrors uc_abac.privileges.compiler semantics exactly (verified
+    Mirrors uc_abac.resources.privileges.compiler semantics exactly (verified
     by test_engine_matches_tool_compiler), but keeps the causing policy — the
     provenance UC itself discards on apply.
     """

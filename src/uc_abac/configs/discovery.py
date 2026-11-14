@@ -4,11 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from uc_abac.configs.models import with_file_path
-from uc_abac.utils import (
-    DuplicateKeyError,
-    DuplicateResourceError,
-    load_yaml_file,
-)
+from uc_abac.errors import DuplicateKeyError, DuplicateResourceError
+from uc_abac.utils import load_yaml_file
 
 
 def discover_yaml_files(root: Path) -> list[Path]:

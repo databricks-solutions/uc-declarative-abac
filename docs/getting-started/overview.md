@@ -37,13 +37,13 @@ You maintain YAML as the source of truth; the engine turns it into UC objects an
 The `uc_abac` engine, its entry points, and how ABAC Policy Explorer fits in.
 ```
 
-The `uc-abac` CLI and the GitHub Actions (`validate`, `deploy`, `dump`) run the same engine, coordinated by `orchestrator.py`:
+The `uc-abac` CLI and the GitHub Actions (`validate`, `deploy`, `dump`) run the same engine, coordinated by `deployer/orchestrator.py`:
 
-1. **Config pipeline** (`configs/`): discovers the YAML files, resolves `$ref`, `$vars`, and overrides, and validates one `ResourcesConfig`, with every entry stamped with the file that declares it. `uc-abac validate` stops here.
-2. **Compilers** (`<domain>/compiler.py`): turn the config into the desired state of each domain, naming principals by display name.
-3. **Actual state fetch** (`helpers/`): reads the current state from Unity Catalog and the workspace, in parallel, naming principals by identifier.
-4. **Differs** (`<domain>/differ.py`): resolve the principals on both sides, then compute the changes needed.
-5. **Executors** (`<domain>/executor.py`): run the SQL and SDK calls for those changes, within the {ref}`feature scopes <feature-scopes>`. With `--dry-run`, they log the changes instead.
+1. **Config pipeline** (`validator/`, `configs/`): discovers the YAML files, resolves `$ref`, `$vars`, and overrides, and validates one `ResourcesConfig`, with every entry stamped with the file that declares it. `uc-abac validate` stops here.
+2. **Compilers** (`resources/<domain>/compiler.py`): turn the config into the desired state of each domain, naming principals by display name.
+3. **Actual state fetch** (`fetcher.py`, `helpers/`): reads the current state from Unity Catalog and the workspace, in parallel, naming principals by identifier.
+4. **Differs** (`resources/<domain>/differ.py`): resolve the principals on both sides, then compute the changes needed.
+5. **Executors** (`resources/<domain>/executor.py`): run the SQL and SDK calls for those changes, within the {ref}`feature scopes <feature-scopes>`. With `--dry-run`, they log the changes instead.
 6. **Dumper** (`dumper/`): for `uc-abac dump`, writes the actual state to tables in a target schema, attributing each row to the config file that declares it.
 
 Each domain (governed tags, tags, securables, privileges, policies, groups, and domains) has its own compiler, differ, and executor. {ref}`policy-explorer` is a separate package, `abac_viewer`, deployed as a Databricks App. It reads the dump tables and depends on the engine only for its privilege and securable type definitions (`uc_abac.types`).

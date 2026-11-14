@@ -15,21 +15,21 @@ from databricks.sdk.service.iam import GrantRule, RuleSetResponse, RuleSetUpdate
 from databricks.sdk.service.iamv2 import DirectGroupMember
 from databricks.sdk.service.tags import TagPolicy
 
-from uc_abac.domains import Domain, DomainIcon
-from uc_abac.governed_tags import GovernedTag
-from uc_abac.principals import (
+from uc_abac.errors import (
+    DuplicateServicePrincipalError,
+    OrchestratorError,
+    PrincipalValidationError,
+)
+from uc_abac.resources.domains import Domain, DomainIcon
+from uc_abac.resources.governed_tags import GovernedTag
+from uc_abac.resources.principals import (
     Group,
     GroupRename,
     Principal,
     ensure_resolved,
 )
 from uc_abac.types import PrincipalType
-from uc_abac.utils import (
-    SYSTEM_ACCOUNT_GROUPS,
-    DuplicateServicePrincipalError,
-    OrchestratorError,
-    PrincipalValidationError,
-)
+from uc_abac.utils import SYSTEM_ACCOUNT_GROUPS
 
 _logger = logging.getLogger("uc_abac")
 

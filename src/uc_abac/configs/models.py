@@ -35,6 +35,7 @@ from uc_abac.configs.rules import (
     render_rls_key_literal,
     rls_comparison_type,
 )
+from uc_abac.errors import DuplicateResourceError
 from uc_abac.types import (
     ABSTRACT_PRIVILEGE_MAP,
     SECURABLE_TYPE_PRIVILEGE_MAP,
@@ -44,7 +45,6 @@ from uc_abac.types import (
     SecurableType,
 )
 from uc_abac.utils import (
-    DuplicateResourceError,
     is_system_account_group,
     is_system_governed_tag,
     normalise_data_type,

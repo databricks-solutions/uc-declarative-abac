@@ -1437,7 +1437,7 @@ def test_commands_dump_execution_batch_error_returns_error_code(
     monkeypatch, tmp_path: Path
 ):
     def _fake_dump_state(ws_client, **kwargs):
-        from uc_abac.utils import ExecutionBatchError, ExecutionError
+        from uc_abac.errors import ExecutionBatchError, ExecutionError
 
         raise ExecutionBatchError(
             [

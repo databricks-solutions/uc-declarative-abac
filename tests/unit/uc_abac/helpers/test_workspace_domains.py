@@ -15,9 +15,9 @@ from databricks.sdk.service.domains import (
     FieldMask,
 )
 
-from uc_abac.domains import Domain, DomainIcon
 from uc_abac.helpers import WorkspaceHelper
-from uc_abac.principals import Principal
+from uc_abac.resources.domains import Domain, DomainIcon
+from uc_abac.resources.principals import Principal
 from uc_abac.types import PrincipalType
 
 
